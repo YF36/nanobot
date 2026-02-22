@@ -193,6 +193,7 @@ class RateLimitConfig(Base):
 class ChannelsConfig(Base):
     """Configuration for chat channels."""
 
+    send_progress: bool = False
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     discord: DiscordConfig = Field(default_factory=DiscordConfig)
