@@ -1,19 +1,42 @@
 """Web tools: web_search and web_fetch."""
 
 import html
+import ipaddress
 import json
 import os
 import re
+import socket
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
 from nanobot.agent.tools.base import Tool
+from nanobot.logging import get_logger
+
+audit_log = get_logger("nanobot.audit")
 
 # Shared constants
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) AppleWebKit/537.36"
 MAX_REDIRECTS = 5  # Limit redirects to prevent DoS attacks
+MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # 10 MB response body limit
+DNS_TIMEOUT = 5  # seconds
+
+# Private / reserved IP ranges that must never be reached
+_BLOCKED_NETWORKS = [
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.0.0.0/24"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("198.18.0.0/15"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
 
 
 def _strip_tags(text: str) -> str:
@@ -30,14 +53,62 @@ def _normalize(text: str) -> str:
     return re.sub(r'\n{3,}', '\n\n', text).strip()
 
 
+def _is_private_ip(addr: str) -> bool:
+    """Return True if *addr* belongs to a private/reserved network."""
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return False
+    return any(ip in net for net in _BLOCKED_NETWORKS)
+
+
+def _resolve_host(hostname: str) -> list[str]:
+    """Resolve *hostname* to IP addresses with a timeout."""
+    try:
+        infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        return list({info[4][0] for info in infos})
+    except socket.gaierror:
+        return []
+
+
+def _check_url_ssrf(url: str) -> tuple[bool, str]:
+    """Validate that *url* does not target a private/reserved IP.
+
+    Resolves the hostname via DNS and checks every returned address.
+    Returns ``(ok, error_message)``.
+    """
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname:
+        return False, "Missing hostname"
+
+    # Direct IP literal check
+    if _is_private_ip(hostname):
+        return False, f"Access to private/reserved IP {hostname} is blocked"
+
+    # DNS resolution check
+    addrs = _resolve_host(hostname)
+    if not addrs:
+        return False, f"Could not resolve hostname: {hostname}"
+    for addr in addrs:
+        if _is_private_ip(addr):
+            return False, f"Hostname {hostname} resolves to private/reserved IP {addr}"
+
+    return True, ""
+
+
 def _validate_url(url: str) -> tuple[bool, str]:
-    """Validate URL: must be http(s) with valid domain."""
+    """Validate URL: must be http(s) with valid domain, not targeting private IPs."""
     try:
         p = urlparse(url)
         if p.scheme not in ('http', 'https'):
             return False, f"Only http/https allowed, got '{p.scheme or 'none'}'"
         if not p.netloc:
             return False, "Missing domain"
+        # SSRF check
+        ok, err = _check_url_ssrf(url)
+        if not ok:
+            return False, err
         return True, ""
     except Exception as e:
         return False, str(e)
@@ -113,22 +184,45 @@ class WebFetchTool(Tool):
 
         max_chars = maxChars or self.max_chars
 
-        # Validate URL before fetching
+        # Validate URL before fetching (includes SSRF check)
         is_valid, error_msg = _validate_url(url)
         if not is_valid:
+            audit_log.warning("web_fetch_blocked", url=url, reason=error_msg)
             return json.dumps({"error": f"URL validation failed: {error_msg}", "url": url}, ensure_ascii=False)
 
         try:
+            # Manual redirect loop so we can re-validate each hop
+            current_url = url
+            r = None
             async with httpx.AsyncClient(
-                follow_redirects=True,
-                max_redirects=MAX_REDIRECTS,
-                timeout=30.0
+                follow_redirects=False,
+                timeout=30.0,
             ) as client:
-                r = await client.get(url, headers={"User-Agent": USER_AGENT})
+                for _hop in range(MAX_REDIRECTS + 1):
+                    r = await client.get(current_url, headers={"User-Agent": USER_AGENT})
+                    if r.is_redirect:
+                        location = r.headers.get("location", "")
+                        if not location:
+                            break
+                        # Resolve relative redirects
+                        next_url = str(r.url.join(location))
+                        ok, err = _check_url_ssrf(next_url)
+                        if not ok:
+                            audit_log.warning("web_fetch_redirect_blocked", url=url, redirect_url=next_url, reason=err)
+                            return json.dumps({"error": f"Redirect blocked (SSRF): {err}", "url": url, "redirect_url": next_url}, ensure_ascii=False)
+                        current_url = next_url
+                        continue
+                    break
+
                 r.raise_for_status()
-            
+
+            # Enforce response body size limit
+            body_len = len(r.content)
+            if body_len > MAX_RESPONSE_BYTES:
+                return json.dumps({"error": f"Response too large ({body_len} bytes, limit {MAX_RESPONSE_BYTES})", "url": url}, ensure_ascii=False)
+
             ctype = r.headers.get("content-type", "")
-            
+
             # JSON
             if "application/json" in ctype:
                 text, extractor = json.dumps(r.json(), indent=2, ensure_ascii=False), "json"
@@ -140,11 +234,12 @@ class WebFetchTool(Tool):
                 extractor = "readability"
             else:
                 text, extractor = r.text, "raw"
-            
+
             truncated = len(text) > max_chars
             if truncated:
                 text = text[:max_chars]
-            
+
+            audit_log.info("web_fetch", url=url, final_url=str(r.url), status=r.status_code)
             return json.dumps({"url": url, "finalUrl": str(r.url), "status": r.status_code,
                               "extractor": extractor, "truncated": truncated, "length": len(text), "text": text}, ensure_ascii=False)
         except Exception as e:
