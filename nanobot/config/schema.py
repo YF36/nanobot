@@ -255,6 +255,12 @@ class ExecToolConfig(Base):
     audit_executions: bool = True  # Log all executed commands to audit log
 
 
+class FilesystemToolConfig(Base):
+    """Filesystem tool configuration."""
+
+    audit_operations: bool = True  # Log all file operations to audit log
+
+
 class MCPServerConfig(Base):
     """MCP server connection configuration (stdio or HTTP)."""
 
@@ -271,6 +277,7 @@ class ToolsConfig(Base):
 
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
+    filesystem: FilesystemToolConfig = Field(default_factory=FilesystemToolConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 

@@ -38,9 +38,10 @@ class SubagentManager:
         max_tokens: int = 4096,
         brave_api_key: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
+        filesystem_config: "FilesystemToolConfig | None" = None,
         restrict_to_workspace: bool = False,
     ):
-        from nanobot.config.schema import ExecToolConfig
+        from nanobot.config.schema import ExecToolConfig, FilesystemToolConfig
         self.provider = provider
         self.workspace = workspace
         self.bus = bus
@@ -49,6 +50,7 @@ class SubagentManager:
         self.max_tokens = max_tokens
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
+        self.filesystem_config = filesystem_config or FilesystemToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
     
@@ -105,10 +107,11 @@ class SubagentManager:
             # Build subagent tools (no message tool, no spawn tool)
             tools = ToolRegistry()
             allowed_dir = self.workspace if self.restrict_to_workspace else None
-            tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
+            audit = self.filesystem_config.audit_operations
+            tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, audit_operations=audit))
+            tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir, audit_operations=audit))
+            tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir, audit_operations=audit))
+            tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir, audit_operations=audit))
             tools.register(ExecTool(
                 working_dir=str(self.workspace),
                 timeout=self.exec_config.timeout,
