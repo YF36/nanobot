@@ -103,7 +103,7 @@ class AgentLoop:
         self._mcp_connected = False
         self._mcp_connecting = False
         self._consolidating: set[str] = set()  # Session keys with consolidation in progress
-        self._consolidation_tasks: set[asyncio.Task] = set()  # Strong refs to in-flight tasks
+        self._consolidation_tasks: dict[str, asyncio.Task] = {}  # session_key -> in-flight task
         self._consolidation_locks: dict[str, asyncio.Lock] = {}
         self._register_default_tools()
 
@@ -293,9 +293,14 @@ class AgentLoop:
         return lock
 
     def _prune_consolidation_lock(self, session_key: str, lock: asyncio.Lock) -> None:
-        """Drop lock entry if no longer in use."""
+        """Drop lock entry if no longer in use; batch-clean when dict grows large."""
         if not lock.locked():
             self._consolidation_locks.pop(session_key, None)
+        # Batch cleanup: when dict exceeds 100 entries, purge all unlocked
+        if len(self._consolidation_locks) > 100:
+            stale = [k for k, v in self._consolidation_locks.items() if not v.locked()]
+            for k in stale:
+                del self._consolidation_locks[k]
 
     async def _process_message(
         self,
@@ -342,6 +347,15 @@ class AgentLoop:
         # Slash commands
         cmd = msg.content.strip().lower()
         if cmd == "/new":
+            # Cancel any in-flight consolidation for this session so /new
+            # doesn't block waiting for a potentially stuck LLM call.
+            running = self._consolidation_tasks.pop(session.key, None)
+            if running and not running.done():
+                running.cancel()
+                try:
+                    await running
+                except (asyncio.CancelledError, Exception):
+                    pass
             lock = self._get_consolidation_lock(session.key)
             self._consolidating.add(session.key)
             try:
@@ -385,12 +399,11 @@ class AgentLoop:
                 finally:
                     self._consolidating.discard(session.key)
                     self._prune_consolidation_lock(session.key, lock)
-                    _task = asyncio.current_task()
-                    if _task is not None:
-                        self._consolidation_tasks.discard(_task)
+                    # Remove ourselves from the task dict
+                    self._consolidation_tasks.pop(session.key, None)
 
             _task = asyncio.create_task(_consolidate_and_unlock())
-            self._consolidation_tasks.add(_task)
+            self._consolidation_tasks[session.key] = _task
 
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
         if message_tool := self.tools.get("message"):

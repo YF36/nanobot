@@ -529,7 +529,7 @@ class TestConsolidationDeduplicationGuard:
     async def test_new_command_guard_prevents_concurrent_consolidation(
         self, tmp_path: Path
     ) -> None:
-        """/new command does not run consolidation concurrently with in-flight consolidation."""
+        """/new cancels in-flight consolidation, then runs its own archive."""
         from nanobot.agent.loop import AgentLoop
         from nanobot.bus.events import InboundMessage
         from nanobot.bus.queue import MessageBus
@@ -554,24 +554,37 @@ class TestConsolidationDeduplicationGuard:
         consolidation_calls = 0
         active = 0
         max_active = 0
+        cancelled = False
+        started = asyncio.Event()
 
-        async def _fake_consolidate(_session, archive_all: bool = False) -> None:
-            nonlocal consolidation_calls, active, max_active
+        async def _fake_consolidate(_session, archive_all: bool = False) -> bool:
+            nonlocal consolidation_calls, active, max_active, cancelled
             consolidation_calls += 1
             active += 1
             max_active = max(max_active, active)
-            await asyncio.sleep(0.05)
+            try:
+                if not archive_all:
+                    started.set()
+                    await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled = True
+                active -= 1
+                raise
             active -= 1
+            return True
 
         loop._consolidate_memory = _fake_consolidate  # type: ignore[method-assign]
 
         msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content="hello")
         await loop._process_message(msg)
+        await started.wait()
 
         new_msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content="/new")
         await loop._process_message(new_msg)
         await asyncio.sleep(0.1)
 
+        assert cancelled, "In-flight consolidation should have been cancelled"
+        # 1 normal (cancelled) + 1 archive_all from /new = 2
         assert consolidation_calls == 2, (
             f"Expected normal + /new consolidations, got {consolidation_calls}"
         )
@@ -626,7 +639,7 @@ class TestConsolidationDeduplicationGuard:
     async def test_new_waits_for_inflight_consolidation_and_preserves_messages(
         self, tmp_path: Path
     ) -> None:
-        """/new waits for in-flight consolidation and archives before clear."""
+        """/new cancels in-flight consolidation and archives before clear."""
         from nanobot.agent.loop import AgentLoop
         from nanobot.bus.events import InboundMessage
         from nanobot.bus.queue import MessageBus
@@ -649,16 +662,20 @@ class TestConsolidationDeduplicationGuard:
         loop.sessions.save(session)
 
         started = asyncio.Event()
-        release = asyncio.Event()
+        cancelled = False
         archived_count = 0
 
         async def _fake_consolidate(sess, archive_all: bool = False) -> bool:
-            nonlocal archived_count
+            nonlocal cancelled, archived_count
             if archive_all:
                 archived_count = len(sess.messages)
                 return True
             started.set()
-            await release.wait()
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
             return True
 
         loop._consolidate_memory = _fake_consolidate  # type: ignore[method-assign]
@@ -668,13 +685,9 @@ class TestConsolidationDeduplicationGuard:
         await started.wait()
 
         new_msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content="/new")
-        pending_new = asyncio.create_task(loop._process_message(new_msg))
+        response = await loop._process_message(new_msg)
 
-        await asyncio.sleep(0.02)
-        assert not pending_new.done(), "/new should wait while consolidation is in-flight"
-
-        release.set()
-        response = await pending_new
+        assert cancelled, "In-flight consolidation should have been cancelled"
         assert response is not None
         assert "new session started" in response.content.lower()
         assert archived_count > 0, "Expected /new archival to process a non-empty snapshot"
@@ -728,7 +741,7 @@ class TestConsolidationDeduplicationGuard:
     async def test_new_archives_only_unconsolidated_messages_after_inflight_task(
         self, tmp_path: Path
     ) -> None:
-        """/new should archive only messages not yet consolidated by prior task."""
+        """/new cancels in-flight task and archives all unconsolidated messages."""
         from nanobot.agent.loop import AgentLoop
         from nanobot.bus.events import InboundMessage
         from nanobot.bus.queue import MessageBus
@@ -751,17 +764,21 @@ class TestConsolidationDeduplicationGuard:
         loop.sessions.save(session)
 
         started = asyncio.Event()
-        release = asyncio.Event()
+        cancelled = False
         archived_count = -1
 
         async def _fake_consolidate(sess, archive_all: bool = False) -> bool:
-            nonlocal archived_count
+            nonlocal cancelled, archived_count
             if archive_all:
                 archived_count = len(sess.messages)
                 return True
 
             started.set()
-            await release.wait()
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
             sess.last_consolidated = len(sess.messages) - 3
             return True
 
@@ -771,18 +788,19 @@ class TestConsolidationDeduplicationGuard:
         await loop._process_message(msg)
         await started.wait()
 
+        # Capture count before /new clears the session
+        expected_archived = len(session.messages)
+
         new_msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content="/new")
-        pending_new = asyncio.create_task(loop._process_message(new_msg))
-        await asyncio.sleep(0.02)
-        assert not pending_new.done()
+        response = await loop._process_message(new_msg)
 
-        release.set()
-        response = await pending_new
-
+        assert cancelled, "In-flight consolidation should have been cancelled"
         assert response is not None
         assert "new session started" in response.content.lower()
-        assert archived_count == 3, (
-            f"Expected only unconsolidated tail to archive, got {archived_count}"
+        # Since the in-flight task was cancelled before updating last_consolidated,
+        # /new archives all messages from last_consolidated (0) onwards.
+        assert archived_count == expected_archived, (
+            f"Expected all unconsolidated messages to be archived, got {archived_count}"
         )
 
     @pytest.mark.asyncio

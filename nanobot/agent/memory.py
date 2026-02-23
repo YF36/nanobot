@@ -81,17 +81,21 @@ class MemoryStore:
 
         Returns True on success (including no-op), False on failure.
         """
+        # Snapshot length before the LLM call so new messages appended
+        # concurrently don't shift the last_consolidated boundary.
+        snapshot_len = len(session.messages)
+
         if archive_all:
-            old_messages = session.messages
+            old_messages = session.messages[:snapshot_len]
             keep_count = 0
-            logger.info("Memory consolidation (archive_all)", message_count=len(session.messages))
+            logger.info("Memory consolidation (archive_all)", message_count=snapshot_len)
         else:
             keep_count = memory_window // 2
-            if len(session.messages) <= keep_count:
+            if snapshot_len <= keep_count:
                 return True
-            if len(session.messages) - session.last_consolidated <= 0:
+            if snapshot_len - session.last_consolidated <= 0:
                 return True
-            old_messages = session.messages[session.last_consolidated:-keep_count]
+            old_messages = session.messages[session.last_consolidated:snapshot_len - keep_count]
             if not old_messages:
                 return True
             logger.info("Memory consolidation", to_consolidate=len(old_messages), keep=keep_count)
@@ -137,8 +141,8 @@ class MemoryStore:
                 if update != current_memory:
                     self.write_long_term(update)
 
-            session.last_consolidated = 0 if archive_all else len(session.messages) - keep_count
-            logger.info("Memory consolidation done", message_count=len(session.messages), last_consolidated=session.last_consolidated)
+            session.last_consolidated = 0 if archive_all else snapshot_len - keep_count
+            logger.info("Memory consolidation done", snapshot_len=snapshot_len, last_consolidated=session.last_consolidated)
             return True
         except Exception:
             logger.exception("Memory consolidation failed")
