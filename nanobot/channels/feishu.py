@@ -378,14 +378,27 @@ class FeishuChannel(BaseChannel):
             "rows": [{f"c{i}": r[i] if i < len(r) else "" for i in range(len(headers))} for r in rows],
         }
 
+    # Feishu caps the number of native table components per interactive card.
+    # Set to 0 to always use markdown tables, avoiding ErrCode 11310.
+    _MAX_TABLES_PER_CARD = 0
+
     def _build_card_elements(self, content: str) -> list[dict]:
         """Split content into div/markdown + table elements for Feishu card."""
-        elements, last_end = [], 0
+        elements, last_end, table_count = [], 0, 0
         for m in self._TABLE_RE.finditer(content):
             before = content[last_end:m.start()]
             if before.strip():
                 elements.extend(self._split_headings(before))
-            elements.append(self._parse_md_table(m.group(1)) or {"tag": "markdown", "content": m.group(1)})
+            if table_count < self._MAX_TABLES_PER_CARD:
+                parsed = self._parse_md_table(m.group(1))
+                if parsed:
+                    elements.append(parsed)
+                    table_count += 1
+                else:
+                    elements.append({"tag": "markdown", "content": m.group(1)})
+            else:
+                # Over limit — keep as markdown text to avoid Feishu 11310
+                elements.append({"tag": "markdown", "content": m.group(1)})
             last_end = m.end()
         remaining = content[last_end:]
         if remaining.strip():
@@ -630,10 +643,17 @@ class FeishuChannel(BaseChannel):
 
             if msg.content and msg.content.strip():
                 card = {"config": {"wide_screen_mode": True}, "elements": self._build_card_elements(msg.content)}
-                await loop.run_in_executor(
+                ok = await loop.run_in_executor(
                     None, self._send_message_sync,
                     receive_id_type, msg.chat_id, "interactive", json.dumps(card, ensure_ascii=False),
                 )
+                if not ok:
+                    # Fallback: send as plain text when card fails (e.g. table limit)
+                    logger.warning("Card send failed, falling back to plain text")
+                    await loop.run_in_executor(
+                        None, self._send_message_sync,
+                        receive_id_type, msg.chat_id, "text", json.dumps({"text": msg.content}, ensure_ascii=False),
+                    )
 
         except Exception as e:
             logger.error("Error sending Feishu message", error=str(e))
