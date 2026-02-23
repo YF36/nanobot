@@ -112,7 +112,10 @@ class SubagentManager:
             tools.register(ExecTool(
                 working_dir=str(self.workspace),
                 timeout=self.exec_config.timeout,
+                deny_patterns=self.exec_config.deny_patterns,
+                allow_patterns=self.exec_config.allow_patterns,
                 restrict_to_workspace=self.restrict_to_workspace,
+                audit_executions=self.exec_config.audit_executions,
             ))
             tools.register(WebSearchTool(api_key=self.brave_api_key))
             tools.register(WebFetchTool())

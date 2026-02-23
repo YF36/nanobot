@@ -250,6 +250,9 @@ class ExecToolConfig(Base):
     """Shell exec tool configuration."""
 
     timeout: int = 60
+    deny_patterns: list[str] | None = None  # None = use built-in defaults
+    allow_patterns: list[str] = Field(default_factory=list)
+    audit_executions: bool = True  # Log all executed commands to audit log
 
 
 class MCPServerConfig(Base):
