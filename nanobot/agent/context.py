@@ -1,6 +1,8 @@
 """Context builder for assembling agent prompts."""
 
 import base64
+import io
+import json
 import mimetypes
 import platform
 from pathlib import Path
@@ -121,6 +123,215 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         
         return "\n\n".join(parts) if parts else ""
     
+    # Rough char-to-token ratio (~4 chars per token) and default budget
+    _CHARS_PER_TOKEN = 4
+    _MAX_CONTEXT_TOKENS = 30_000  # conservative default for most models
+
+    @staticmethod
+    def _estimate_message_chars(msg: dict[str, Any]) -> int:
+        """Estimate character count of a message for token budgeting."""
+        total = 0
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            total += len(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        total += len(block.get("text", ""))
+                    elif block.get("type") == "image_url":
+                        # base64 images are very large in chars
+                        url = block.get("image_url", {}).get("url", "")
+                        total += len(url)
+        for key in ("tool_call_id", "name"):
+            value = msg.get(key)
+            if isinstance(value, str):
+                total += len(value)
+        tool_calls = msg.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for tc in tool_calls:
+                if not isinstance(tc, dict):
+                    total += len(str(tc))
+                    continue
+                for key in ("id", "type"):
+                    value = tc.get(key)
+                    if isinstance(value, str):
+                        total += len(value)
+                fn = tc.get("function")
+                if isinstance(fn, dict):
+                    fn_name = fn.get("name")
+                    if isinstance(fn_name, str):
+                        total += len(fn_name)
+                    args = fn.get("arguments")
+                    if isinstance(args, str):
+                        total += len(args)
+                    elif args is not None:
+                        total += len(json.dumps(args, ensure_ascii=False))
+        return total
+
+    def _trim_history(
+        self, history: list[dict[str, Any]], budget_chars: int
+    ) -> list[dict[str, Any]]:
+        """Trim history by user-turn chunks to avoid breaking tool-call structure."""
+        if not history:
+            return history
+        if budget_chars <= 0:
+            return []
+        history = self._drop_leading_non_user(history)
+        if not history:
+            return []
+        total = sum(self._estimate_message_chars(m) for m in history)
+        if total <= budget_chars:
+            return history
+
+        chunks = self._split_history_chunks(history)
+        kept_reversed: list[list[dict[str, Any]]] = []
+        kept_total = 0
+        for chunk in reversed(chunks):
+            chunk_chars = sum(self._estimate_message_chars(m) for m in chunk)
+            if kept_total + chunk_chars > budget_chars:
+                # Do not split a turn chunk; keep protocol structure intact.
+                break
+            kept_reversed.append(chunk)
+            kept_total += chunk_chars
+
+        if not kept_reversed:
+            return []
+        return [m for chunk in reversed(kept_reversed) for m in chunk]
+
+    _ERROR_PREFIXES = ("Error calling LLM:", "error:", "Error:")
+
+    @staticmethod
+    def _msg_text(msg: dict[str, Any]) -> str:
+        """Extract plain text from a message content."""
+        c = msg.get("content", "")
+        if isinstance(c, str):
+            return c
+        if isinstance(c, list):
+            return " ".join(
+                b.get("text", "") for b in c
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
+        return ""
+
+    @staticmethod
+    def _is_tool_protocol_message(msg: dict[str, Any]) -> bool:
+        """Return True for messages that carry tool-call protocol semantics."""
+        if msg.get("role") == "tool":
+            return True
+        return bool(msg.get("tool_calls")) or "tool_call_id" in msg
+
+    def _can_dedupe_message(self, msg: dict[str, Any]) -> bool:
+        """Only dedupe plain user/assistant text messages."""
+        role = msg.get("role")
+        if role == "user":
+            return True
+        if role != "assistant":
+            return False
+        return not self._is_tool_protocol_message(msg)
+
+    def _can_merge_assistant_messages(
+        self, prev: dict[str, Any], curr: dict[str, Any]
+    ) -> bool:
+        """Only merge consecutive plain-text assistant messages."""
+        if prev.get("role") != "assistant" or curr.get("role") != "assistant":
+            return False
+        if self._is_tool_protocol_message(prev) or self._is_tool_protocol_message(curr):
+            return False
+        return isinstance(prev.get("content"), str) and isinstance(curr.get("content"), str)
+
+    @staticmethod
+    def _drop_leading_non_user(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Drop malformed leading history until the first user message."""
+        for i, msg in enumerate(history):
+            if msg.get("role") == "user":
+                return history[i:]
+        return []
+
+    @staticmethod
+    def _split_history_chunks(history: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+        """Split history into chunks anchored by user messages."""
+        chunks: list[list[dict[str, Any]]] = []
+        current: list[dict[str, Any]] = []
+        for msg in history:
+            if msg.get("role") == "user" and current:
+                chunks.append(current)
+                current = [msg]
+            else:
+                current.append(msg)
+        if current:
+            chunks.append(current)
+        return chunks
+
+    # Maximum number of conversation turns (user+assistant pairs) to keep
+    _MAX_HISTORY_TURNS = 20
+    _ASSISTANT_SUMMARY_CHARS = 300
+
+    def _compact_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Compact history: sliding window, remove errors, deduplicate, merge same-role, truncate."""
+        if not history:
+            return history
+
+        # 0. Sliding window: keep only the last N turns
+        user_indices = [i for i, m in enumerate(history) if m.get("role") == "user"]
+        if len(user_indices) > self._MAX_HISTORY_TURNS:
+            start = user_indices[-self._MAX_HISTORY_TURNS]
+            history = history[start:]
+
+        # 1. Remove assistant messages that are just error echoes
+        cleaned = [
+            m for m in history
+            if not (
+                m.get("role") == "assistant"
+                and not self._is_tool_protocol_message(m)
+                and any(self._msg_text(m).startswith(p) for p in self._ERROR_PREFIXES)
+            )
+        ]
+
+        # 2. Truncate long assistant replies to summary length
+        truncated = []
+        for m in cleaned:
+            if (
+                m.get("role") == "assistant"
+                and not self._is_tool_protocol_message(m)
+                and isinstance(m.get("content"), str)
+            ):
+                if len(m["content"]) > self._ASSISTANT_SUMMARY_CHARS:
+                    truncated.append({**m, "content": m["content"][:self._ASSISTANT_SUMMARY_CHARS] + "\n... (truncated)"})
+                    continue
+            truncated.append(m)
+
+        # 3. Deduplicate consecutive identical messages
+        deduped: list[dict[str, Any]] = []
+        for m in truncated:
+            if deduped and deduped[-1].get("role") == m.get("role"):
+                if self._can_dedupe_message(deduped[-1]) and self._can_dedupe_message(m):
+                    prev_text = self._msg_text(deduped[-1])
+                    curr_text = self._msg_text(m)
+                    if prev_text == curr_text:
+                        continue
+            deduped.append(m)
+
+        # 4. Handle consecutive same-role messages
+        #    - consecutive user messages: keep only the last one (earlier ones are abandoned questions)
+        #    - consecutive plain assistant messages: merge them
+        merged: list[dict[str, Any]] = []
+        for m in deduped:
+            if merged and merged[-1].get("role") == m.get("role"):
+                if m.get("role") == "user":
+                    # Replace previous user msg — it was never answered
+                    merged[-1] = m
+                elif self._can_merge_assistant_messages(merged[-1], m):
+                    prev_text = self._msg_text(merged[-1])
+                    curr_text = self._msg_text(m)
+                    merged[-1] = {**merged[-1], "content": prev_text + "\n" + curr_text}
+                else:
+                    merged.append(m)
+            else:
+                merged.append(m)
+
+        return self._drop_leading_non_user(merged)
+
     def build_messages(
         self,
         history: list[dict[str, Any]],
@@ -152,8 +363,25 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
         messages.append({"role": "system", "content": system_prompt})
 
-        # History
-        messages.extend(history)
+        # Budget for history = total budget minus system prompt and current message
+        system_chars = len(system_prompt)
+        current_chars = len(current_message) if isinstance(current_message, str) else 0
+        budget_chars = (
+            self._MAX_CONTEXT_TOKENS * self._CHARS_PER_TOKEN
+            - system_chars - current_chars
+        )
+        budget_chars = max(budget_chars, 0)
+
+        # History (compact then trim to fit budget)
+        compacted = self._compact_history(history)
+        trimmed = self._trim_history(compacted, budget_chars)
+
+        # Drop trailing user message in history if it was never answered —
+        # the current message supersedes it, avoids consecutive user messages.
+        if trimmed and trimmed[-1].get("role") == "user":
+            trimmed.pop()
+
+        messages.extend(trimmed)
 
         # Current message (with optional image attachments)
         user_content = self._build_user_content(current_message, media)
@@ -161,20 +389,55 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
 
         return messages
 
+    # Max dimension (px) and file size (bytes) for images sent to LLM
+    _IMAGE_MAX_DIM = 1024
+    _IMAGE_MAX_BYTES = 200_000  # ~200 KB after compression
+
+    def _compress_image(self, path: Path) -> tuple[str, str] | None:
+        """Resize and compress an image, return (base64_str, mime_type) or None."""
+        try:
+            from PIL import Image
+        except ImportError:
+            # Fallback: read raw but cap file size
+            raw = path.read_bytes()
+            if len(raw) > self._IMAGE_MAX_BYTES * 3:
+                return None  # too large without PIL
+            mime, _ = mimetypes.guess_type(str(path))
+            return base64.b64encode(raw).decode(), mime or "image/jpeg"
+
+        try:
+            img = Image.open(path)
+            img.thumbnail((self._IMAGE_MAX_DIM, self._IMAGE_MAX_DIM))
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            buf = io.BytesIO()
+            quality = 85
+            img.save(buf, format="JPEG", quality=quality)
+            # Reduce quality if still too large
+            while buf.tell() > self._IMAGE_MAX_BYTES and quality > 30:
+                quality -= 15
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=quality)
+            return base64.b64encode(buf.getvalue()).decode(), "image/jpeg"
+        except Exception:
+            return None
+
     def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
-        """Build user message content with optional base64-encoded images."""
+        """Build user message content with optional compressed images."""
         if not media:
             return text
-        
+
         images = []
         for path in media:
             p = Path(path)
             mime, _ = mimetypes.guess_type(path)
             if not p.is_file() or not mime or not mime.startswith("image/"):
                 continue
-            b64 = base64.b64encode(p.read_bytes()).decode()
-            images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
-        
+            result = self._compress_image(p)
+            if result:
+                b64, img_mime = result
+                images.append({"type": "image_url", "image_url": {"url": f"data:{img_mime};base64,{b64}"}})
+
         if not images:
             return text
         return images + [{"type": "text", "text": text}]
