@@ -29,7 +29,7 @@ from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import ExecToolConfig, FilesystemToolConfig
+    from nanobot.config.schema import ChannelsConfig, ExecToolConfig, FilesystemToolConfig
     from nanobot.cron.service import CronService
 
 logger = get_logger(__name__)
@@ -65,9 +65,11 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         audit_tool_calls: bool = True,
+        channels_config: ChannelsConfig | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, FilesystemToolConfig
         self.bus = bus
+        self.channels_config = channels_config
         self.provider = provider
         self.workspace = workspace
         self.model = model or provider.get_default_model()
@@ -184,7 +186,7 @@ class AgentLoop:
     async def _run_agent_loop(
         self,
         initial_messages: list[dict],
-        on_progress: Callable[[str], Awaitable[None]] | None = None,
+        on_progress: Callable[..., Awaitable[None]] | None = None,
     ) -> tuple[str | None, list[str]]:
         """Run the agent iteration loop. Returns (final_content, tools_used)."""
         messages = initial_messages
@@ -208,8 +210,7 @@ class AgentLoop:
                     clean = self._strip_think(response.content)
                     if clean:
                         await on_progress(clean)
-                    else:
-                        await on_progress(self._tool_hint(response.tool_calls))
+                    await on_progress(self._tool_hint(response.tool_calls), tool_hint=True)
 
                 tool_call_dicts = [
                     {
@@ -417,9 +418,10 @@ class AgentLoop:
             channel=msg.channel, chat_id=msg.chat_id,
         )
 
-        async def _bus_progress(content: str) -> None:
+        async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
             meta = dict(msg.metadata or {})
             meta["_progress"] = True
+            meta["_tool_hint"] = tool_hint
             await self.bus.publish_outbound(OutboundMessage(
                 channel=msg.channel, chat_id=msg.chat_id, content=content, metadata=meta,
             ))
