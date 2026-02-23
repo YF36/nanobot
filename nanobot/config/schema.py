@@ -258,6 +258,21 @@ class ProvidersConfig(Base):
     github_copilot: ProviderConfig = Field(default_factory=ProviderConfig)  # Github Copilot (OAuth)
 
 
+class LangfuseConfig(Base):
+    """Langfuse observability configuration."""
+
+    enabled: bool = False
+    public_key: str = ""   # Falls back to LANGFUSE_PUBLIC_KEY env var
+    secret_key: str = ""   # Falls back to LANGFUSE_SECRET_KEY env var
+    host: str = ""         # Falls back to LANGFUSE_HOST env var
+
+
+class ObservabilityConfig(Base):
+    """Observability configuration."""
+
+    langfuse: LangfuseConfig = Field(default_factory=LangfuseConfig)
+
+
 class GatewayConfig(Base):
     """Gateway/server configuration."""
 
@@ -322,6 +337,7 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
 
     @property
     def workspace_path(self) -> Path:

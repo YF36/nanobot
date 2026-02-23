@@ -6,10 +6,14 @@ import os
 from typing import Any
 
 import litellm
+import structlog
 from litellm import acompletion
 
+from nanobot.logging import get_logger, mask_secret
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from nanobot.providers.registry import find_by_model, find_gateway
+
+logger = get_logger("nanobot.providers.litellm")
 
 
 # Standard OpenAI chat-completion message keys; extras (e.g. reasoning_content) are stripped for strict providers.
@@ -26,33 +30,40 @@ class LiteLLMProvider(LLMProvider):
     """
     
     def __init__(
-        self, 
-        api_key: str | None = None, 
+        self,
+        api_key: str | None = None,
         api_base: str | None = None,
         default_model: str = "anthropic/claude-opus-4-5",
         extra_headers: dict[str, str] | None = None,
         provider_name: str | None = None,
+        langfuse_config: Any | None = None,
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
         self.extra_headers = extra_headers or {}
-        
+        self._langfuse_enabled = False
+
         # Detect gateway / local deployment.
         # provider_name (from config key) is the primary signal;
         # api_key / api_base are fallback for auto-detection.
         self._gateway = find_gateway(provider_name, api_key, api_base)
-        
+
         # Configure environment variables
         if api_key:
             self._setup_env(api_key, api_base, default_model)
-        
+            logger.info("provider_initialized", model=default_model, api_key=mask_secret(api_key))
+
         if api_base:
             litellm.api_base = api_base
-        
+
         # Disable LiteLLM logging noise
         litellm.suppress_debug_info = True
         # Drop unsupported parameters for providers (e.g., gpt-5 rejects some params)
         litellm.drop_params = True
+
+        # Setup Langfuse observability
+        if langfuse_config is not None:
+            self._setup_langfuse(langfuse_config)
     
     def _setup_env(self, api_key: str, api_base: str | None, model: str) -> None:
         """Set environment variables based on detected provider."""
@@ -77,6 +88,59 @@ class LiteLLMProvider(LLMProvider):
             resolved = env_val.replace("{api_key}", api_key)
             resolved = resolved.replace("{api_base}", effective_base)
             os.environ.setdefault(env_name, resolved)
+
+    def _setup_langfuse(self, config: Any) -> None:
+        """Configure Langfuse callbacks if enabled and keys are available."""
+        if not getattr(config, "enabled", False):
+            return
+
+        public_key = config.public_key or os.environ.get("LANGFUSE_PUBLIC_KEY", "")
+        secret_key = config.secret_key or os.environ.get("LANGFUSE_SECRET_KEY", "")
+        host = config.host or os.environ.get("LANGFUSE_HOST", "")
+
+        if not public_key or not secret_key:
+            logger.warning("langfuse_missing_keys", hint="Set public_key and secret_key or LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY env vars")
+            return
+
+        # Set env vars so LiteLLM's built-in Langfuse integration picks them up
+        os.environ.setdefault("LANGFUSE_PUBLIC_KEY", public_key)
+        os.environ.setdefault("LANGFUSE_SECRET_KEY", secret_key)
+        if host:
+            os.environ.setdefault("LANGFUSE_HOST", host)
+
+        # Register callbacks
+        if "langfuse" not in litellm.success_callback:
+            litellm.success_callback.append("langfuse")
+        if "langfuse" not in litellm.failure_callback:
+            litellm.failure_callback.append("langfuse")
+
+        self._langfuse_enabled = True
+        logger.info("langfuse_enabled", host=host or "(default)")
+
+    def _build_langfuse_metadata(self) -> dict[str, Any] | None:
+        """Build Langfuse trace metadata from structlog contextvars."""
+        if not self._langfuse_enabled:
+            return None
+
+        ctx = structlog.contextvars.get_contextvars()
+        if not ctx:
+            return None
+
+        metadata: dict[str, Any] = {}
+        if ctx.get("sender_id"):
+            metadata["trace_user_id"] = ctx["sender_id"]
+        if ctx.get("session_key"):
+            metadata["trace_session_id"] = ctx["session_key"]
+
+        tags = []
+        if ctx.get("channel"):
+            tags.append(ctx["channel"])
+        if ctx.get("chat_id"):
+            tags.append(f"chat:{ctx['chat_id']}")
+        if tags:
+            metadata["trace_tags"] = tags
+
+        return metadata if metadata else None
     
     def _resolve_model(self, model: str) -> str:
         """Resolve model name by applying provider/gateway prefixes."""
@@ -219,14 +283,23 @@ class LiteLLMProvider(LLMProvider):
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
-        
+
+        # Inject Langfuse trace metadata
+        langfuse_metadata = self._build_langfuse_metadata()
+        if langfuse_metadata:
+            kwargs["metadata"] = langfuse_metadata
+
         try:
             response = await acompletion(**kwargs)
             return self._parse_response(response)
         except Exception as e:
-            # Return error as content for graceful handling
+            error_msg = str(e)
+            # Mask any API keys that may appear in exception messages
+            if self.api_key and self.api_key in error_msg:
+                error_msg = error_msg.replace(self.api_key, mask_secret(self.api_key))
+            logger.error("llm_call_failed", model=model, error=error_msg)
             return LLMResponse(
-                content=f"Error calling LLM: {str(e)}",
+                content=f"Error calling LLM: {error_msg}",
                 finish_reason="error",
             )
     
