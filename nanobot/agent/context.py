@@ -363,9 +363,12 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
         messages.append({"role": "system", "content": system_prompt})
 
-        # Budget for history = total budget minus system prompt and current message
+        # Build current message first so image payload size can be counted in budgeting.
+        user_content = self._build_user_content(current_message, media)
+
+        # Budget for history = total budget minus system prompt and current message payload
         system_chars = len(system_prompt)
-        current_chars = len(current_message) if isinstance(current_message, str) else 0
+        current_chars = self._estimate_message_chars({"content": user_content})
         budget_chars = (
             self._MAX_CONTEXT_TOKENS * self._CHARS_PER_TOKEN
             - system_chars - current_chars
@@ -384,7 +387,6 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         messages.extend(trimmed)
 
         # Current message (with optional image attachments)
-        user_content = self._build_user_content(current_message, media)
         messages.append({"role": "user", "content": user_content})
 
         return messages

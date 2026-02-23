@@ -111,3 +111,24 @@ def test_build_messages_drops_history_when_budget_is_negative(tmp_path) -> None:
 
     assert [m["role"] for m in messages] == ["system", "user"]
     assert messages[-1]["content"] == "x" * 100
+
+
+def test_build_messages_counts_current_image_payload_in_budget(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    builder.build_system_prompt = lambda skill_names=None: "sys"  # type: ignore[method-assign]
+    builder._MAX_CONTEXT_TOKENS = 15  # 60 chars total budget
+    builder._build_user_content = lambda text, media: [  # type: ignore[method-assign]
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + ("x" * 120)}},
+        {"type": "text", "text": text},
+    ]
+
+    history = [
+        {"role": "user", "content": "older question"},
+        {"role": "assistant", "content": "older answer"},
+    ]
+
+    messages = builder.build_messages(history=history, current_message="hi", media=["dummy.jpg"])
+
+    # Image payload consumes the budget; history should be dropped.
+    assert [m["role"] for m in messages] == ["system", "user"]
+    assert isinstance(messages[-1]["content"], list)
