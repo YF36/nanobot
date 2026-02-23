@@ -66,9 +66,11 @@ class ToolRegistry:
         Returns:
             Tool execution result as string.
         """
+        _HINT = "\n\n[Analyze the error above and try a different approach.]"
+
         tool = self._tools.get(name)
         if not tool:
-            return f"Error: Tool '{name}' not found"
+            return f"Error: Tool '{name}' not found. Available: {', '.join(self.tool_names)}"
 
         if self._audit:
             audit_log.info(
@@ -81,7 +83,7 @@ class ToolRegistry:
         try:
             errors = tool.validate_params(params)
             if errors:
-                msg = f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors)
+                msg = f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors) + _HINT
                 if self._audit:
                     audit_log.warning("tool_call_failed", tool=name, error="invalid_params")
                 return msg
@@ -94,6 +96,8 @@ class ToolRegistry:
                     duration_ms=round(elapsed, 1),
                     result_length=len(result),
                 )
+            if isinstance(result, str) and result.startswith("Error"):
+                return result + _HINT
             return result
         except Exception as e:
             if self._audit:
@@ -104,8 +108,7 @@ class ToolRegistry:
                     error=str(e),
                     duration_ms=round(elapsed, 1),
                 )
-            return f"Error executing {name}: {str(e)}"
-
+            return f"Error executing {name}: {str(e)}" + _HINT
     @property
     def tool_names(self) -> list[str]:
         """Get list of registered tool names."""
