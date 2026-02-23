@@ -52,8 +52,8 @@ class QQChannel(BaseChannel):
 
     name = "qq"
 
-    def __init__(self, config: QQConfig, bus: MessageBus):
-        super().__init__(config, bus)
+    def __init__(self, config: QQConfig, bus: MessageBus, rate_limiter=None):
+        super().__init__(config, bus, rate_limiter=rate_limiter)
         self.config: QQConfig = config
         self._client: "botpy.Client | None" = None
         self._processed_ids: deque = deque(maxlen=1000)

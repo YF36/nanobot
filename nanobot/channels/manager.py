@@ -10,6 +10,7 @@ from nanobot.logging import get_logger
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
+from nanobot.channels.ratelimit import RateLimiter
 from nanobot.config.schema import Config
 
 logger = get_logger(__name__)
@@ -35,6 +36,18 @@ class ChannelManager:
     
     def _init_channels(self) -> None:
         """Initialize channels based on config."""
+        rl_cfg = self.config.channels.rate_limit
+        rate_limiter: RateLimiter | None = None
+        if rl_cfg.enabled:
+            rate_limiter = RateLimiter(
+                max_messages=rl_cfg.max_messages,
+                window_seconds=rl_cfg.window_seconds,
+            )
+            logger.info(
+                "Rate limiter enabled",
+                max_messages=rl_cfg.max_messages,
+                window_seconds=rl_cfg.window_seconds,
+            )
         
         # Telegram channel
         if self.config.channels.telegram.enabled:
@@ -44,6 +57,7 @@ class ChannelManager:
                     self.config.channels.telegram,
                     self.bus,
                     groq_api_key=self.config.providers.groq.api_key,
+                    rate_limiter=rate_limiter,
                 )
                 logger.info("Telegram channel enabled")
             except ImportError as e:
@@ -54,7 +68,8 @@ class ChannelManager:
             try:
                 from nanobot.channels.whatsapp import WhatsAppChannel
                 self.channels["whatsapp"] = WhatsAppChannel(
-                    self.config.channels.whatsapp, self.bus
+                    self.config.channels.whatsapp, self.bus,
+                    rate_limiter=rate_limiter,
                 )
                 logger.info("WhatsApp channel enabled")
             except ImportError as e:
@@ -65,7 +80,8 @@ class ChannelManager:
             try:
                 from nanobot.channels.discord import DiscordChannel
                 self.channels["discord"] = DiscordChannel(
-                    self.config.channels.discord, self.bus
+                    self.config.channels.discord, self.bus,
+                    rate_limiter=rate_limiter,
                 )
                 logger.info("Discord channel enabled")
             except ImportError as e:
@@ -76,7 +92,8 @@ class ChannelManager:
             try:
                 from nanobot.channels.feishu import FeishuChannel
                 self.channels["feishu"] = FeishuChannel(
-                    self.config.channels.feishu, self.bus
+                    self.config.channels.feishu, self.bus,
+                    rate_limiter=rate_limiter,
                 )
                 logger.info("Feishu channel enabled")
             except ImportError as e:
@@ -88,7 +105,8 @@ class ChannelManager:
                 from nanobot.channels.mochat import MochatChannel
 
                 self.channels["mochat"] = MochatChannel(
-                    self.config.channels.mochat, self.bus
+                    self.config.channels.mochat, self.bus,
+                    rate_limiter=rate_limiter,
                 )
                 logger.info("Mochat channel enabled")
             except ImportError as e:
@@ -99,7 +117,8 @@ class ChannelManager:
             try:
                 from nanobot.channels.dingtalk import DingTalkChannel
                 self.channels["dingtalk"] = DingTalkChannel(
-                    self.config.channels.dingtalk, self.bus
+                    self.config.channels.dingtalk, self.bus,
+                    rate_limiter=rate_limiter,
                 )
                 logger.info("DingTalk channel enabled")
             except ImportError as e:
@@ -110,7 +129,8 @@ class ChannelManager:
             try:
                 from nanobot.channels.email import EmailChannel
                 self.channels["email"] = EmailChannel(
-                    self.config.channels.email, self.bus
+                    self.config.channels.email, self.bus,
+                    rate_limiter=rate_limiter,
                 )
                 logger.info("Email channel enabled")
             except ImportError as e:
@@ -121,7 +141,8 @@ class ChannelManager:
             try:
                 from nanobot.channels.slack import SlackChannel
                 self.channels["slack"] = SlackChannel(
-                    self.config.channels.slack, self.bus
+                    self.config.channels.slack, self.bus,
+                    rate_limiter=rate_limiter,
                 )
                 logger.info("Slack channel enabled")
             except ImportError as e:
@@ -134,6 +155,7 @@ class ChannelManager:
                 self.channels["qq"] = QQChannel(
                     self.config.channels.qq,
                     self.bus,
+                    rate_limiter=rate_limiter,
                 )
                 logger.info("QQ channel enabled")
             except ImportError as e:

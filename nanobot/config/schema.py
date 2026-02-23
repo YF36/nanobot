@@ -1,9 +1,26 @@
 """Configuration schema using Pydantic."""
 
+import os
+import re
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from pydantic.alias_generators import to_camel
 from pydantic_settings import BaseSettings
+
+
+_ENV_REF_RE = re.compile(r"^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$")
+
+
+def _resolve_env(value: str) -> str:
+    """If *value* looks like ``$VAR`` or ``${VAR}``, return the env var value.
+
+    Returns the original string unchanged if it doesn't match or the env var
+    is not set.
+    """
+    m = _ENV_REF_RE.match(value)
+    if m:
+        return os.environ.get(m.group(1), value)
+    return value
 
 
 class Base(BaseModel):
@@ -165,6 +182,14 @@ class QQConfig(Base):
     allow_from: list[str] = Field(default_factory=list)  # Allowed user openids (empty = public access)
 
 
+class RateLimitConfig(Base):
+    """Per-sender rate limiting configuration for channels."""
+
+    enabled: bool = True
+    max_messages: int = 20       # Max messages per sender within the window
+    window_seconds: int = 60     # Sliding window size in seconds
+
+
 class ChannelsConfig(Base):
     """Configuration for chat channels."""
 
@@ -177,6 +202,7 @@ class ChannelsConfig(Base):
     email: EmailConfig = Field(default_factory=EmailConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
     qq: QQConfig = Field(default_factory=QQConfig)
+    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
 
 
 class AgentDefaults(Base):
@@ -202,6 +228,11 @@ class ProviderConfig(Base):
     api_key: str = ""
     api_base: str | None = None
     extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
+
+    @property
+    def resolved_api_key(self) -> str:
+        """Return the API key, resolving ``$ENV_VAR`` references."""
+        return _resolve_env(self.api_key) if self.api_key else ""
 
 
 class ProvidersConfig(Base):
@@ -313,14 +344,14 @@ class Config(BaseSettings):
         for spec in PROVIDERS:
             p = getattr(self.providers, spec.name, None)
             if p and model_prefix and normalized_prefix == spec.name:
-                if spec.is_oauth or p.api_key:
+                if spec.is_oauth or p.resolved_api_key:
                     return p, spec.name
 
         # Match by keyword (order follows PROVIDERS registry)
         for spec in PROVIDERS:
             p = getattr(self.providers, spec.name, None)
             if p and any(_kw_matches(kw) for kw in spec.keywords):
-                if spec.is_oauth or p.api_key:
+                if spec.is_oauth or p.resolved_api_key:
                     return p, spec.name
 
         # Fallback: gateways first, then others (follows registry order)
@@ -329,7 +360,7 @@ class Config(BaseSettings):
             if spec.is_oauth:
                 continue
             p = getattr(self.providers, spec.name, None)
-            if p and p.api_key:
+            if p and p.resolved_api_key:
                 return p, spec.name
         return None, None
 
@@ -344,9 +375,9 @@ class Config(BaseSettings):
         return name
 
     def get_api_key(self, model: str | None = None) -> str | None:
-        """Get API key for the given model. Falls back to first available key."""
+        """Get resolved API key for the given model. Falls back to first available key."""
         p = self.get_provider(model)
-        return p.api_key if p else None
+        return p.resolved_api_key if p else None
 
     def get_api_base(self, model: str | None = None) -> str | None:
         """Get API base URL for the given model. Applies default URLs for known gateways."""

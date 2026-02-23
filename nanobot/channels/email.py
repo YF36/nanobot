@@ -52,8 +52,8 @@ class EmailChannel(BaseChannel):
         "Dec",
     )
 
-    def __init__(self, config: EmailConfig, bus: MessageBus):
-        super().__init__(config, bus)
+    def __init__(self, config: EmailConfig, bus: MessageBus, rate_limiter=None):
+        super().__init__(config, bus, rate_limiter=rate_limiter)
         self.config: EmailConfig = config
         self._last_subject_by_chat: dict[str, str] = {}
         self._last_message_id_by_chat: dict[str, str] = {}

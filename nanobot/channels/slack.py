@@ -25,8 +25,8 @@ class SlackChannel(BaseChannel):
 
     name = "slack"
 
-    def __init__(self, config: SlackConfig, bus: MessageBus):
-        super().__init__(config, bus)
+    def __init__(self, config: SlackConfig, bus: MessageBus, rate_limiter=None):
+        super().__init__(config, bus, rate_limiter=rate_limiter)
         self.config: SlackConfig = config
         self._web_client: AsyncWebClient | None = None
         self._socket_client: SocketModeClient | None = None

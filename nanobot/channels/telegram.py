@@ -121,8 +121,9 @@ class TelegramChannel(BaseChannel):
         config: TelegramConfig,
         bus: MessageBus,
         groq_api_key: str = "",
+        rate_limiter=None,
     ):
-        super().__init__(config, bus)
+        super().__init__(config, bus, rate_limiter=rate_limiter)
         self.config: TelegramConfig = config
         self.groq_api_key = groq_api_key
         self._app: Application | None = None

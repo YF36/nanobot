@@ -1,37 +1,43 @@
 """Base channel interface for chat platforms."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from typing import Any
 
 from nanobot.logging import get_logger
 
 from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.channels.ratelimit import RateLimiter
 
 logger = get_logger(__name__)
+audit_log = get_logger("nanobot.audit")
 from nanobot.bus.queue import MessageBus
 
 
 class BaseChannel(ABC):
     """
     Abstract base class for chat channel implementations.
-    
+
     Each channel (Telegram, Discord, etc.) should implement this interface
     to integrate with the nanobot message bus.
     """
-    
+
     name: str = "base"
-    
-    def __init__(self, config: Any, bus: MessageBus):
+
+    def __init__(self, config: Any, bus: MessageBus, rate_limiter: RateLimiter | None = None):
         """
         Initialize the channel.
-        
+
         Args:
             config: Channel-specific configuration.
             bus: The message bus for communication.
+            rate_limiter: Optional shared rate limiter instance.
         """
         self.config = config
         self.bus = bus
         self._running = False
+        self._rate_limiter = rate_limiter
     
     @abstractmethod
     async def start(self) -> None:
@@ -110,8 +116,24 @@ class BaseChannel(ABC):
                 "Access denied for sender on channel",
                 sender_id=sender_id, channel=self.name,
             )
+            audit_log.warning(
+                "channel_access_denied",
+                sender_id=sender_id, channel=self.name,
+            )
             return
-        
+
+        if self._rate_limiter and not self._rate_limiter.is_allowed(sender_id):
+            audit_log.warning(
+                "channel_rate_limited",
+                sender_id=sender_id, channel=self.name,
+            )
+            return
+
+        audit_log.info(
+            "channel_message_accepted",
+            sender_id=sender_id, channel=self.name, chat_id=chat_id,
+        )
+
         msg = InboundMessage(
             channel=self.name,
             sender_id=str(sender_id),
@@ -120,7 +142,7 @@ class BaseChannel(ABC):
             media=media or [],
             metadata=metadata or {}
         )
-        
+
         await self.bus.publish_inbound(msg)
     
     @property
