@@ -6,13 +6,15 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from loguru import logger
+from nanobot.logging import get_logger
 
 from nanobot.utils.helpers import ensure_dir
 
 if TYPE_CHECKING:
     from nanobot.providers.base import LLMProvider
     from nanobot.session.manager import Session
+
+logger = get_logger(__name__)
 
 
 _SAVE_MEMORY_TOOL = [
@@ -82,7 +84,7 @@ class MemoryStore:
         if archive_all:
             old_messages = session.messages
             keep_count = 0
-            logger.info("Memory consolidation (archive_all): {} messages", len(session.messages))
+            logger.info("Memory consolidation (archive_all)", message_count=len(session.messages))
         else:
             keep_count = memory_window // 2
             if len(session.messages) <= keep_count:
@@ -92,7 +94,7 @@ class MemoryStore:
             old_messages = session.messages[session.last_consolidated:-keep_count]
             if not old_messages:
                 return True
-            logger.info("Memory consolidation: {} to consolidate, {} keep", len(old_messages), keep_count)
+            logger.info("Memory consolidation", to_consolidate=len(old_messages), keep=keep_count)
 
         lines = []
         for m in old_messages:
@@ -136,7 +138,7 @@ class MemoryStore:
                     self.write_long_term(update)
 
             session.last_consolidated = 0 if archive_all else len(session.messages) - keep_count
-            logger.info("Memory consolidation done: {} messages, last_consolidated={}", len(session.messages), session.last_consolidated)
+            logger.info("Memory consolidation done", message_count=len(session.messages), last_consolidated=session.last_consolidated)
             return True
         except Exception:
             logger.exception("Memory consolidation failed")

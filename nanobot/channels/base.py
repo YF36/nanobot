@@ -3,9 +3,11 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from loguru import logger
+from nanobot.logging import get_logger
 
 from nanobot.bus.events import InboundMessage, OutboundMessage
+
+logger = get_logger(__name__)
 from nanobot.bus.queue import MessageBus
 
 
@@ -105,9 +107,8 @@ class BaseChannel(ABC):
         """
         if not self.is_allowed(sender_id):
             logger.warning(
-                "Access denied for sender {} on channel {}. "
-                "Add them to allowFrom list in config to grant access.",
-                sender_id, self.name,
+                "Access denied for sender on channel",
+                sender_id=sender_id, channel=self.name,
             )
             return
         

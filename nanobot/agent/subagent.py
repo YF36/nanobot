@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from loguru import logger
+from nanobot.logging import get_logger
 
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
@@ -15,6 +15,8 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
+
+logger = get_logger(__name__)
 
 
 class SubagentManager:
@@ -86,7 +88,7 @@ class SubagentManager:
         # Cleanup when done
         bg_task.add_done_callback(lambda _: self._running_tasks.pop(task_id, None))
         
-        logger.info("Spawned subagent [{}]: {}", task_id, display_label)
+        logger.info("Spawned subagent", task_id=task_id, label=display_label)
         return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
     
     async def _run_subagent(
@@ -97,7 +99,7 @@ class SubagentManager:
         origin: dict[str, str],
     ) -> None:
         """Execute the subagent task and announce the result."""
-        logger.info("Subagent [{}] starting task: {}", task_id, label)
+        logger.info("Subagent starting task", task_id=task_id, label=label)
         
         try:
             # Build subagent tools (no message tool, no spawn tool)
@@ -160,7 +162,7 @@ class SubagentManager:
                     # Execute tools
                     for tool_call in response.tool_calls:
                         args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
-                        logger.debug("Subagent [{}] executing: {} with arguments: {}", task_id, tool_call.name, args_str)
+                        logger.debug("Subagent executing tool", task_id=task_id, tool=tool_call.name, args=args_str)
                         result = await tools.execute(tool_call.name, tool_call.arguments)
                         messages.append({
                             "role": "tool",
@@ -175,12 +177,12 @@ class SubagentManager:
             if final_result is None:
                 final_result = "Task completed but no final response was generated."
             
-            logger.info("Subagent [{}] completed successfully", task_id)
+            logger.info("Subagent completed successfully", task_id=task_id)
             await self._announce_result(task_id, label, task, final_result, origin, "ok")
             
         except Exception as e:
             error_msg = f"Error: {str(e)}"
-            logger.error("Subagent [{}] failed: {}", task_id, e)
+            logger.error("Subagent failed", task_id=task_id, error=str(e))
             await self._announce_result(task_id, label, task, error_msg, origin, "error")
     
     async def _announce_result(
@@ -213,7 +215,7 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
         )
         
         await self.bus.publish_inbound(msg)
-        logger.debug("Subagent [{}] announced result to {}:{}", task_id, origin['channel'], origin['chat_id'])
+        logger.debug("Subagent announced result", task_id=task_id, channel=origin['channel'], chat_id=origin['chat_id'])
     
     def _build_subagent_prompt(self, task: str) -> str:
         """Build a focused system prompt for the subagent."""

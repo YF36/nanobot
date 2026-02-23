@@ -14,12 +14,14 @@ from email.parser import BytesParser
 from email.utils import parseaddr
 from typing import Any
 
-from loguru import logger
+from nanobot.logging import get_logger
 
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import EmailConfig
+
+logger = get_logger(__name__)
 
 
 class EmailChannel(BaseChannel):
@@ -94,7 +96,7 @@ class EmailChannel(BaseChannel):
                         metadata=item.get("metadata", {}),
                     )
             except Exception as e:
-                logger.error("Email polling error: {}", e)
+                logger.error("Email polling error", error=str(e))
 
             await asyncio.sleep(poll_seconds)
 
@@ -143,7 +145,7 @@ class EmailChannel(BaseChannel):
         try:
             await asyncio.to_thread(self._smtp_send, email_msg)
         except Exception as e:
-            logger.error("Error sending email to {}: {}", to_addr, e)
+            logger.error("Error sending email", to=to_addr, error=str(e))
             raise
 
     def _validate_config(self) -> bool:
@@ -162,7 +164,7 @@ class EmailChannel(BaseChannel):
             missing.append("smtp_password")
 
         if missing:
-            logger.error("Email channel not configured, missing: {}", ', '.join(missing))
+            logger.error("Email channel not configured", missing=', '.join(missing))
             return False
         return True
 

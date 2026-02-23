@@ -454,21 +454,18 @@ def agent(
     from nanobot.bus.queue import MessageBus
     from nanobot.agent.loop import AgentLoop
     from nanobot.cron.service import CronService
-    from loguru import logger
-    
+    from nanobot.logging import setup_logging
+
+    setup_logging(json_output=logs, level="DEBUG" if logs else "WARNING")
+
     config = load_config()
-    
+
     bus = MessageBus()
     provider = _make_provider(config)
 
     # Create cron service for tool usage (no callback needed for CLI unless running)
     cron_store_path = get_data_dir() / "cron" / "jobs.json"
     cron = CronService(cron_store_path)
-
-    if logs:
-        logger.enable("nanobot")
-    else:
-        logger.disable("nanobot")
     
     agent_loop = AgentLoop(
         bus=bus,
@@ -937,13 +934,13 @@ def cron_run(
     force: bool = typer.Option(False, "--force", "-f", help="Run even if disabled"),
 ):
     """Manually run a job."""
-    from loguru import logger
+    from nanobot.logging import setup_logging
     from nanobot.config.loader import load_config, get_data_dir
     from nanobot.cron.service import CronService
     from nanobot.cron.types import CronJob
     from nanobot.bus.queue import MessageBus
     from nanobot.agent.loop import AgentLoop
-    logger.disable("nanobot")
+    setup_logging(json_output=False, level="WARNING")
 
     config = load_config()
     provider = _make_provider(config)

@@ -5,10 +5,12 @@ from contextlib import AsyncExitStack
 from typing import Any
 
 import httpx
-from loguru import logger
+from nanobot.logging import get_logger
 
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.registry import ToolRegistry
+
+logger = get_logger(__name__)
 
 
 class MCPToolWrapper(Tool):
@@ -42,7 +44,7 @@ class MCPToolWrapper(Tool):
                 timeout=self._tool_timeout,
             )
         except asyncio.TimeoutError:
-            logger.warning("MCP tool '{}' timed out after {}s", self._name, self._tool_timeout)
+            logger.warning("MCP tool timed out", tool=self._name, timeout=self._tool_timeout)
             return f"(MCP tool call timed out after {self._tool_timeout}s)"
         parts = []
         for block in result.content:
@@ -84,7 +86,7 @@ async def connect_mcp_servers(
                         streamable_http_client(cfg.url)
                     )
             else:
-                logger.warning("MCP server '{}': no command or url configured, skipping", name)
+                logger.warning("MCP server has no command or url configured, skipping", server=name)
                 continue
 
             session = await stack.enter_async_context(ClientSession(read, write))
@@ -94,8 +96,8 @@ async def connect_mcp_servers(
             for tool_def in tools.tools:
                 wrapper = MCPToolWrapper(session, name, tool_def, tool_timeout=cfg.tool_timeout)
                 registry.register(wrapper)
-                logger.debug("MCP: registered tool '{}' from server '{}'", wrapper.name, name)
+                logger.debug("MCP registered tool", tool=wrapper.name, server=name)
 
-            logger.info("MCP server '{}': connected, {} tools registered", name, len(tools.tools))
+            logger.info("MCP server connected", server=name, tool_count=len(tools.tools))
         except Exception as e:
-            logger.error("MCP server '{}': failed to connect: {}", name, e)
+            logger.error("MCP server failed to connect", server=name, error=str(e))

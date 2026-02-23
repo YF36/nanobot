@@ -8,9 +8,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
-from loguru import logger
+from nanobot.logging import get_logger
 
 from nanobot.cron.types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
+
+logger = get_logger(__name__)
 
 
 def _now_ms() -> int:
@@ -113,7 +115,7 @@ class CronService:
                     ))
                 self._store = CronStore(jobs=jobs)
             except Exception as e:
-                logger.warning("Failed to load cron store: {}", e)
+                logger.warning("Failed to load cron store", error=str(e))
                 self._store = CronStore()
         else:
             self._store = CronStore()
@@ -171,7 +173,7 @@ class CronService:
         self._recompute_next_runs()
         self._save_store()
         self._arm_timer()
-        logger.info("Cron service started with {} jobs", len(self._store.jobs if self._store else []))
+        logger.info("Cron service started", job_count=len(self._store.jobs if self._store else []))
     
     def stop(self) -> None:
         """Stop the cron service."""
@@ -236,7 +238,7 @@ class CronService:
     async def _execute_job(self, job: CronJob) -> None:
         """Execute a single job."""
         start_ms = _now_ms()
-        logger.info("Cron: executing job '{}' ({})", job.name, job.id)
+        logger.info("Cron executing job", job_name=job.name, job_id=job.id)
         
         try:
             response = None
@@ -245,12 +247,12 @@ class CronService:
             
             job.state.last_status = "ok"
             job.state.last_error = None
-            logger.info("Cron: job '{}' completed", job.name)
+            logger.info("Cron job completed", job_name=job.name)
             
         except Exception as e:
             job.state.last_status = "error"
             job.state.last_error = str(e)
-            logger.error("Cron: job '{}' failed: {}", job.name, e)
+            logger.error("Cron job failed", job_name=job.name, error=str(e))
         
         job.state.last_run_at_ms = start_ms
         job.updated_at_ms = _now_ms()
@@ -311,7 +313,7 @@ class CronService:
         self._save_store()
         self._arm_timer()
         
-        logger.info("Cron: added job '{}' ({})", name, job.id)
+        logger.info("Cron added job", job_name=name, job_id=job.id)
         return job
     
     def remove_job(self, job_id: str) -> bool:
@@ -324,7 +326,7 @@ class CronService:
         if removed:
             self._save_store()
             self._arm_timer()
-            logger.info("Cron: removed job {}", job_id)
+            logger.info("Cron removed job", job_id=job_id)
         
         return removed
     

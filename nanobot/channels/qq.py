@@ -4,12 +4,14 @@ import asyncio
 from collections import deque
 from typing import TYPE_CHECKING
 
-from loguru import logger
+from nanobot.logging import get_logger
 
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import QQConfig
+
+logger = get_logger(__name__)
 
 try:
     import botpy
@@ -34,7 +36,7 @@ def _make_bot_class(channel: "QQChannel") -> "type[botpy.Client]":
             super().__init__(intents=intents)
 
         async def on_ready(self):
-            logger.info("QQ bot ready: {}", self.robot.name)
+            logger.info("QQ bot ready", bot_name=self.robot.name)
 
         async def on_c2c_message_create(self, message: "C2CMessage"):
             await channel._on_message(message)
@@ -79,7 +81,7 @@ class QQChannel(BaseChannel):
             try:
                 await self._client.start(appid=self.config.app_id, secret=self.config.secret)
             except Exception as e:
-                logger.warning("QQ bot error: {}", e)
+                logger.warning("QQ bot error", error=str(e))
             if self._running:
                 logger.info("Reconnecting QQ bot in 5 seconds...")
                 await asyncio.sleep(5)
@@ -106,7 +108,7 @@ class QQChannel(BaseChannel):
                 content=msg.content,
             )
         except Exception as e:
-            logger.error("Error sending QQ message: {}", e)
+            logger.error("Error sending QQ message", error=str(e))
 
     async def _on_message(self, data: "C2CMessage") -> None:
         """Handle incoming message from QQ."""

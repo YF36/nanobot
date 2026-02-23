@@ -7,9 +7,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from loguru import logger
+from nanobot.logging import get_logger
 
 from nanobot.utils.helpers import ensure_dir, safe_filename
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -111,9 +113,9 @@ class SessionManager:
             if legacy_path.exists():
                 try:
                     shutil.move(str(legacy_path), str(path))
-                    logger.info("Migrated session {} from legacy path", key)
+                    logger.info("Migrated session from legacy path", session_key=key)
                 except Exception:
-                    logger.exception("Failed to migrate session {}", key)
+                    logger.exception("Failed to migrate session", session_key=key)
 
         if not path.exists():
             return None
@@ -147,7 +149,7 @@ class SessionManager:
                 last_consolidated=last_consolidated
             )
         except Exception as e:
-            logger.warning("Failed to load session {}: {}", key, e)
+            logger.warning("Failed to load session", session_key=key, error=str(e))
             return None
     
     def save(self, session: Session) -> None:

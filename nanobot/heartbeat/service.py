@@ -4,9 +4,11 @@ import asyncio
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
-from loguru import logger
+from nanobot.logging import get_logger
 
 # Default interval: 30 minutes
+
+logger = get_logger(__name__)
 DEFAULT_HEARTBEAT_INTERVAL_S = 30 * 60
 
 # The prompt sent to agent during heartbeat
@@ -78,7 +80,7 @@ class HeartbeatService:
         
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
-        logger.info("Heartbeat started (every {}s)", self.interval_s)
+        logger.info("Heartbeat started", interval_s=self.interval_s)
     
     def stop(self) -> None:
         """Stop the heartbeat service."""
@@ -97,7 +99,7 @@ class HeartbeatService:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error("Heartbeat error: {}", e)
+                logger.error("Heartbeat error", error=str(e))
     
     async def _tick(self) -> None:
         """Execute a single heartbeat tick."""
@@ -121,7 +123,7 @@ class HeartbeatService:
                     logger.info("Heartbeat: completed task")
                     
             except Exception as e:
-                logger.error("Heartbeat execution failed: {}", e)
+                logger.error("Heartbeat execution failed", error=str(e))
     
     async def trigger_now(self) -> str | None:
         """Manually trigger a heartbeat."""

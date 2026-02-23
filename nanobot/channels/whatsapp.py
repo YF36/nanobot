@@ -4,12 +4,14 @@ import asyncio
 import json
 from typing import Any
 
-from loguru import logger
+from nanobot.logging import get_logger
 
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import WhatsAppConfig
+
+logger = get_logger(__name__)
 
 
 class WhatsAppChannel(BaseChannel):
@@ -34,7 +36,7 @@ class WhatsAppChannel(BaseChannel):
         
         bridge_url = self.config.bridge_url
         
-        logger.info("Connecting to WhatsApp bridge at {}...", bridge_url)
+        logger.info("Connecting to WhatsApp bridge", bridge_url=bridge_url)
         
         self._running = True
         
@@ -53,14 +55,14 @@ class WhatsAppChannel(BaseChannel):
                         try:
                             await self._handle_bridge_message(message)
                         except Exception as e:
-                            logger.error("Error handling bridge message: {}", e)
+                            logger.error("Error handling bridge message", error=str(e))
                     
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 self._connected = False
                 self._ws = None
-                logger.warning("WhatsApp bridge connection error: {}", e)
+                logger.warning("WhatsApp bridge connection error", error=str(e))
                 
                 if self._running:
                     logger.info("Reconnecting in 5 seconds...")
@@ -89,14 +91,14 @@ class WhatsAppChannel(BaseChannel):
             }
             await self._ws.send(json.dumps(payload, ensure_ascii=False))
         except Exception as e:
-            logger.error("Error sending WhatsApp message: {}", e)
+            logger.error("Error sending WhatsApp message", error=str(e))
     
     async def _handle_bridge_message(self, raw: str) -> None:
         """Handle a message from the bridge."""
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
-            logger.warning("Invalid JSON from bridge: {}", raw[:100])
+            logger.warning("Invalid JSON from bridge", raw=raw[:100])
             return
         
         msg_type = data.get("type")
@@ -112,11 +114,11 @@ class WhatsAppChannel(BaseChannel):
             # Extract just the phone number or lid as chat_id
             user_id = pn if pn else sender
             sender_id = user_id.split("@")[0] if "@" in user_id else user_id
-            logger.info("Sender {}", sender)
+            logger.info("Sender", sender=sender)
             
             # Handle voice transcription if it's a voice message
             if content == "[Voice Message]":
-                logger.info("Voice message received from {}, but direct download from bridge is not yet supported.", sender_id)
+                logger.info("Voice message received, direct download from bridge not yet supported", sender_id=sender_id)
                 content = "[Voice Message: Transcription not available for WhatsApp yet]"
             
             await self._handle_message(
@@ -133,7 +135,7 @@ class WhatsAppChannel(BaseChannel):
         elif msg_type == "status":
             # Connection status update
             status = data.get("status")
-            logger.info("WhatsApp status: {}", status)
+            logger.info("WhatsApp status", status=status)
             
             if status == "connected":
                 self._connected = True
@@ -145,4 +147,4 @@ class WhatsAppChannel(BaseChannel):
             logger.info("Scan QR code in the bridge terminal to connect WhatsApp")
         
         elif msg_type == "error":
-            logger.error("WhatsApp bridge error: {}", data.get('error'))
+            logger.error("WhatsApp bridge error", error=data.get("error"))

@@ -7,12 +7,14 @@ from typing import Any
 
 import httpx
 import websockets
-from loguru import logger
+from nanobot.logging import get_logger
 
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import DiscordConfig
+
+logger = get_logger(__name__)
 
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
@@ -74,7 +76,7 @@ class DiscordChannel(BaseChannel):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning("Discord gateway error: {}", e)
+                logger.warning("Discord gateway error", error=str(e))
                 if self._running:
                     logger.info("Reconnecting to Discord gateway in 5 seconds...")
                     await asyncio.sleep(5)
@@ -132,14 +134,14 @@ class DiscordChannel(BaseChannel):
                 if response.status_code == 429:
                     data = response.json()
                     retry_after = float(data.get("retry_after", 1.0))
-                    logger.warning("Discord rate limited, retrying in {}s", retry_after)
+                    logger.warning("Discord rate limited", retry_after=retry_after)
                     await asyncio.sleep(retry_after)
                     continue
                 response.raise_for_status()
                 return True
             except Exception as e:
                 if attempt == 2:
-                    logger.error("Error sending Discord message: {}", e)
+                    logger.error("Error sending Discord message", error=str(e))
                 else:
                     await asyncio.sleep(1)
         return False
@@ -153,7 +155,7 @@ class DiscordChannel(BaseChannel):
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError:
-                logger.warning("Invalid JSON from Discord gateway: {}", raw[:100])
+                logger.warning("Invalid JSON from Discord gateway", raw=raw[:100])
                 continue
 
             op = data.get("op")
@@ -212,7 +214,7 @@ class DiscordChannel(BaseChannel):
                 try:
                     await self._ws.send(json.dumps(payload))
                 except Exception as e:
-                    logger.warning("Discord heartbeat failed: {}", e)
+                    logger.warning("Discord heartbeat failed", error=str(e))
                     break
                 await asyncio.sleep(interval_s)
 
@@ -256,7 +258,7 @@ class DiscordChannel(BaseChannel):
                 media_paths.append(str(file_path))
                 content_parts.append(f"[attachment: {file_path}]")
             except Exception as e:
-                logger.warning("Failed to download Discord attachment: {}", e)
+                logger.warning("Failed to download Discord attachment", error=str(e))
                 content_parts.append(f"[attachment: {filename} - download failed]")
 
         reply_to = (payload.get("referenced_message") or {}).get("id")

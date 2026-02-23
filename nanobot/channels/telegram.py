@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from loguru import logger
+from nanobot.logging import get_logger
 from telegram import BotCommand, Update, ReplyParameters
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.request import HTTPXRequest
@@ -13,6 +13,8 @@ from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import TelegramConfig
+
+logger = get_logger(__name__)
 
 
 def _markdown_to_telegram_html(text: str) -> str:
@@ -165,13 +167,13 @@ class TelegramChannel(BaseChannel):
         
         # Get bot info and register command menu
         bot_info = await self._app.bot.get_me()
-        logger.info("Telegram bot @{} connected", bot_info.username)
+        logger.info("Telegram bot connected", username=bot_info.username)
         
         try:
             await self._app.bot.set_my_commands(self.BOT_COMMANDS)
             logger.debug("Telegram bot commands registered")
         except Exception as e:
-            logger.warning("Failed to register bot commands: {}", e)
+            logger.warning("Failed to register bot commands", error=str(e))
         
         # Start polling (this runs until stopped)
         await self._app.updater.start_polling(
@@ -221,7 +223,7 @@ class TelegramChannel(BaseChannel):
         try:
             chat_id = int(msg.chat_id)
         except ValueError:
-            logger.error("Invalid chat_id: {}", msg.chat_id)
+            logger.error("Invalid chat_id", chat_id=msg.chat_id)
             return
 
         reply_params = None
@@ -251,7 +253,7 @@ class TelegramChannel(BaseChannel):
                     )
             except Exception as e:
                 filename = media_path.rsplit("/", 1)[-1]
-                logger.error("Failed to send media {}: {}", media_path, e)
+                logger.error("Failed to send media", media_path=media_path, error=str(e))
                 await self._app.bot.send_message(
                     chat_id=chat_id,
                     text=f"[Failed to send: {filename}]",
@@ -270,7 +272,7 @@ class TelegramChannel(BaseChannel):
                         reply_parameters=reply_params
                     )
                 except Exception as e:
-                    logger.warning("HTML parse failed, falling back to plain text: {}", e)
+                    logger.warning("HTML parse failed, falling back to plain text", error=str(e))
                     try:
                         await self._app.bot.send_message(
                             chat_id=chat_id, 
@@ -278,7 +280,7 @@ class TelegramChannel(BaseChannel):
                             reply_parameters=reply_params
                         )
                     except Exception as e2:
-                        logger.error("Error sending Telegram message: {}", e2)
+                        logger.error("Error sending Telegram message", error=str(e2))
     
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start command."""
@@ -380,21 +382,21 @@ class TelegramChannel(BaseChannel):
                     transcriber = GroqTranscriptionProvider(api_key=self.groq_api_key)
                     transcription = await transcriber.transcribe(file_path)
                     if transcription:
-                        logger.info("Transcribed {}: {}...", media_type, transcription[:50])
+                        logger.info("Transcribed media", media_type=media_type, preview=transcription[:50])
                         content_parts.append(f"[transcription: {transcription}]")
                     else:
                         content_parts.append(f"[{media_type}: {file_path}]")
                 else:
                     content_parts.append(f"[{media_type}: {file_path}]")
                     
-                logger.debug("Downloaded {} to {}", media_type, file_path)
+                logger.debug("Downloaded media", media_type=media_type, file_path=str(file_path))
             except Exception as e:
-                logger.error("Failed to download media: {}", e)
+                logger.error("Failed to download media", error=str(e))
                 content_parts.append(f"[{media_type}: download failed]")
         
         content = "\n".join(content_parts) if content_parts else "[empty message]"
         
-        logger.debug("Telegram message from {}: {}...", sender_id, content[:50])
+        logger.debug("Telegram message", sender_id=sender_id, preview=content[:50])
         
         str_chat_id = str(chat_id)
         
@@ -437,11 +439,11 @@ class TelegramChannel(BaseChannel):
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.debug("Typing indicator stopped for {}: {}", chat_id, e)
+            logger.debug("Typing indicator stopped", chat_id=chat_id, error=str(e))
     
     async def _on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Log polling / handler errors instead of silently swallowing them."""
-        logger.error("Telegram error: {}", context.error)
+        logger.error("Telegram error", error=str(context.error))
 
     def _get_extension(self, media_type: str, mime_type: str | None) -> str:
         """Get file extension based on media type."""

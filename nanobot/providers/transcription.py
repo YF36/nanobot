@@ -5,7 +5,10 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from loguru import logger
+
+from nanobot.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class GroqTranscriptionProvider:
@@ -35,7 +38,7 @@ class GroqTranscriptionProvider:
         
         path = Path(file_path)
         if not path.exists():
-            logger.error("Audio file not found: {}", file_path)
+            logger.error("Audio file not found", file_path=str(file_path))
             return ""
         
         try:
@@ -61,5 +64,5 @@ class GroqTranscriptionProvider:
                     return data.get("text", "")
                     
         except Exception as e:
-            logger.error("Groq transcription error: {}", e)
+            logger.error("Groq transcription error", error=str(e))
             return ""

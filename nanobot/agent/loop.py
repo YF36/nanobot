@@ -9,7 +9,9 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from loguru import logger
+import structlog
+
+from nanobot.logging import get_logger
 
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.memory import MemoryStore
@@ -29,6 +31,8 @@ from nanobot.session.manager import Session, SessionManager
 if TYPE_CHECKING:
     from nanobot.config.schema import ExecToolConfig
     from nanobot.cron.service import CronService
+
+logger = get_logger(__name__)
 
 
 class AgentLoop:
@@ -128,7 +132,7 @@ class AgentLoop:
             await connect_mcp_servers(self._mcp_servers, self.tools, self._mcp_stack)
             self._mcp_connected = True
         except Exception as e:
-            logger.error("Failed to connect MCP servers (will retry next message): {}", e)
+            logger.error("Failed to connect MCP servers (will retry next message)", error=str(e))
             if self._mcp_stack:
                 try:
                     await self._mcp_stack.aclose()
@@ -218,7 +222,7 @@ class AgentLoop:
                 for tool_call in response.tool_calls:
                     tools_used.append(tool_call.name)
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
-                    logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
+                    logger.info("Tool call", tool=tool_call.name, args=args_str[:200])
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
@@ -250,7 +254,7 @@ class AgentLoop:
                             channel=msg.channel, chat_id=msg.chat_id, content="", metadata=msg.metadata or {},
                         ))
                 except Exception as e:
-                    logger.error("Error processing message: {}", e)
+                    logger.error("Error processing message", error=str(e))
                     await self.bus.publish_outbound(OutboundMessage(
                         channel=msg.channel,
                         chat_id=msg.chat_id,
@@ -296,7 +300,11 @@ class AgentLoop:
         if msg.channel == "system":
             channel, chat_id = (msg.chat_id.split(":", 1) if ":" in msg.chat_id
                                 else ("cli", msg.chat_id))
-            logger.info("Processing system message from {}", msg.sender_id)
+            structlog.contextvars.clear_contextvars()
+            structlog.contextvars.bind_contextvars(
+                channel=channel, sender_id=msg.sender_id, session_key=f"{channel}:{chat_id}",
+            )
+            logger.info("Processing system message")
             key = f"{channel}:{chat_id}"
             session = self.sessions.get_or_create(key)
             self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
@@ -312,9 +320,15 @@ class AgentLoop:
                                   content=final_content or "Background task completed.")
 
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
-        logger.info("Processing message from {}:{}: {}", msg.channel, msg.sender_id, preview)
 
         key = session_key or msg.session_key
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(
+            channel=msg.channel, sender_id=msg.sender_id,
+            session_key=key, chat_id=msg.chat_id,
+        )
+        logger.info("Processing message", preview=preview)
+
         session = self.sessions.get_or_create(key)
 
         # Slash commands
@@ -334,7 +348,7 @@ class AgentLoop:
                                 content="Memory archival failed, session not cleared. Please try again.",
                             )
             except Exception:
-                logger.exception("/new archival failed for {}", session.key)
+                logger.exception("/new archival failed", session_key=session.key)
                 return OutboundMessage(
                     channel=msg.channel, chat_id=msg.chat_id,
                     content="Memory archival failed, session not cleared. Please try again.",
@@ -397,7 +411,7 @@ class AgentLoop:
             final_content = "I've completed processing but have no response to give."
 
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
-        logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)
+        logger.info("Response sent", preview=preview)
 
         session.add_message("user", msg.content)
         session.add_message("assistant", final_content,
