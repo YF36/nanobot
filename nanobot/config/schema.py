@@ -224,12 +224,22 @@ class AgentsConfig(Base):
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
 
 
+class ResilienceConfig(Base):
+    """Timeout, retry, and circuit-breaker settings for LLM calls."""
+
+    timeout: int = 120                    # Per-request timeout in seconds
+    max_retries: int = 3                  # Transient-error retry count (LiteLLM built-in)
+    circuit_breaker_threshold: int = 5    # Consecutive failures before opening circuit
+    circuit_breaker_cooldown: int = 60    # Seconds to wait before half-open probe
+
+
 class ProviderConfig(Base):
     """LLM provider configuration."""
 
     api_key: str = ""
     api_base: str | None = None
     extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
+    resilience: ResilienceConfig = Field(default_factory=ResilienceConfig)
 
     @property
     def resolved_api_key(self) -> str:

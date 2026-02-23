@@ -291,14 +291,17 @@ def _make_provider(config: Config):
 
     # OpenAI Codex (OAuth)
     if provider_name == "openai_codex" or model.startswith("openai-codex/"):
-        return OpenAICodexProvider(default_model=model)
+        timeout = p.resilience.timeout if p else 120
+        return OpenAICodexProvider(default_model=model, timeout=timeout)
 
     # Custom: direct OpenAI-compatible endpoint, bypasses LiteLLM
     if provider_name == "custom":
+        timeout = p.resilience.timeout if p else 120
         return CustomProvider(
             api_key=p.api_key if p else "no-key",
             api_base=config.get_api_base(model) or "http://localhost:8000/v1",
             default_model=model,
+            timeout=timeout,
         )
 
     from nanobot.providers.registry import find_by_name
@@ -315,6 +318,7 @@ def _make_provider(config: Config):
         extra_headers=p.extra_headers if p else None,
         provider_name=provider_name,
         langfuse_config=config.observability.langfuse,
+        resilience_config=p.resilience if p else None,
     )
 
 

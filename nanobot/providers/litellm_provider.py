@@ -1,8 +1,10 @@
 """LiteLLM provider implementation for multi-provider support."""
 
+import asyncio
 import json
 import json_repair
 import os
+import time
 from typing import Any
 
 import litellm
@@ -37,11 +39,17 @@ class LiteLLMProvider(LLMProvider):
         extra_headers: dict[str, str] | None = None,
         provider_name: str | None = None,
         langfuse_config: Any | None = None,
+        resilience_config: Any | None = None,
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
         self.extra_headers = extra_headers or {}
         self._langfuse_enabled = False
+
+        # Resilience: timeout / retry / circuit-breaker
+        self._resilience = resilience_config  # ResilienceConfig or None
+        self._consecutive_failures: int = 0
+        self._circuit_open_until: float = 0.0
 
         # Detect gateway / local deployment.
         # provider_name (from config key) is the primary signal;
@@ -227,6 +235,40 @@ class LiteLLMProvider(LLMProvider):
             sanitized.append(clean)
         return sanitized
 
+    def _check_circuit_breaker(self) -> str | None:
+        """Return an error message if the circuit is open, else None."""
+        rc = self._resilience
+        if not rc or rc.circuit_breaker_threshold <= 0:
+            return None
+        if self._consecutive_failures < rc.circuit_breaker_threshold:
+            return None
+        now = time.monotonic()
+        if now < self._circuit_open_until:
+            return (
+                f"Circuit breaker open: {self._consecutive_failures} consecutive failures. "
+                f"Retry after {int(self._circuit_open_until - now)}s cooldown."
+            )
+        # Cooldown expired → half-open: allow one probe attempt
+        return None
+
+    def _record_result(self, success: bool) -> None:
+        """Update circuit-breaker counters after a call."""
+        rc = self._resilience
+        if not rc or rc.circuit_breaker_threshold <= 0:
+            return
+        if success:
+            self._consecutive_failures = 0
+            self._circuit_open_until = 0.0
+        else:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= rc.circuit_breaker_threshold:
+                self._circuit_open_until = time.monotonic() + rc.circuit_breaker_cooldown
+                logger.warning(
+                    "circuit_breaker_opened",
+                    failures=self._consecutive_failures,
+                    cooldown=rc.circuit_breaker_cooldown,
+                )
+
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -290,9 +332,36 @@ class LiteLLMProvider(LLMProvider):
             kwargs["metadata"] = langfuse_metadata
 
         try:
-            response = await acompletion(**kwargs)
+            # --- Circuit breaker check ---
+            cb_error = self._check_circuit_breaker()
+            if cb_error:
+                return LLMResponse(content=f"Error calling LLM: {cb_error}", finish_reason="error")
+
+            # --- Inject resilience kwargs (LiteLLM built-in retry + timeout) ---
+            rc = self._resilience
+            if rc:
+                kwargs["request_timeout"] = rc.timeout
+                kwargs["num_retries"] = rc.max_retries
+
+            # --- Call with asyncio.wait_for safety net ---
+            safety_timeout = (rc.timeout + 30) if rc else None
+            coro = acompletion(**kwargs)
+            if safety_timeout:
+                response = await asyncio.wait_for(coro, timeout=safety_timeout)
+            else:
+                response = await coro
+
+            self._record_result(True)
             return self._parse_response(response)
+        except asyncio.TimeoutError:
+            self._record_result(False)
+            logger.error("llm_call_timeout", model=model)
+            return LLMResponse(
+                content="Error calling LLM: request timed out",
+                finish_reason="error",
+            )
         except Exception as e:
+            self._record_result(False)
             error_msg = str(e)
             # Mask any API keys that may appear in exception messages
             if self.api_key and self.api_key in error_msg:
