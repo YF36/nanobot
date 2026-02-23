@@ -292,10 +292,10 @@ def gateway(
     from nanobot.cron.types import CronJob
     from nanobot.heartbeat.service import HeartbeatService
     
-    if verbose:
-        import logging
-        logging.basicConfig(level=logging.DEBUG)
-    
+    from nanobot.logging import setup_logging
+
+    setup_logging(json_output=not verbose, level="DEBUG" if verbose else "INFO")
+
     console.print(f"{__logo__} Starting nanobot gateway on port {port}...")
     
     config = load_config()

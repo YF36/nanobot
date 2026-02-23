@@ -3,6 +3,7 @@
 import asyncio
 import json
 import json_repair
+import logging
 import os
 import time
 from typing import Any
@@ -232,6 +233,18 @@ class LiteLLMProvider(LLMProvider):
             # Strict providers require "content" even when assistant only has tool_calls
             if clean.get("role") == "assistant" and "content" not in clean:
                 clean["content"] = None
+            # Ensure tool_calls arguments are JSON strings, not dicts
+            if "tool_calls" in clean and clean["tool_calls"]:
+                fixed_calls = []
+                for tc in clean["tool_calls"]:
+                    tc = dict(tc)  # shallow copy
+                    if "function" in tc:
+                        fn = dict(tc["function"])
+                        if isinstance(fn.get("arguments"), dict):
+                            fn["arguments"] = json.dumps(fn["arguments"], ensure_ascii=False)
+                        tc["function"] = fn
+                    fixed_calls.append(tc)
+                clean["tool_calls"] = fixed_calls
             sanitized.append(clean)
         return sanitized
 
@@ -330,6 +343,19 @@ class LiteLLMProvider(LLMProvider):
         langfuse_metadata = self._build_langfuse_metadata()
         if langfuse_metadata:
             kwargs["metadata"] = langfuse_metadata
+
+        # DEBUG: log full kwargs sent to LiteLLM (redact secrets)
+        if logging.getLogger("nanobot").isEnabledFor(logging.DEBUG):
+            import copy as _copy
+            _dbg = _copy.deepcopy(kwargs)
+            _dbg.pop("api_key", None)
+            _dbg.pop("extra_headers", None)
+            # Truncate message content for readability
+            if "messages" in _dbg:
+                for _m in _dbg["messages"]:
+                    if isinstance(_m.get("content"), str) and len(_m["content"]) > 200:
+                        _m["content"] = _m["content"][:200] + f"... ({len(_m['content'])} chars)"
+            logger.debug("DEBUG_litellm_kwargs", **{k: v for k, v in _dbg.items() if k != "metadata"})
 
         try:
             # --- Circuit breaker check ---

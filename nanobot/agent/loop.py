@@ -334,8 +334,9 @@ class AgentLoop:
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
             )
+            skip = len(messages) - 1  # -1 to include current user message in saved turn
             final_content, _, all_msgs = await self._run_agent_loop(messages)
-            self._save_turn(session, all_msgs, 1 + len(history))
+            self._save_turn(session, all_msgs, skip)
             self.sessions.save(session)
             return OutboundMessage(channel=channel, chat_id=chat_id,
                                   content=final_content or "Background task completed.")
@@ -434,6 +435,11 @@ class AgentLoop:
                 channel=msg.channel, chat_id=msg.chat_id, content=content, metadata=meta,
             ))
 
+        # Record length before _run_agent_loop mutates initial_messages in-place.
+        # initial_messages = [system, compacted_history..., current_user]
+        # We want to save current_user + all LLM responses, so skip system + history.
+        skip = len(initial_messages) - 1  # -1 to include current_user
+
         final_content, _, all_msgs = await self._run_agent_loop(
             initial_messages, on_progress=on_progress or _bus_progress,
         )
@@ -444,7 +450,7 @@ class AgentLoop:
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info("Response sent", preview=preview)
 
-        self._save_turn(session, all_msgs, 1 + len(history))
+        self._save_turn(session, all_msgs, skip)
         self.sessions.save(session)
 
         if message_tool := self.tools.get("message"):
@@ -457,12 +463,38 @@ class AgentLoop:
         )
 
     _TOOL_RESULT_MAX_CHARS = 500
+    _ASSISTANT_HISTORY_MAX_CHARS = 300
+
+    @staticmethod
+    def _strip_images_from_content(content: Any) -> Any:
+        """Replace base64 image blocks with a lightweight placeholder."""
+        if not isinstance(content, list):
+            return content
+        stripped: list[dict] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "image_url":
+                stripped.append({"type": "text", "text": "[image]"})
+            else:
+                stripped.append(block)
+        # If only text blocks remain, collapse to a plain string
+        texts = [b["text"] for b in stripped if isinstance(b, dict) and b.get("type") == "text"]
+        if len(texts) == len(stripped):
+            return " ".join(texts)
+        return stripped
 
     def _save_turn(self, session: Session, messages: list[dict], skip: int) -> None:
-        """Save new-turn messages into session, truncating large tool results."""
+        """Save new-turn messages into session, truncating large content and stripping images."""
         from datetime import datetime
         for m in messages[skip:]:
             entry = {k: v for k, v in m.items() if k != "reasoning_content"}
+            # Strip base64 images from multimodal content
+            if "content" in entry:
+                entry["content"] = self._strip_images_from_content(entry["content"])
+            # Truncate long assistant replies (keep summary-length prefix)
+            if entry.get("role") == "assistant" and isinstance(entry.get("content"), str):
+                content = entry["content"]
+                if len(content) > self._ASSISTANT_HISTORY_MAX_CHARS:
+                    entry["content"] = content[:self._ASSISTANT_HISTORY_MAX_CHARS] + "\n... (truncated)"
             if entry.get("role") == "tool" and isinstance(entry.get("content"), str):
                 content = entry["content"]
                 if len(content) > self._TOOL_RESULT_MAX_CHARS:
