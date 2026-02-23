@@ -379,8 +379,8 @@ class FeishuChannel(BaseChannel):
         }
 
     # Feishu caps the number of native table components per interactive card.
-    # Set to 0 to always use markdown tables, avoiding ErrCode 11310.
-    _MAX_TABLES_PER_CARD = 0
+    # Check _MAX_TABLES_PER_CARD judging if use markdown tables, avoiding ErrCode 11310.
+    _MAX_TABLES_PER_CARD = 5
 
     def _build_card_elements(self, content: str) -> list[dict]:
         """Split content into div/markdown + table elements for Feishu card."""
