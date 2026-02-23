@@ -64,6 +64,7 @@ class AgentLoop:
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
+        audit_tool_calls: bool = True,
     ):
         from nanobot.config.schema import ExecToolConfig, FilesystemToolConfig
         self.bus = bus
@@ -82,7 +83,7 @@ class AgentLoop:
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
-        self.tools = ToolRegistry()
+        self.tools = ToolRegistry(audit=audit_tool_calls)
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,

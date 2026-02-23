@@ -214,6 +214,7 @@ class AgentDefaults(Base):
     temperature: float = 0.7
     max_tool_iterations: int = 20
     memory_window: int = 50
+    audit_tool_calls: bool = True  # Global tool-level audit logging
 
 
 class AgentsConfig(Base):
