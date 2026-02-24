@@ -465,8 +465,10 @@ class AgentLoop:
         session = self.sessions.get_or_create(key)
 
         # Slash commands
-        cmd = msg.content.strip().lower()
-        if cmd == "/new":
+        cmd_raw = msg.content.strip()
+        cmd = cmd_raw.lower()
+        force_new = cmd in {"/new!", "/new --force", "/new -f"}
+        if cmd == "/new" or force_new:
             # Cancel any in-flight consolidation for this session so /new
             # doesn't block waiting for a potentially stuck LLM call.
             running = self._consolidation_tasks.pop(session.key, None)
@@ -485,16 +487,20 @@ class AgentLoop:
                         temp = Session(key=session.key)
                         temp.messages = list(snapshot)
                         if not await self._consolidate_memory(temp, archive_all=True):
-                            return OutboundMessage(
-                                channel=msg.channel, chat_id=msg.chat_id,
-                                content="Memory archival failed, session not cleared. Please try again.",
-                            )
+                            if force_new:
+                                logger.warning("/new force mode: archival failed, clearing session anyway", session_key=session.key)
+                            else:
+                                return OutboundMessage(
+                                    channel=msg.channel, chat_id=msg.chat_id,
+                                    content="Memory archival failed, session not cleared. Please try again.",
+                                )
             except Exception:
                 logger.exception("/new archival failed", session_key=session.key)
-                return OutboundMessage(
-                    channel=msg.channel, chat_id=msg.chat_id,
-                    content="Memory archival failed, session not cleared. Please try again.",
-                )
+                if not force_new:
+                    return OutboundMessage(
+                        channel=msg.channel, chat_id=msg.chat_id,
+                        content="Memory archival failed, session not cleared. Please try again.",
+                    )
             finally:
                 self._consolidating.discard(session.key)
                 self._prune_consolidation_lock(session.key, lock)
@@ -502,11 +508,16 @@ class AgentLoop:
             session.clear()
             self.sessions.save(session)
             self.sessions.invalidate(session.key)
+            if force_new:
+                return OutboundMessage(
+                    channel=msg.channel, chat_id=msg.chat_id,
+                    content="New session started (forced). Memory archival may have failed.",
+                )
             return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
                                   content="New session started.")
         if cmd == "/help":
             return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
-                                  content="🐈 nanobot commands:\n/new — Start a new conversation\n/help — Show available commands")
+                                  content="🐈 nanobot commands:\n/new — Archive and start a new conversation\n/new! — Force new conversation (clear even if archival fails)\n/help — Show available commands")
 
         if len(session.messages) > self.memory_window and session.key not in self._consolidating:
             self._consolidating.add(session.key)

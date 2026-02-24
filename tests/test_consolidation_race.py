@@ -182,6 +182,82 @@ class TestSnapshotLen:
         assert calls["n"] >= 2
         assert session.last_consolidated == 0
 
+    @pytest.mark.asyncio
+    async def test_consolidation_retries_when_model_returns_text_instead_of_tool_call(self, tmp_path: Path) -> None:
+        """Memory consolidation should retry once with stricter tool-call instructions."""
+        from nanobot.agent.memory import MemoryStore
+        from nanobot.providers.base import LLMResponse, ToolCallRequest
+
+        mm = MemoryStore(workspace=tmp_path)
+        session = Session(key="test:no_tool_retry")
+        for i in range(8):
+            session.add_message("user", f"msg{i}")
+
+        provider = MagicMock()
+        calls = {"n": 0, "systems": []}
+
+        async def _fake_chat(**kwargs):
+            calls["n"] += 1
+            calls["systems"].append(kwargs["messages"][0]["content"])
+            if calls["n"] == 1:
+                return LLMResponse(content="Here is a summary (oops, no tool call).", tool_calls=[])
+            return LLMResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="t1", name="save_memory",
+                    arguments={"history_entry": "summary", "memory_update": "updated"},
+                )],
+            )
+
+        provider.chat = _fake_chat
+
+        result = await mm.consolidate(
+            session=session, provider=provider, model="test", memory_window=10, archive_all=True
+        )
+
+        assert result is True
+        assert calls["n"] == 2
+        assert "MUST call save_memory" in calls["systems"][1]
+
+    @pytest.mark.asyncio
+    async def test_consolidation_trims_memory_context_and_skips_truncated_memory_write(self, tmp_path: Path) -> None:
+        """Huge MEMORY.md should be truncated in prompt, but not overwritten with truncated output."""
+        from nanobot.agent.memory import MemoryStore
+        from nanobot.providers.base import LLMResponse, ToolCallRequest
+
+        mm = MemoryStore(workspace=tmp_path)
+        original_memory = ("# Long-term Memory\n\n" + ("fact\n" * 70000)).strip()
+        mm.write_long_term(original_memory)
+
+        session = Session(key="test:huge_memory")
+        for i in range(4):
+            session.add_message("user", f"msg{i}")
+
+        provider = MagicMock()
+        captured = {"prompt_len": 0}
+
+        async def _fake_chat(**kwargs):
+            prompt = kwargs["messages"][1]["content"]
+            captured["prompt_len"] = len(prompt)
+            # Return a fake memory_update that would be dangerous if written.
+            return LLMResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="t1", name="save_memory",
+                    arguments={"history_entry": "summary", "memory_update": "TRUNCATED_MEMORY"},
+                )],
+            )
+
+        provider.chat = _fake_chat
+
+        result = await mm.consolidate(
+            session=session, provider=provider, model="test", memory_window=10, archive_all=True
+        )
+
+        assert result is True
+        assert captured["prompt_len"] < len(original_memory)  # prompt no longer includes full MEMORY.md
+        assert mm.read_long_term() == original_memory  # do not overwrite with truncated-context update
+
 
 class TestLockBatchCleanup:
     """Verify _prune_consolidation_lock batch cleanup when dict > 100."""

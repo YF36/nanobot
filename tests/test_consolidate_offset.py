@@ -738,6 +738,44 @@ class TestConsolidationDeduplicationGuard:
         )
 
     @pytest.mark.asyncio
+    async def test_new_force_clears_session_when_archive_fails(self, tmp_path: Path) -> None:
+        """/new! should clear the session even when archive step fails."""
+        from nanobot.agent.loop import AgentLoop
+        from nanobot.bus.events import InboundMessage
+        from nanobot.bus.queue import MessageBus
+        from nanobot.providers.base import LLMResponse
+
+        bus = MessageBus()
+        provider = MagicMock()
+        provider.get_default_model.return_value = "test-model"
+        loop = AgentLoop(
+            bus=bus, provider=provider, workspace=tmp_path, model="test-model", memory_window=10
+        )
+
+        loop.provider.chat = AsyncMock(return_value=LLMResponse(content="ok", tool_calls=[]))
+        loop.tools.get_definitions = MagicMock(return_value=[])
+
+        session = loop.sessions.get_or_create("cli:test")
+        for i in range(3):
+            session.add_message("user", f"msg{i}")
+            session.add_message("assistant", f"resp{i}")
+        loop.sessions.save(session)
+
+        async def _failing_consolidate(sess, archive_all: bool = False) -> bool:
+            return False if archive_all else True
+
+        loop._consolidate_memory = _failing_consolidate  # type: ignore[method-assign]
+
+        response = await loop._process_message(
+            InboundMessage(channel="cli", sender_id="user", chat_id="test", content="/new!")
+        )
+
+        assert response is not None
+        assert "forced" in response.content.lower()
+        session_after = loop.sessions.get_or_create("cli:test")
+        assert session_after.messages == []
+
+    @pytest.mark.asyncio
     async def test_new_archives_only_unconsolidated_messages_after_inflight_task(
         self, tmp_path: Path
     ) -> None:

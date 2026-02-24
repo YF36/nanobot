@@ -50,6 +50,8 @@ class MemoryStore:
     _CHARS_PER_TOKEN = 4
     _CONSOLIDATION_REPLY_RESERVE_TOKENS = 4096
     _CONSOLIDATION_SOFT_INPUT_TOKENS = 24_000
+    _CONSOLIDATION_TOOLCALL_RETRIES = 1
+    _MEMORY_TRUNCATION_NOTICE = "\n\n[... long-term memory truncated for consolidation ...]\n\n"
 
     def __init__(self, workspace: Path):
         self.memory_dir = ensure_dir(workspace / "memory")
@@ -107,6 +109,17 @@ class MemoryStore:
 ## Conversation to Process
 {chr(10).join(lines)}"""
 
+    @staticmethod
+    def _consolidation_system_prompt(strict_tool_call: bool = False) -> str:
+        base = "You are a memory consolidation agent. Call the save_memory tool with your consolidation of the conversation."
+        if not strict_tool_call:
+            return base
+        return (
+            base
+            + " Do not reply with plain text. You MUST call save_memory exactly once "
+              "with both history_entry and memory_update."
+        )
+
     def _fit_chunk_by_soft_budget(
         self,
         messages: list[dict],
@@ -116,7 +129,8 @@ class MemoryStore:
         if not messages:
             return []
         # Prompt scaffolding estimate plus current memory
-        scaffold = self._build_consolidation_prompt(current_memory, [])
+        budget_memory, _ = self._fit_memory_context_by_soft_budget(current_memory, [])
+        scaffold = self._build_consolidation_prompt(budget_memory, [])
         budget = max(
             1,
             self._CONSOLIDATION_SOFT_INPUT_TOKENS - self._estimate_tokens(scaffold) - self._CONSOLIDATION_REPLY_RESERVE_TOKENS,
@@ -131,6 +145,50 @@ class MemoryStore:
             chunk.append(m)
             total += delta
         return chunk or messages[:1]
+
+    def _fit_memory_context_by_soft_budget(
+        self,
+        current_memory: str,
+        lines: list[str],
+    ) -> tuple[str, bool]:
+        """Trim long-term memory context to fit the consolidation input budget.
+
+        Returns (memory_for_prompt, was_truncated).
+        """
+        if not current_memory:
+            return current_memory, False
+
+        # Available input budget after accounting for scaffold, conversation chunk, and reply reserve.
+        prompt_without_memory = self._build_consolidation_prompt("", lines)
+        available_tokens = (
+            self._CONSOLIDATION_SOFT_INPUT_TOKENS
+            - self._CONSOLIDATION_REPLY_RESERVE_TOKENS
+            - self._estimate_tokens(prompt_without_memory)
+        )
+        if available_tokens <= 0:
+            return "", True
+
+        if self._estimate_tokens(current_memory) <= available_tokens:
+            return current_memory, False
+
+        # Keep a head+tail slice so stable section headers and recent facts both survive.
+        max_chars = max(64, available_tokens * self._CHARS_PER_TOKEN)
+        notice = self._MEMORY_TRUNCATION_NOTICE
+        room = max_chars - len(notice)
+        if room <= 0:
+            return notice.strip(), True
+
+        head_chars = max(1, room // 2)
+        tail_chars = max(1, room - head_chars)
+        trimmed = current_memory[:head_chars] + notice + current_memory[-tail_chars:]
+
+        # Tighten if coarse char->token estimate still overshoots.
+        while self._estimate_tokens(trimmed) > available_tokens and (head_chars > 16 or tail_chars > 16):
+            head_chars = max(16, int(head_chars * 0.85))
+            tail_chars = max(16, int(tail_chars * 0.85))
+            trimmed = current_memory[:head_chars] + notice + current_memory[-tail_chars:]
+
+        return trimmed, True
 
     async def consolidate(
         self,
@@ -187,15 +245,39 @@ class MemoryStore:
                             session.last_consolidated = min(target_last, start_index + processed_count)
                         break
 
-                    prompt = self._build_consolidation_prompt(current_memory, lines)
-                    response = await provider.chat(
-                        messages=[
-                            {"role": "system", "content": "You are a memory consolidation agent. Call the save_memory tool with your consolidation of the conversation."},
-                            {"role": "user", "content": prompt},
-                        ],
-                        tools=_SAVE_MEMORY_TOOL,
-                        model=model,
-                    )
+                    prompt_memory, memory_truncated = self._fit_memory_context_by_soft_budget(current_memory, lines)
+                    if memory_truncated:
+                        logger.warning(
+                            "Memory consolidation prompt truncating long-term memory context",
+                            memory_chars=len(current_memory),
+                            prompt_memory_chars=len(prompt_memory),
+                            chunk_messages=len(chunk),
+                        )
+                    prompt = self._build_consolidation_prompt(prompt_memory, lines)
+                    response = None
+                    for attempt in range(self._CONSOLIDATION_TOOLCALL_RETRIES + 1):
+                        strict_retry = attempt > 0
+                        response = await provider.chat(
+                            messages=[
+                                {"role": "system", "content": self._consolidation_system_prompt(strict_tool_call=strict_retry)},
+                                {"role": "user", "content": prompt},
+                            ],
+                            tools=_SAVE_MEMORY_TOOL,
+                            model=model,
+                            temperature=0.0,
+                        )
+
+                        if response.has_tool_calls:
+                            break
+                        if getattr(response, "finish_reason", "") == "error":
+                            break
+                        if attempt < self._CONSOLIDATION_TOOLCALL_RETRIES:
+                            logger.warning(
+                                "Memory consolidation response missing save_memory tool call, retrying",
+                                retry=attempt + 1,
+                            )
+
+                    assert response is not None
 
                     if getattr(response, "finish_reason", "") == "error" and self._is_context_length_error(response.content):
                         if len(chunk) <= 1:
@@ -219,7 +301,13 @@ class MemoryStore:
                     if update := args.get("memory_update"):
                         if not isinstance(update, str):
                             update = json.dumps(update, ensure_ascii=False)
-                        if update != current_memory:
+                        if memory_truncated:
+                            logger.warning(
+                                "Skipping memory_update write because long-term memory context was truncated",
+                                current_memory_chars=len(current_memory),
+                                returned_memory_chars=len(update),
+                            )
+                        elif update != current_memory:
                             self.write_long_term(update)
 
                     processed_count += len(chunk)
