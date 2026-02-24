@@ -13,9 +13,10 @@ from nanobot.logging import get_logger
 from nanobot.agent.consolidation_coordinator import ConsolidationCoordinator
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.memory import MemoryStore
-from nanobot.agent.message_processor import MessageProcessor
+from nanobot.agent.message_processor import MessageProcessingHooks, MessageProcessor
 from nanobot.agent.session_command_handler import SessionCommandHandler
 from nanobot.agent.subagent import SubagentManager
+from nanobot.agent.turn_history_writer import TurnHistoryWriter
 from nanobot.agent.turn_runner import TurnRunner
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.tools.factory import create_standard_tool_registry
@@ -123,10 +124,16 @@ class AgentLoop:
             command_handler=self._command_handler,
             consolidation=self._consolidation,
             memory_window=self.memory_window,
-            set_tool_context=self._set_tool_context,
-            run_agent_loop=self._run_agent_loop,
-            save_turn=self._save_turn,
-            consolidate_memory=self._consolidate_memory_default,
+            hooks=MessageProcessingHooks(
+                set_tool_context=self._set_tool_context,
+                run_agent_loop=self._run_agent_loop,
+                save_turn=self._save_turn,
+                consolidate_memory=self._consolidate_memory_default,
+            ),
+        )
+        self._turn_history_writer = TurnHistoryWriter(
+            tool_result_max_chars=self._TOOL_RESULT_MAX_CHARS,
+            assistant_history_max_chars=self._ASSISTANT_HISTORY_MAX_CHARS,
         )
         self._register_default_tools()
 
@@ -386,41 +393,10 @@ class AgentLoop:
 
     @staticmethod
     def _strip_images_from_content(content: Any) -> Any:
-        """Replace base64 image blocks with a lightweight placeholder."""
-        if not isinstance(content, list):
-            return content
-        stripped: list[dict] = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "image_url":
-                stripped.append({"type": "text", "text": "[image]"})
-            else:
-                stripped.append(block)
-        # If only text blocks remain, collapse to a plain string
-        texts = [b["text"] for b in stripped if isinstance(b, dict) and b.get("type") == "text"]
-        if len(texts) == len(stripped):
-            return " ".join(texts)
-        return stripped
+        return TurnHistoryWriter.strip_images_from_content(content)
 
     def _save_turn(self, session: Session, messages: list[dict], skip: int) -> None:
-        """Save new-turn messages into session, truncating large content and stripping images."""
-        from datetime import datetime
-        for m in messages[skip:]:
-            entry = {k: v for k, v in m.items() if k != "reasoning_content"}
-            # Strip base64 images from multimodal content
-            if "content" in entry:
-                entry["content"] = self._strip_images_from_content(entry["content"])
-            # Truncate long assistant replies (keep summary-length prefix)
-            if entry.get("role") == "assistant" and isinstance(entry.get("content"), str):
-                content = entry["content"]
-                if len(content) > self._ASSISTANT_HISTORY_MAX_CHARS:
-                    entry["content"] = content[:self._ASSISTANT_HISTORY_MAX_CHARS] + "\n... (truncated)"
-            if entry.get("role") == "tool" and isinstance(entry.get("content"), str):
-                content = entry["content"]
-                if len(content) > self._TOOL_RESULT_MAX_CHARS:
-                    entry["content"] = content[:self._TOOL_RESULT_MAX_CHARS] + "\n... (truncated)"
-            entry.setdefault("timestamp", datetime.now().isoformat())
-            session.messages.append(entry)
-        session.updated_at = datetime.now()
+        self._turn_history_writer.save_turn(session, messages, skip)
 
     async def _consolidate_memory(self, session, archive_all: bool = False) -> bool:
         """Delegate to MemoryStore.consolidate(). Returns True on success."""

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Protocol, TypeAlias
 
 import structlog
 
@@ -15,23 +16,54 @@ from nanobot.logging import get_logger
 logger = get_logger(__name__)
 
 
+ProgressCallback: TypeAlias = Callable[..., Awaitable[None]]
+RunAgentLoopCallback: TypeAlias = Callable[..., Awaitable[tuple[str | None, list[str], list[dict[str, Any]]]]]
+SaveTurnCallback: TypeAlias = Callable[[Any, list[dict[str, Any]], int], None]
+ConsolidateSessionCallback: TypeAlias = Callable[[Any], Awaitable[bool]]
+SetToolContextCallback: TypeAlias = Callable[[str, str, str | None], None]
+
+
+class SessionStoreProtocol(Protocol):
+    def get_or_create(self, key: str) -> Any: ...
+    def save(self, session: Any) -> None: ...
+
+
+class ContextBuilderProtocol(Protocol):
+    def build_messages(self, **kwargs: Any) -> list[dict[str, Any]]: ...
+
+
+class ToolRegistryProtocol(Protocol):
+    def get(self, name: str) -> Any: ...
+
+
+class CommandHandlerProtocol(Protocol):
+    async def handle(self, msg: InboundMessage, session: Any) -> OutboundMessage | None: ...
+
+
+@dataclass(frozen=True)
+class MessageProcessingHooks:
+    """AgentLoop callbacks used by MessageProcessor."""
+
+    set_tool_context: SetToolContextCallback
+    run_agent_loop: RunAgentLoopCallback
+    save_turn: SaveTurnCallback
+    consolidate_memory: ConsolidateSessionCallback
+
+
 class MessageProcessor:
     """Handle inbound message processing using AgentLoop-provided callbacks."""
 
     def __init__(
         self,
         *,
-        sessions: Any,
-        context: Any,
-        tools: Any,
+        sessions: SessionStoreProtocol,
+        context: ContextBuilderProtocol,
+        tools: ToolRegistryProtocol,
         bus: MessageBus,
-        command_handler: Any,
+        command_handler: CommandHandlerProtocol,
         consolidation: ConsolidationCoordinator,
         memory_window: int,
-        set_tool_context: Callable[[str, str, str | None], None],
-        run_agent_loop: Callable[..., Awaitable[tuple[str | None, list[str], list[dict[str, Any]]]]],
-        save_turn: Callable[[Any, list[dict[str, Any]], int], None],
-        consolidate_memory: Callable[[Any], Awaitable[bool]],
+        hooks: MessageProcessingHooks,
     ) -> None:
         self.sessions = sessions
         self.context = context
@@ -40,10 +72,7 @@ class MessageProcessor:
         self.command_handler = command_handler
         self.consolidation = consolidation
         self.memory_window = memory_window
-        self.set_tool_context = set_tool_context
-        self.run_agent_loop = run_agent_loop
-        self.save_turn = save_turn
-        self.consolidate_memory = consolidate_memory
+        self.hooks = hooks
 
     async def process(
         self,
@@ -65,7 +94,7 @@ class MessageProcessor:
         logger.info("Processing system message")
         key = f"{channel}:{chat_id}"
         session = self.sessions.get_or_create(key)
-        self.set_tool_context(channel, chat_id, (msg.metadata or {}).get("message_id"))
+        self.hooks.set_tool_context(channel, chat_id, (msg.metadata or {}).get("message_id"))
         history = session.get_history(max_messages=self.memory_window)
         messages = self.context.build_messages(
             history=history,
@@ -74,8 +103,8 @@ class MessageProcessor:
             chat_id=chat_id,
         )
         skip = len(messages) - 1  # include current user message in saved turn
-        final_content, _, all_msgs = await self.run_agent_loop(messages)
-        self.save_turn(session, all_msgs, skip)
+        final_content, _, all_msgs = await self.hooks.run_agent_loop(messages)
+        self.hooks.save_turn(session, all_msgs, skip)
         self.sessions.save(session)
         return OutboundMessage(
             channel=channel,
@@ -107,9 +136,9 @@ class MessageProcessor:
             return command_response
 
         if len(session.messages) > self.memory_window:
-            self.consolidation.start_background(session.key, lambda: self.consolidate_memory(session))
+            self.consolidation.start_background(session.key, lambda: self.hooks.consolidate_memory(session))
 
-        self.set_tool_context(msg.channel, msg.chat_id, (msg.metadata or {}).get("message_id"))
+        self.hooks.set_tool_context(msg.channel, msg.chat_id, (msg.metadata or {}).get("message_id"))
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()
@@ -129,7 +158,7 @@ class MessageProcessor:
         # Save current_user + all LLM responses, so skip system + history.
         skip = len(initial_messages) - 1
 
-        final_content, _, all_msgs = await self.run_agent_loop(initial_messages, on_progress=progress_cb)
+        final_content, _, all_msgs = await self.hooks.run_agent_loop(initial_messages, on_progress=progress_cb)
 
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
@@ -137,7 +166,7 @@ class MessageProcessor:
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info("Response sent", preview=preview)
 
-        self.save_turn(session, all_msgs, skip)
+        self.hooks.save_turn(session, all_msgs, skip)
         self.sessions.save(session)
 
         if message_tool := self.tools.get("message"):
@@ -151,7 +180,7 @@ class MessageProcessor:
             metadata=msg.metadata or {},
         )
 
-    def _make_bus_progress(self, msg: InboundMessage) -> Callable[..., Awaitable[None]]:
+    def _make_bus_progress(self, msg: InboundMessage) -> ProgressCallback:
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
             meta = dict(msg.metadata or {})
             meta["_progress"] = True
