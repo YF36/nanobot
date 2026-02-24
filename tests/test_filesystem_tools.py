@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from nanobot.agent.tools.base import ToolExecutionResult
 from nanobot.agent.tools.filesystem import EditFileTool, ReadFileTool
 
 
@@ -36,9 +37,14 @@ async def test_edit_file_returns_diff_preview(tmp_path: Path) -> None:
     tool = EditFileTool(workspace=tmp_path)
     result = await tool.execute(path="sample.txt", old_text="world", new_text="nanobot")
 
-    assert "Successfully edited" in result
-    assert "first change at line 2" in result
-    assert "Diff:" in result
-    assert "-world" in result
-    assert "+nanobot" in result
-
+    assert isinstance(result, ToolExecutionResult)
+    assert "Successfully edited" in result.text
+    assert "first change at line 2" in result.text
+    assert "Diff:" in result.text
+    assert "-world" in result.text
+    assert "+nanobot" in result.text
+    assert result.details["op"] == "edit_file"
+    assert result.details["first_changed_line"] == 2
+    assert result.details["replacement_count"] == 1
+    assert result.details["diff_truncated"] is False
+    assert "-world" in result.details["diff_preview"]

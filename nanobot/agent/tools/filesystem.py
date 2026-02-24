@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from nanobot.agent.tools.base import Tool
+from nanobot.agent.tools.base import Tool, ToolExecutionResult
 from nanobot.logging import get_logger
 
 audit_log = get_logger("nanobot.audit")
@@ -256,7 +256,13 @@ class EditFileTool(Tool):
             "required": ["path", "old_text", "new_text"]
         }
 
-    async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
+    async def execute(
+        self,
+        path: str,
+        old_text: str,
+        new_text: str,
+        **kwargs: Any,
+    ) -> str | ToolExecutionResult:
         try:
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
             if not file_path.exists():
@@ -286,10 +292,26 @@ class EditFileTool(Tool):
             _safe_write(file_path, new_content)
             if self._audit:
                 audit_log.info("file_edited", path=str(file_path))
+            diff_truncated = False
             if len(diff_text) > 4000:
                 diff_text = diff_text[:4000] + "\n... (diff truncated)"
+                diff_truncated = True
             line_hint = f" (first change at line {first_changed})" if first_changed else ""
-            return f"Successfully edited {file_path}{line_hint}\n\nDiff:\n{diff_text}"
+            text = f"Successfully edited {file_path}{line_hint}\n\nDiff:\n{diff_text}"
+            return ToolExecutionResult(
+                text=text,
+                details={
+                    "op": "edit_file",
+                    "path": str(file_path),
+                    "requested_path": path,
+                    "first_changed_line": first_changed,
+                    "replacement_count": 1,
+                    "diff_preview": diff_text,
+                    "diff_truncated": diff_truncated,
+                    "old_text_len": len(old_text),
+                    "new_text_len": len(new_text),
+                },
+            )
         except PermissionError as e:
             if self._audit:
                 audit_log.warning("file_edit_blocked", path=path, reason=str(e))

@@ -92,6 +92,17 @@ class TurnRunner:
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info("Tool call", tool=tool_call.name, args=args_str[:200])
                     tool_result = await self.tools.execute_result(tool_call.name, tool_call.arguments)
+                    if tool_result.details:
+                        logger.debug(
+                            "Tool result details",
+                            tool=tool_call.name,
+                            detail_keys=sorted(tool_result.details.keys()),
+                            details={
+                                k: tool_result.details.get(k)
+                                for k in ("op", "path", "first_changed_line", "diff_truncated")
+                                if k in tool_result.details
+                            },
+                        )
                     messages = self.context.add_tool_result(messages, tool_call.id, tool_call.name, tool_result.text)
             else:
                 messages = self.context.add_assistant_message(
@@ -110,4 +121,3 @@ class TurnRunner:
             )
 
         return final_content, tools_used, messages
-

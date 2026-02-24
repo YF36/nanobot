@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from nanobot.agent.tools.base import ToolExecutionResult
 from nanobot.agent.tools.filesystem import (
     _check_symlink_chain,
     _safe_write,
@@ -194,7 +195,8 @@ class TestEditFileTool:
     async def test_edit_normal(self, workspace):
         tool = EditFileTool(workspace=workspace, allowed_dir=workspace)
         result = await tool.execute(path="hello.txt", old_text="hello", new_text="goodbye")
-        assert "Successfully" in result
+        text = result.text if isinstance(result, ToolExecutionResult) else result
+        assert "Successfully" in text
         assert (workspace / "hello.txt").read_text() == "goodbye world"
 
     @pytest.mark.asyncio
