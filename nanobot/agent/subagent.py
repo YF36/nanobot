@@ -1,19 +1,55 @@
 """Subagent manager for background task execution."""
 
 import asyncio
-import json
 import uuid
 from pathlib import Path
 from typing import Any
 
 from nanobot.logging import get_logger
 
+from nanobot.agent.turn_runner import TurnRunner
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
 from nanobot.agent.tools.factory import create_standard_tool_registry
 
 logger = get_logger(__name__)
+
+
+class _SubagentContextAdapter:
+    """Minimal context adapter for TurnRunner, preserving subagent message shape."""
+
+    @staticmethod
+    def add_assistant_message(
+        messages: list[dict[str, Any]],
+        content: str | None,
+        tool_calls: list[dict[str, Any]] | None = None,
+        reasoning_content: str | None = None,
+    ) -> list[dict[str, Any]]:
+        entry: dict[str, Any] = {
+            "role": "assistant",
+            "content": content or "",
+        }
+        if tool_calls:
+            entry["tool_calls"] = tool_calls
+        # Subagent loop historically ignored reasoning_content; keep behavior.
+        messages.append(entry)
+        return messages
+
+    @staticmethod
+    def add_tool_result(
+        messages: list[dict[str, Any]],
+        tool_call_id: str,
+        tool_name: str,
+        content: str,
+    ) -> list[dict[str, Any]]:
+        messages.append({
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "name": tool_name,
+            "content": content,
+        })
+        return messages
 
 
 class SubagentManager:
@@ -131,57 +167,22 @@ class SubagentManager:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": task},
             ]
-            
-            # Run agent loop (limited iterations)
-            max_iterations = self.subagent_max_iterations
-            iteration = 0
-            final_result: str | None = None
 
-            while iteration < max_iterations:
-                iteration += 1
-                
-                response = await self.provider.chat(
-                    messages=messages,
-                    tools=tools.get_definitions(),
-                    model=self.model,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                )
-                
-                if response.has_tool_calls:
-                    # Add assistant message with tool calls
-                    tool_call_dicts = [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.name,
-                                "arguments": json.dumps(tc.arguments, ensure_ascii=False),
-                            },
-                        }
-                        for tc in response.tool_calls
-                    ]
-                    messages.append({
-                        "role": "assistant",
-                        "content": response.content or "",
-                        "tool_calls": tool_call_dicts,
-                    })
-                    
-                    # Execute tools
-                    for tool_call in response.tool_calls:
-                        args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
-                        logger.debug("Subagent executing tool", task_id=task_id, tool=tool_call.name, args=args_str)
-                        tool_result = await tools.execute_result(tool_call.name, tool_call.arguments)
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "name": tool_call.name,
-                            "content": tool_result.text,
-                        })
-                else:
-                    final_result = response.content
-                    break
-            
+            # Reuse shared turn loop logic with a minimal context adapter.
+            runner = TurnRunner(
+                provider=self.provider,
+                tools=tools,
+                context_builder=_SubagentContextAdapter(),
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                max_iterations=self.subagent_max_iterations,
+                guard_loop_messages=lambda m, current: (m, current),
+                strip_think=lambda text: text,
+                tool_hint=lambda _: "",
+            )
+            final_result, _, _ = await runner.run(messages)
+
             if final_result is None:
                 final_result = "Task completed but no final response was generated."
             
