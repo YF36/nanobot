@@ -95,6 +95,93 @@ class TestSnapshotLen:
         assert result is True
         assert session.last_consolidated == 0
 
+    @pytest.mark.asyncio
+    async def test_consolidation_retries_with_smaller_chunk_on_context_overflow(self, tmp_path: Path) -> None:
+        """Context-length errors should shrink the chunk and still make progress."""
+        from nanobot.agent.memory import MemoryStore
+        from nanobot.providers.base import LLMResponse, ToolCallRequest
+
+        mm = MemoryStore(workspace=tmp_path)
+        session = Session(key="test:ctx_overflow")
+        for i in range(20):
+            session.add_message("user", f"msg{i}")
+
+        # old_messages = 20 - keep_count(5) = 15; force the retry path instead of soft budgeting.
+        mm._fit_chunk_by_soft_budget = lambda messages, current_memory: list(messages)  # type: ignore[method-assign]
+
+        provider = MagicMock()
+        calls = {"n": 0}
+
+        async def _fake_chat(**kwargs):
+            calls["n"] += 1
+            prompt = kwargs["messages"][1]["content"]
+            line_count = prompt.count("] USER:")
+            if line_count > 4:
+                return LLMResponse(
+                    content="Error calling LLM: input tokens exceeds the model's maximum context length",
+                    finish_reason="error",
+                )
+            return LLMResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="t1", name="save_memory",
+                    arguments={"history_entry": "summary", "memory_update": "updated"},
+                )],
+            )
+
+        provider.chat = _fake_chat
+
+        result = await mm.consolidate(
+            session=session, provider=provider, model="test", memory_window=10
+        )
+
+        assert result is True
+        assert calls["n"] >= 2  # at least one overflow + one retry
+        assert 0 < session.last_consolidated < 15  # partial progress instead of total failure
+
+    @pytest.mark.asyncio
+    async def test_archive_all_chunks_until_complete_on_context_overflow(self, tmp_path: Path) -> None:
+        """archive_all=True must process all messages across multiple chunks, not return partial success."""
+        from nanobot.agent.memory import MemoryStore
+        from nanobot.providers.base import LLMResponse, ToolCallRequest
+
+        mm = MemoryStore(workspace=tmp_path)
+        session = Session(key="test:archive_chunked")
+        for i in range(12):
+            session.add_message("user", f"msg{i}")
+
+        mm._fit_chunk_by_soft_budget = lambda messages, current_memory: list(messages)  # type: ignore[method-assign]
+
+        provider = MagicMock()
+        calls = {"n": 0}
+
+        async def _fake_chat(**kwargs):
+            calls["n"] += 1
+            prompt = kwargs["messages"][1]["content"]
+            line_count = prompt.count("] USER:")
+            if line_count > 3:
+                return LLMResponse(
+                    content="Error calling LLM: maximum context length exceeded",
+                    finish_reason="error",
+                )
+            return LLMResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id=f"t{calls['n']}", name="save_memory",
+                    arguments={"history_entry": f"summary {calls['n']}", "memory_update": f"mem {calls['n']}"},
+                )],
+            )
+
+        provider.chat = _fake_chat
+
+        result = await mm.consolidate(
+            session=session, provider=provider, model="test", memory_window=50, archive_all=True
+        )
+
+        assert result is True
+        assert calls["n"] >= 2
+        assert session.last_consolidated == 0
+
 
 class TestLockBatchCleanup:
     """Verify _prune_consolidation_lock batch cleanup when dict > 100."""

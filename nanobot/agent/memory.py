@@ -47,6 +47,10 @@ _SAVE_MEMORY_TOOL = [
 class MemoryStore:
     """Two-layer memory: MEMORY.md (long-term facts) + HISTORY.md (grep-searchable log)."""
 
+    _CHARS_PER_TOKEN = 4
+    _CONSOLIDATION_REPLY_RESERVE_TOKENS = 4096
+    _CONSOLIDATION_SOFT_INPUT_TOKENS = 24_000
+
     def __init__(self, workspace: Path):
         self.memory_dir = ensure_dir(workspace / "memory")
         self.memory_file = self.memory_dir / "MEMORY.md"
@@ -67,6 +71,66 @@ class MemoryStore:
     def get_memory_context(self) -> str:
         long_term = self.read_long_term()
         return f"## Long-term Memory\n{long_term}" if long_term else ""
+
+    @classmethod
+    def _estimate_tokens(cls, text: str) -> int:
+        """Coarse token estimate for memory consolidation budgeting."""
+        return max(1, len(text) // cls._CHARS_PER_TOKEN) if text else 0
+
+    @staticmethod
+    def _is_context_length_error(text: str | None) -> bool:
+        if not text:
+            return False
+        lower = text.lower()
+        return (
+            "maximum context length" in lower
+            or "exceeds the model's maximum context length" in lower
+            or "input tokens exceeds" in lower
+            or "context length" in lower
+        )
+
+    def _format_consolidation_lines(self, messages: list[dict]) -> list[str]:
+        lines: list[str] = []
+        for m in messages:
+            if not m.get("content"):
+                continue
+            tools = f" [tools: {', '.join(m['tools_used'])}]" if m.get("tools_used") else ""
+            lines.append(f"[{m.get('timestamp', '?')[:16]}] {m['role'].upper()}{tools}: {m['content']}")
+        return lines
+
+    def _build_consolidation_prompt(self, current_memory: str, lines: list[str]) -> str:
+        return f"""Process this conversation and call the save_memory tool with your consolidation.
+
+## Current Long-term Memory
+{current_memory or "(empty)"}
+
+## Conversation to Process
+{chr(10).join(lines)}"""
+
+    def _fit_chunk_by_soft_budget(
+        self,
+        messages: list[dict],
+        current_memory: str,
+    ) -> list[dict]:
+        """Select a prefix chunk that fits a conservative input budget."""
+        if not messages:
+            return []
+        # Prompt scaffolding estimate plus current memory
+        scaffold = self._build_consolidation_prompt(current_memory, [])
+        budget = max(
+            1,
+            self._CONSOLIDATION_SOFT_INPUT_TOKENS - self._estimate_tokens(scaffold) - self._CONSOLIDATION_REPLY_RESERVE_TOKENS,
+        )
+        total = 0
+        chunk: list[dict] = []
+        for m in messages:
+            lines = self._format_consolidation_lines([m])
+            delta = self._estimate_tokens("\n".join(lines)) if lines else 1
+            if chunk and total + delta > budget:
+                break
+            chunk.append(m)
+            total += delta
+        return chunk or messages[:1]
 
     async def consolidate(
         self,
@@ -100,49 +164,90 @@ class MemoryStore:
                 return True
             logger.info("Memory consolidation", to_consolidate=len(old_messages), keep=keep_count)
 
-        lines = []
-        for m in old_messages:
-            if not m.get("content"):
-                continue
-            tools = f" [tools: {', '.join(m['tools_used'])}]" if m.get("tools_used") else ""
-            lines.append(f"[{m.get('timestamp', '?')[:16]}] {m['role'].upper()}{tools}: {m['content']}")
-
-        current_memory = self.read_long_term()
-        prompt = f"""Process this conversation and call the save_memory tool with your consolidation.
-
-## Current Long-term Memory
-{current_memory or "(empty)"}
-
-## Conversation to Process
-{chr(10).join(lines)}"""
+        start_index = session.last_consolidated
+        target_last = 0 if archive_all else snapshot_len - keep_count
+        pending = list(old_messages)
+        processed_count = 0
 
         try:
-            response = await provider.chat(
-                messages=[
-                    {"role": "system", "content": "You are a memory consolidation agent. Call the save_memory tool with your consolidation of the conversation."},
-                    {"role": "user", "content": prompt},
-                ],
-                tools=_SAVE_MEMORY_TOOL,
-                model=model,
+            while pending:
+                current_memory = self.read_long_term()
+                chunk = self._fit_chunk_by_soft_budget(pending, current_memory)
+                if not chunk:
+                    break
+
+                # Retry with smaller prefixes if provider still reports context overflow.
+                while True:
+                    lines = self._format_consolidation_lines(chunk)
+                    if not lines:
+                        # Nothing useful to summarize; just mark the messages as processed.
+                        processed_count += len(chunk)
+                        pending = pending[len(chunk):]
+                        if not archive_all:
+                            session.last_consolidated = min(target_last, start_index + processed_count)
+                        break
+
+                    prompt = self._build_consolidation_prompt(current_memory, lines)
+                    response = await provider.chat(
+                        messages=[
+                            {"role": "system", "content": "You are a memory consolidation agent. Call the save_memory tool with your consolidation of the conversation."},
+                            {"role": "user", "content": prompt},
+                        ],
+                        tools=_SAVE_MEMORY_TOOL,
+                        model=model,
+                    )
+
+                    if getattr(response, "finish_reason", "") == "error" and self._is_context_length_error(response.content):
+                        if len(chunk) <= 1:
+                            logger.warning("Memory consolidation failed: prompt exceeds context even for single message")
+                            return False
+                        chunk = chunk[: max(1, len(chunk) // 2)]
+                        continue
+
+                    if not response.has_tool_calls:
+                        if getattr(response, "finish_reason", "") == "error":
+                            logger.warning("Memory consolidation LLM call failed", error=response.content or "(empty)")
+                        else:
+                            logger.warning("Memory consolidation: LLM did not call save_memory, skipping")
+                        return False
+
+                    args = response.tool_calls[0].arguments
+                    if entry := args.get("history_entry"):
+                        if not isinstance(entry, str):
+                            entry = json.dumps(entry, ensure_ascii=False)
+                        self.append_history(entry)
+                    if update := args.get("memory_update"):
+                        if not isinstance(update, str):
+                            update = json.dumps(update, ensure_ascii=False)
+                        if update != current_memory:
+                            self.write_long_term(update)
+
+                    processed_count += len(chunk)
+                    pending = pending[len(chunk):]
+                    if not archive_all:
+                        # Process at most one chunk per normal pass to keep latency bounded.
+                        session.last_consolidated = min(target_last, start_index + processed_count)
+                        logger.info(
+                            "Memory consolidation done",
+                            snapshot_len=snapshot_len,
+                            last_consolidated=session.last_consolidated,
+                            processed_messages=processed_count,
+                            partial=(session.last_consolidated < target_last),
+                        )
+                        return True
+                    break
+
+            if archive_all:
+                session.last_consolidated = 0
+            else:
+                session.last_consolidated = min(target_last, start_index + processed_count)
+            logger.info(
+                "Memory consolidation done",
+                snapshot_len=snapshot_len,
+                last_consolidated=session.last_consolidated,
+                processed_messages=processed_count,
+                partial=(not archive_all and session.last_consolidated < target_last),
             )
-
-            if not response.has_tool_calls:
-                logger.warning("Memory consolidation: LLM did not call save_memory, skipping")
-                return False
-
-            args = response.tool_calls[0].arguments
-            if entry := args.get("history_entry"):
-                if not isinstance(entry, str):
-                    entry = json.dumps(entry, ensure_ascii=False)
-                self.append_history(entry)
-            if update := args.get("memory_update"):
-                if not isinstance(update, str):
-                    update = json.dumps(update, ensure_ascii=False)
-                if update != current_memory:
-                    self.write_long_term(update)
-
-            session.last_consolidated = 0 if archive_all else snapshot_len - keep_count
-            logger.info("Memory consolidation done", snapshot_len=snapshot_len, last_consolidated=session.last_consolidated)
             return True
         except Exception:
             logger.exception("Memory consolidation failed")
