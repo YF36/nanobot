@@ -9,6 +9,8 @@ from nanobot.logging import get_logger
 
 logger = get_logger(__name__)
 
+TurnEventCallback = Callable[[dict[str, Any]], Awaitable[None]]
+
 
 def _session_tool_details(details: dict[str, Any]) -> dict[str, Any]:
     """Keep a compact, versioned subset of tool details for session persistence only."""
@@ -77,6 +79,7 @@ class TurnRunner:
         self,
         initial_messages: list[dict[str, Any]],
         on_progress: Callable[..., Awaitable[None]] | None = None,
+        on_event: TurnEventCallback | None = None,
     ) -> tuple[str | None, list[str], list[dict[str, Any]]]:
         """Run the iterative turn loop. Returns (final_content, tools_used, messages)."""
         messages = initial_messages
@@ -84,6 +87,12 @@ class TurnRunner:
         iteration = 0
         final_content = None
         tools_used: list[str] = []
+        if on_event:
+            await on_event({
+                "type": "turn_start",
+                "initial_message_count": len(initial_messages),
+                "max_iterations": self.max_iterations,
+            })
 
         while iteration < self.max_iterations:
             iteration += 1
@@ -126,6 +135,14 @@ class TurnRunner:
                     tools_used.append(tool_call.name)
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info("Tool call", tool=tool_call.name, args=args_str[:200])
+                    if on_event:
+                        await on_event({
+                            "type": "tool_start",
+                            "iteration": iteration,
+                            "tool": tool_call.name,
+                            "tool_call_id": tool_call.id,
+                            "arguments": tool_call.arguments,
+                        })
                     tool_result = await self.tools.execute_result(tool_call.name, tool_call.arguments)
                     if tool_result.details:
                         logger.debug(
@@ -138,6 +155,16 @@ class TurnRunner:
                                 if k in tool_result.details
                             },
                         )
+                    if on_event:
+                        await on_event({
+                            "type": "tool_end",
+                            "iteration": iteration,
+                            "tool": tool_call.name,
+                            "tool_call_id": tool_call.id,
+                            "is_error": tool_result.is_error,
+                            "has_details": bool(tool_result.details),
+                            "detail_op": tool_result.details.get("op") if tool_result.details else None,
+                        })
                     messages = self.context.add_tool_result(
                         messages,
                         tool_call.id,
@@ -160,5 +187,15 @@ class TurnRunner:
                 f"I reached the maximum number of tool call iterations ({self.max_iterations}) "
                 "without completing the task. You can try breaking the task into smaller steps."
             )
+        if on_event:
+            await on_event({
+                "type": "turn_end",
+                "iterations": iteration,
+                "tool_count": len(tools_used),
+                "completed": final_content is not None,
+                "max_iterations_reached": iteration >= self.max_iterations and final_content is not None and (
+                    final_content.startswith("I reached the maximum number of tool call iterations")
+                ),
+            })
 
         return final_content, tools_used, messages

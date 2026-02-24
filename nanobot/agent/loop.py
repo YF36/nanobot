@@ -291,7 +291,27 @@ class AgentLoop:
             strip_think=self._strip_think,
             tool_hint=self._tool_hint,
         )
-        return await runner.run(initial_messages, on_progress=on_progress)
+        return await runner.run(
+            initial_messages,
+            on_progress=on_progress,
+            on_event=self._on_turn_event,
+        )
+
+    async def _on_turn_event(self, event: dict[str, Any]) -> None:
+        """Internal turn event sink for debug/observability; does not affect behavior."""
+        event_type = event.get("type", "unknown")
+        if event_type in {"tool_start", "tool_end"}:
+            logger.debug(
+                "turn_event",
+                event_type=event_type,
+                tool=event.get("tool"),
+                iteration=event.get("iteration"),
+                tool_call_id=event.get("tool_call_id"),
+                is_error=event.get("is_error"),
+                detail_op=event.get("detail_op"),
+            )
+            return
+        logger.debug("turn_event", event_type=event_type, payload=event)
 
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""

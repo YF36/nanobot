@@ -1,4 +1,9 @@
-from nanobot.agent.turn_runner import _session_tool_details
+from types import SimpleNamespace
+
+import pytest
+
+from nanobot.agent.tools.base import ToolExecutionResult
+from nanobot.agent.turn_runner import TurnRunner, _session_tool_details
 
 
 def test_session_tool_details_wraps_compact_data_with_version() -> None:
@@ -31,3 +36,89 @@ def test_session_tool_details_wraps_compact_data_with_version() -> None:
 def test_session_tool_details_returns_empty_for_no_supported_keys() -> None:
     assert _session_tool_details({"diff_preview": "only preview"}) == {}
     assert _session_tool_details({}) == {}
+
+
+class _FakeContext:
+    def add_assistant_message(self, messages, content, tool_calls=None, reasoning_content=None):
+        msg = {"role": "assistant", "content": content}
+        if tool_calls:
+            msg["tool_calls"] = tool_calls
+        messages.append(msg)
+        return messages
+
+    def add_tool_result(self, messages, tool_call_id, tool_name, result, metadata=None):
+        msg = {"role": "tool", "tool_call_id": tool_call_id, "name": tool_name, "content": result}
+        if metadata:
+            msg["_tool_details"] = metadata
+        messages.append(msg)
+        return messages
+
+
+class _FakeTools:
+    def get_definitions(self):
+        return []
+
+    async def execute_result(self, name, arguments):
+        return ToolExecutionResult(text="ok", details={"op": "exec", "exit_code": 0})
+
+
+class _FakeProvider:
+    def __init__(self):
+        self.calls = 0
+
+    async def chat(self, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            tool_call = SimpleNamespace(id="call_1", name="exec", arguments={"command": "echo hello"})
+            return SimpleNamespace(
+                has_tool_calls=True,
+                content="I will run a command",
+                tool_calls=[tool_call],
+                reasoning_content=None,
+            )
+        return SimpleNamespace(
+            has_tool_calls=False,
+            content="Done",
+            tool_calls=[],
+            reasoning_content=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_turn_runner_emits_minimal_events_and_keeps_progress() -> None:
+    runner = TurnRunner(
+        provider=_FakeProvider(),
+        tools=_FakeTools(),
+        context_builder=_FakeContext(),
+        model="test",
+        temperature=0.0,
+        max_tokens=256,
+        max_iterations=5,
+        guard_loop_messages=lambda m, i: (m, i),
+        strip_think=lambda s: s,
+        tool_hint=lambda calls: f"Using {len(calls)} tool(s)",
+    )
+
+    progress_calls: list[tuple[str, bool]] = []
+    events: list[dict] = []
+
+    async def _on_progress(content: str, *, tool_hint: bool = False) -> None:
+        progress_calls.append((content, tool_hint))
+
+    async def _on_event(event: dict) -> None:
+        events.append(event)
+
+    final_content, tools_used, messages = await runner.run(
+        [{"role": "user", "content": "do it"}],
+        on_progress=_on_progress,
+        on_event=_on_event,
+    )
+
+    assert final_content == "Done"
+    assert tools_used == ["exec"]
+    assert [e["type"] for e in events] == ["turn_start", "tool_start", "tool_end", "turn_end"]
+    assert events[2]["detail_op"] == "exec"
+    assert events[2]["has_details"] is True
+    assert any(tool_hint for _, tool_hint in progress_calls)
+    tool_msgs = [m for m in messages if m.get("role") == "tool"]
+    assert tool_msgs and tool_msgs[0]["_tool_details"]["tool"] == "exec"
