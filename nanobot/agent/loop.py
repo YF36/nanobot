@@ -277,6 +277,7 @@ class AgentLoop:
         self,
         initial_messages: list[dict],
         on_progress: Callable[..., Awaitable[None]] | None = None,
+        on_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop. Returns (final_content, tools_used, messages)."""
         runner = TurnRunner(
@@ -291,10 +292,15 @@ class AgentLoop:
             strip_think=self._strip_think,
             tool_hint=self._tool_hint,
         )
+        async def _fanout_event(event: dict[str, Any]) -> None:
+            await self._on_turn_event(event)
+            if on_event:
+                await on_event(event)
+
         return await runner.run(
             initial_messages,
             on_progress=on_progress,
-            on_event=self._on_turn_event,
+            on_event=_fanout_event,
         )
 
     async def _on_turn_event(self, event: dict[str, Any]) -> None:

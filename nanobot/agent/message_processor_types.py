@@ -10,6 +10,7 @@ from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 
 ProgressCallback: TypeAlias = Callable[..., Awaitable[None]]
+TurnEventCallback: TypeAlias = Callable[[dict[str, Any]], Awaitable[None]]
 RunAgentLoopCallback: TypeAlias = Callable[..., Awaitable[tuple[str | None, list[str], list[dict[str, Any]]]]]
 SaveTurnCallback: TypeAlias = Callable[[Any, list[dict[str, Any]], int], None]
 ConsolidateSessionCallback: TypeAlias = Callable[[Any], Awaitable[bool]]

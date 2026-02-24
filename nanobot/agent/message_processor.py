@@ -9,6 +9,7 @@ from nanobot.agent.message_processor_helpers import (
     ProgressPublisher,
     RequestContextBinder,
     ToolContextInitializer,
+    TurnEventStatsCollector,
     TurnExecutionCoordinator,
     TurnMessageBuilder,
 )
@@ -55,11 +56,14 @@ class SystemMessageHandler(BaseTurnHandler):
             include_media=False,
         )
         skip = len(messages) - 1  # include current user message in saved turn
+        turn_events = TurnEventStatsCollector()
         final_content, _, _ = await self.turn_executor.run_and_persist(
             session=session,
             messages=messages,
             skip=skip,
+            on_event=turn_events.on_event,
         )
+        turn_events.log_summary(route="system", msg=msg)
         return OutboundMessage(
             channel=channel,
             chat_id=chat_id,
@@ -140,12 +144,15 @@ class UserMessageHandler(BaseTurnHandler):
         # Save current_user + all LLM responses, so skip system + history.
         skip = len(initial_messages) - 1
 
+        turn_events = TurnEventStatsCollector()
         final_content, _, _ = await self.turn_executor.run_and_persist(
             session=session,
             messages=initial_messages,
             skip=skip,
             on_progress=progress_cb,
+            on_event=turn_events.on_event,
         )
+        turn_events.log_summary(route="user", msg=msg)
 
         if final_content is None:
             final_content = "I've completed processing but have no response to give."

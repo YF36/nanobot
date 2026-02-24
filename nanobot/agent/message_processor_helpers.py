@@ -7,7 +7,13 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from nanobot.agent.tools.message import MessageTool
-from nanobot.agent.message_processor_types import MessageProcessingHooks, MessageProcessorDeps, ProgressCallback, ToolRegistryProtocol
+from nanobot.agent.message_processor_types import (
+    MessageProcessingHooks,
+    MessageProcessorDeps,
+    ProgressCallback,
+    ToolRegistryProtocol,
+    TurnEventCallback,
+)
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.logging import get_logger
@@ -83,6 +89,51 @@ class RequestContextBinder:
         logger.info("Processing message", preview=preview)
 
 
+class TurnEventStatsCollector:
+    """Collect lightweight per-message turn-event stats for debug logging."""
+
+    def __init__(self) -> None:
+        self.turns_started = 0
+        self.turns_ended = 0
+        self.tool_starts = 0
+        self.tool_ends = 0
+        self.detail_ops: set[str] = set()
+        self.error_tools = 0
+
+    async def on_event(self, event: dict[str, Any]) -> None:
+        event_type = event.get("type")
+        if event_type == "turn_start":
+            self.turns_started += 1
+            return
+        if event_type == "turn_end":
+            self.turns_ended += 1
+            return
+        if event_type == "tool_start":
+            self.tool_starts += 1
+            return
+        if event_type == "tool_end":
+            self.tool_ends += 1
+            if event.get("is_error"):
+                self.error_tools += 1
+            detail_op = event.get("detail_op")
+            if isinstance(detail_op, str) and detail_op:
+                self.detail_ops.add(detail_op)
+
+    def log_summary(self, *, route: str, msg: InboundMessage) -> None:
+        logger.debug(
+            "message_turn_event_summary",
+            route=route,
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            turns_started=self.turns_started,
+            turns_ended=self.turns_ended,
+            tool_starts=self.tool_starts,
+            tool_ends=self.tool_ends,
+            error_tools=self.error_tools,
+            detail_ops=sorted(self.detail_ops),
+        )
+
+
 class TurnExecutionCoordinator:
     """Run a turn and persist its resulting messages to the session."""
 
@@ -96,10 +147,12 @@ class TurnExecutionCoordinator:
         messages: list[dict[str, Any]],
         skip: int,
         on_progress: ProgressCallback | None = None,
+        on_event: TurnEventCallback | None = None,
     ) -> tuple[str | None, list[str], list[dict[str, Any]]]:
         final_content, tools_used, all_msgs = await self.deps.hooks.run_agent_loop(
             messages,
             on_progress=on_progress,
+            on_event=on_event,
         )
         self.deps.hooks.save_turn(session, all_msgs, skip)
         self.deps.sessions.save(session)
