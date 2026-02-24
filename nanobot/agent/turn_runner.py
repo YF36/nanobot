@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any, Awaitable, Callable
 
 from nanobot.logging import get_logger
@@ -87,9 +88,11 @@ class TurnRunner:
         iteration = 0
         final_content = None
         tools_used: list[str] = []
+        turn_id = f"turn_{uuid.uuid4().hex[:12]}"
         if on_event:
             await on_event({
                 "type": "turn_start",
+                "turn_id": turn_id,
                 "initial_message_count": len(initial_messages),
                 "max_iterations": self.max_iterations,
             })
@@ -138,6 +141,7 @@ class TurnRunner:
                     if on_event:
                         await on_event({
                             "type": "tool_start",
+                            "turn_id": turn_id,
                             "iteration": iteration,
                             "tool": tool_call.name,
                             "tool_call_id": tool_call.id,
@@ -158,6 +162,7 @@ class TurnRunner:
                     if on_event:
                         await on_event({
                             "type": "tool_end",
+                            "turn_id": turn_id,
                             "iteration": iteration,
                             "tool": tool_call.name,
                             "tool_call_id": tool_call.id,
@@ -190,6 +195,7 @@ class TurnRunner:
         if on_event:
             await on_event({
                 "type": "turn_end",
+                "turn_id": turn_id,
                 "iterations": iteration,
                 "tool_count": len(tools_used),
                 "completed": final_content is not None,

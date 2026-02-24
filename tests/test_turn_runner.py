@@ -117,6 +117,10 @@ async def test_turn_runner_emits_minimal_events_and_keeps_progress() -> None:
     assert final_content == "Done"
     assert tools_used == ["exec"]
     assert [e["type"] for e in events] == ["turn_start", "tool_start", "tool_end", "turn_end"]
+    turn_ids = {e.get("turn_id") for e in events}
+    assert len(turn_ids) == 1
+    only_turn_id = next(iter(turn_ids))
+    assert isinstance(only_turn_id, str) and only_turn_id.startswith("turn_")
     assert events[2]["detail_op"] == "exec"
     assert events[2]["has_details"] is True
     assert any(tool_hint for _, tool_hint in progress_calls)
