@@ -8,13 +8,12 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-import structlog
-
 from nanobot.logging import get_logger
 
 from nanobot.agent.consolidation_coordinator import ConsolidationCoordinator
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.memory import MemoryStore
+from nanobot.agent.message_processor import MessageProcessor
 from nanobot.agent.session_command_handler import SessionCommandHandler
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.turn_runner import TurnRunner
@@ -115,6 +114,19 @@ class AgentLoop:
             sessions=self.sessions,
             consolidation=self._consolidation,
             consolidate_memory=self._consolidate_memory_for_command,
+        )
+        self._message_processor = MessageProcessor(
+            sessions=self.sessions,
+            context=self.context,
+            tools=self.tools,
+            bus=self.bus,
+            command_handler=self._command_handler,
+            consolidation=self._consolidation,
+            memory_window=self.memory_window,
+            set_tool_context=self._set_tool_context,
+            run_agent_loop=self._run_agent_loop,
+            save_turn=self._save_turn,
+            consolidate_memory=self._consolidate_memory_default,
         )
         self._register_default_tools()
 
@@ -367,96 +379,7 @@ class AgentLoop:
         on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
-        # System messages: parse origin from chat_id ("channel:chat_id")
-        if msg.channel == "system":
-            channel, chat_id = (msg.chat_id.split(":", 1) if ":" in msg.chat_id
-                                else ("cli", msg.chat_id))
-            structlog.contextvars.clear_contextvars()
-            structlog.contextvars.bind_contextvars(
-                channel=channel, sender_id=msg.sender_id, session_key=f"{channel}:{chat_id}",
-            )
-            logger.info("Processing system message")
-            key = f"{channel}:{chat_id}"
-            session = self.sessions.get_or_create(key)
-            self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
-            history = session.get_history(max_messages=self.memory_window)
-            messages = self.context.build_messages(
-                history=history,
-                current_message=msg.content, channel=channel, chat_id=chat_id,
-            )
-            skip = len(messages) - 1  # -1 to include current user message in saved turn
-            final_content, _, all_msgs = await self._run_agent_loop(messages)
-            self._save_turn(session, all_msgs, skip)
-            self.sessions.save(session)
-            return OutboundMessage(channel=channel, chat_id=chat_id,
-                                  content=final_content or "Background task completed.")
-
-        preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
-
-        key = session_key or msg.session_key
-        structlog.contextvars.clear_contextvars()
-        structlog.contextvars.bind_contextvars(
-            channel=msg.channel, sender_id=msg.sender_id,
-            session_key=key, chat_id=msg.chat_id,
-        )
-        logger.info("Processing message", preview=preview)
-
-        session = self.sessions.get_or_create(key)
-
-        command_response = await self._command_handler.handle(msg, session)
-        if command_response is not None:
-            return command_response
-
-        if len(session.messages) > self.memory_window:
-            self._consolidation.start_background(session.key, lambda: self._consolidate_memory(session))
-
-        self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
-        if message_tool := self.tools.get("message"):
-            if isinstance(message_tool, MessageTool):
-                message_tool.start_turn()
-
-        history = session.get_history(max_messages=self.memory_window)
-        initial_messages = self.context.build_messages(
-            history=history,
-            current_message=msg.content,
-            media=msg.media if msg.media else None,
-            channel=msg.channel, chat_id=msg.chat_id,
-        )
-
-        async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
-            meta = dict(msg.metadata or {})
-            meta["_progress"] = True
-            meta["_tool_hint"] = tool_hint
-            await self.bus.publish_outbound(OutboundMessage(
-                channel=msg.channel, chat_id=msg.chat_id, content=content, metadata=meta,
-            ))
-
-        # Record length before _run_agent_loop mutates initial_messages in-place.
-        # initial_messages = [system, compacted_history..., current_user]
-        # We want to save current_user + all LLM responses, so skip system + history.
-        skip = len(initial_messages) - 1  # -1 to include current_user
-
-        final_content, _, all_msgs = await self._run_agent_loop(
-            initial_messages, on_progress=on_progress or _bus_progress,
-        )
-
-        if final_content is None:
-            final_content = "I've completed processing but have no response to give."
-
-        preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
-        logger.info("Response sent", preview=preview)
-
-        self._save_turn(session, all_msgs, skip)
-        self.sessions.save(session)
-
-        if message_tool := self.tools.get("message"):
-            if isinstance(message_tool, MessageTool) and message_tool._sent_in_turn:
-                return None
-
-        return OutboundMessage(
-            channel=msg.channel, chat_id=msg.chat_id, content=final_content,
-            metadata=msg.metadata or {},
-        )
+        return await self._message_processor.process(msg, session_key=session_key, on_progress=on_progress)
 
     _TOOL_RESULT_MAX_CHARS = 500
     _ASSISTANT_HISTORY_MAX_CHARS = 300
@@ -509,6 +432,10 @@ class AgentLoop:
     async def _consolidate_memory_for_command(self, session, archive_all: bool) -> bool:
         """Adapter used by SessionCommandHandler to match a simpler callback signature."""
         return await self._consolidate_memory(session, archive_all=archive_all)
+
+    async def _consolidate_memory_default(self, session) -> bool:
+        """Adapter for background consolidation callback signature."""
+        return await self._consolidate_memory(session)
 
     async def process_direct(
         self,
