@@ -93,6 +93,15 @@ def _first_changed_line(old_content: str, new_content: str) -> int | None:
     return None
 
 
+def _tool_details_base(op: str, file_path: Path, requested_path: str) -> dict[str, Any]:
+    """Common structured metadata fields for filesystem tools."""
+    return {
+        "op": op,
+        "path": str(file_path),
+        "requested_path": requested_path,
+    }
+
+
 class ReadFileTool(Tool):
     """Tool to read file contents."""
 
@@ -157,9 +166,7 @@ class ReadFileTool(Tool):
                     result = ToolExecutionResult(
                         text="",
                         details={
-                            "op": "read_file",
-                            "path": str(file_path),
-                            "requested_path": path,
+                            **_tool_details_base("read_file", file_path, path),
                             "bytes_read": 0,
                             "total_lines": 0,
                             "paged": True,
@@ -188,9 +195,7 @@ class ReadFileTool(Tool):
             return ToolExecutionResult(
                 text=content,
                 details={
-                    "op": "read_file",
-                    "path": str(file_path),
-                    "requested_path": path,
+                    **_tool_details_base("read_file", file_path, path),
                     "bytes_read": len(content.encode("utf-8")),
                     "total_lines": total_lines,
                     "paged": paged,
@@ -255,9 +260,7 @@ class WriteFileTool(Tool):
             return ToolExecutionResult(
                 text=f"Successfully wrote {len(content)} bytes to {file_path}",
                 details={
-                    "op": "write_file",
-                    "path": str(file_path),
-                    "requested_path": path,
+                    **_tool_details_base("write_file", file_path, path),
                     "bytes_written": len(content.encode("utf-8")),
                     "file_existed": existed_before,
                 },
@@ -352,9 +355,7 @@ class EditFileTool(Tool):
             return ToolExecutionResult(
                 text=text,
                 details={
-                    "op": "edit_file",
-                    "path": str(file_path),
-                    "requested_path": path,
+                    **_tool_details_base("edit_file", file_path, path),
                     "first_changed_line": first_changed,
                     "replacement_count": 1,
                     "diff_preview": diff_text,
@@ -442,9 +443,7 @@ class ListDirTool(Tool):
                 return ToolExecutionResult(
                     text=f"Directory {path} is empty",
                     details={
-                        "op": "list_dir",
-                        "path": str(dir_path),
-                        "requested_path": path,
+                        **_tool_details_base("list_dir", dir_path, path),
                         "item_count": 0,
                         "has_directories": False,
                     },
@@ -453,9 +452,7 @@ class ListDirTool(Tool):
             return ToolExecutionResult(
                 text="\n".join(items),
                 details={
-                    "op": "list_dir",
-                    "path": str(dir_path),
-                    "requested_path": path,
+                    **_tool_details_base("list_dir", dir_path, path),
                     "item_count": len(items),
                     "has_directories": any(item.is_dir() for item in dir_path.iterdir()),
                 },
