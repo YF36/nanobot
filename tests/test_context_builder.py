@@ -138,3 +138,13 @@ def test_build_messages_counts_current_image_payload_in_budget(tmp_path) -> None
     # Image payload consumes the budget; history should be dropped.
     assert [m["role"] for m in messages] == ["system", "user"]
     assert isinstance(messages[-1]["content"], list)
+
+
+def test_build_system_prompt_parts_moves_rules_to_static_and_time_to_dynamic(tmp_path) -> None:
+    builder = _builder(tmp_path)
+
+    static, dynamic = builder.build_system_prompt_parts()
+
+    assert "## Tool Call Guidelines" in static
+    assert "## Current Time" not in static
+    assert "## Current Time" in dynamic

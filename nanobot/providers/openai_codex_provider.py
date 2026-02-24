@@ -133,6 +133,23 @@ def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return converted
 
 
+def _system_prompt_from_content(content: Any) -> str:
+    """Flatten system content to a string (supports text blocks with cache_control)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") in ("text", "input_text", "output_text"):
+                text = item.get("text")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+        return "\n\n".join(parts)
+    return ""
+
+
 def _convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
     system_prompt = ""
     input_items: list[dict[str, Any]] = []
@@ -142,7 +159,7 @@ def _convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[st
         content = msg.get("content")
 
         if role == "system":
-            system_prompt = content if isinstance(content, str) else ""
+            system_prompt = _system_prompt_from_content(content)
             continue
 
         if role == "user":

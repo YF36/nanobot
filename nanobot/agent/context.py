@@ -63,50 +63,79 @@ class ContextBuilder:
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """
         Build the system prompt from bootstrap files, memory, and skills.
-        
+
         Args:
             skill_names: Optional list of skills to include.
-        
+
         Returns:
-            Complete system prompt.
+            Complete system prompt string.
         """
-        parts = []
-        
-        # Core identity
-        parts.append(self._get_identity())
-        
-        # Bootstrap files
+        static, dynamic = self.build_system_prompt_parts(skill_names)
+        parts = [p for p in [static, dynamic] if p]
+        return "\n\n---\n\n".join(parts)
+
+    def build_system_prompt_parts(
+        self, skill_names: list[str] | None = None
+    ) -> tuple[str, str]:
+        """
+        Build system prompt split into static and dynamic parts.
+
+        The static part contains content that rarely changes (bootstrap files,
+        skills summary) and is suitable for prompt caching.
+        The dynamic part contains time-sensitive content (identity with current
+        time/path, memory) that changes frequently.
+
+        Returns:
+            (static_part, dynamic_part) — either may be empty string.
+        """
+        static_parts: list[str] = []
+        dynamic_parts: list[str] = []
+
+        # Bootstrap files — static (file contents don't change between requests)
         bootstrap = self._load_bootstrap_files()
         if bootstrap:
-            parts.append(bootstrap)
-        
-        # Memory context
-        memory = self.memory.get_memory_context()
-        if memory:
-            parts.append(f"# Memory\n\n{memory}")
-        
-        # Skills - progressive loading
-        # 1. Always-loaded skills: include full content
+            static_parts.append(bootstrap)
+
+        # Always-loaded skills — static (mtime-cached)
         always_skills = self.skills.get_always_skills()
         if always_skills:
             always_content = self.skills.load_skills_for_context(always_skills)
             if always_content:
-                parts.append(f"# Active Skills\n\n{always_content}")
-        
-        # 2. Available skills: only show summary (agent uses read_file to load)
+                static_parts.append(f"# Active Skills\n\n{always_content}")
+
+        # Skills summary — static
         skills_summary = self.skills.build_skills_summary()
         if skills_summary:
-            parts.append(f"""# Skills
+            static_parts.append(
+                "# Skills\n\n"
+                "The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.\n"
+                "Skills with available=\"false\" need dependencies installed first - you can try installing them with apt/brew.\n\n"
+                + skills_summary
+            )
 
-The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
-Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
+        # Identity: split stable guidance from time-sensitive/session-specific details
+        identity_static, identity_dynamic = self._get_identity_prompt_parts()
+        if identity_static:
+            static_parts.append(identity_static)
+        if identity_dynamic:
+            dynamic_parts.append(identity_dynamic)
 
-{skills_summary}""")
-        
-        return "\n\n---\n\n".join(parts)
+        # Memory — dynamic (changes as agent learns)
+        memory = self.memory.get_memory_context()
+        if memory:
+            dynamic_parts.append(f"# Memory\n\n{memory}")
+
+        static = "\n\n---\n\n".join(static_parts)
+        dynamic = "\n\n---\n\n".join(dynamic_parts)
+        return static, dynamic
     
     def _get_identity(self) -> str:
-        """Get the core identity section."""
+        """Get the core identity section as a single string."""
+        static, dynamic = self._get_identity_prompt_parts()
+        return "\n\n".join(p for p in [static, dynamic] if p)
+
+    def _get_identity_prompt_parts(self) -> tuple[str, str]:
+        """Split identity into (static, dynamic) prompt sections."""
         from datetime import datetime
         import time as _time
         now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
@@ -114,13 +143,10 @@ Skills with available="false" need dependencies installed first - you can try in
         workspace_path = str(self.workspace.expanduser().resolve())
         system = platform.system()
         runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
-        
-        return f"""# nanobot 🐈
+
+        static = f"""# nanobot 🐈
 
 You are nanobot, a helpful AI assistant. 
-
-## Current Time
-{now} ({tz})
 
 ## Runtime
 {runtime}
@@ -143,6 +169,11 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
 ## Memory
 - Remember important facts: write to {workspace_path}/memory/MEMORY.md
 - Recall past events: grep {workspace_path}/memory/HISTORY.md"""
+
+        dynamic = f"""## Current Time
+{now} ({tz})"""
+
+        return static, dynamic
     
     def _load_bootstrap_files(self) -> str:
         """Load all bootstrap files from workspace."""
@@ -385,17 +416,30 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         """
         messages = []
 
-        # System prompt
-        system_prompt = self.build_system_prompt(skill_names)
-        if channel and chat_id:
-            system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
-        messages.append({"role": "system", "content": system_prompt})
+        # System prompt — split into static (cacheable) and dynamic parts
+        static_prompt, dynamic_prompt = self.build_system_prompt_parts(skill_names)
+        session_suffix = f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}" if channel and chat_id else ""
+
+        # Build system content as a list of blocks so _apply_cache_control can
+        # place cache_control only on the static block (the stable prefix).
+        if static_prompt and dynamic_prompt:
+            system_content: str | list[dict[str, Any]] = [
+                {"type": "text", "text": static_prompt},
+                {"type": "text", "text": dynamic_prompt + session_suffix},
+            ]
+        elif static_prompt:
+            system_content = static_prompt + session_suffix
+        else:
+            system_content = dynamic_prompt + session_suffix
+
+        messages.append({"role": "system", "content": system_content})
 
         # Build current message first so image payload size can be counted in budgeting.
         user_content = self._build_user_content(current_message, media)
 
-        # Budget for history = total budget minus system prompt and current message (tokens)
-        system_tokens = count_tokens(system_prompt)
+        # Token budget uses full combined prompt
+        full_system = "\n\n---\n\n".join(p for p in [static_prompt, dynamic_prompt + session_suffix] if p)
+        system_tokens = count_tokens(full_system)
         current_tokens = self._estimate_message_tokens({"content": user_content})
         # Reserve 4096 tokens for the LLM reply
         budget_tokens = self._max_context_tokens - system_tokens - current_tokens - 4096

@@ -193,16 +193,51 @@ class LiteLLMProvider(LLMProvider):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None]:
-        """Return copies of messages and tools with cache_control injected."""
+        """Return copies of messages and tools with cache_control injected.
+
+        Strategy (mirrors pi-mono):
+        - System message: cache_control on last content block (stable prefix)
+        - Last user message: cache_control on last content block (conversation history)
+        - Tools list: cache_control on last tool definition
+        """
+        cache_ctrl = {"type": "ephemeral"}
         new_messages = []
-        for msg in messages:
-            if msg.get("role") == "system":
+
+        # Find index of last user message
+        last_user_idx = -1
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                last_user_idx = i
+                break
+
+        for idx, msg in enumerate(messages):
+            role = msg.get("role")
+            if role == "system":
                 content = msg["content"]
                 if isinstance(content, str):
-                    new_content = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+                    # Single string: wrap as one cacheable block
+                    new_content = [{"type": "text", "text": content, "cache_control": cache_ctrl}]
+                elif isinstance(content, list) and len(content) >= 2:
+                    # Two-block layout from build_messages: [static, dynamic]
+                    # Cache only the static (first) block; dynamic block changes every request
+                    new_content = [
+                        {**content[0], "cache_control": cache_ctrl},
+                        *content[1:],
+                    ]
+                elif isinstance(content, list) and content:
+                    new_content = [{**content[-1], "cache_control": cache_ctrl}]
                 else:
+                    new_content = content
+                new_messages.append({**msg, "content": new_content})
+            elif role == "user" and idx == last_user_idx:
+                content = msg["content"]
+                if isinstance(content, str):
+                    new_content = [{"type": "text", "text": content, "cache_control": cache_ctrl}]
+                elif isinstance(content, list) and content:
                     new_content = list(content)
-                    new_content[-1] = {**new_content[-1], "cache_control": {"type": "ephemeral"}}
+                    new_content[-1] = {**new_content[-1], "cache_control": cache_ctrl}
+                else:
+                    new_content = content
                 new_messages.append({**msg, "content": new_content})
             else:
                 new_messages.append(msg)
@@ -210,7 +245,7 @@ class LiteLLMProvider(LLMProvider):
         new_tools = tools
         if tools:
             new_tools = list(tools)
-            new_tools[-1] = {**new_tools[-1], "cache_control": {"type": "ephemeral"}}
+            new_tools[-1] = {**new_tools[-1], "cache_control": cache_ctrl}
 
         return new_messages, new_tools
 
