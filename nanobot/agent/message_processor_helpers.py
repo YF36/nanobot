@@ -98,9 +98,18 @@ class TurnEventStatsCollector:
         self.tool_starts = 0
         self.tool_ends = 0
         self.detail_ops: set[str] = set()
+        self.turn_ids: set[str] = set()
+        self.sources: set[str] = set()
         self.error_tools = 0
 
     async def on_event(self, event: dict[str, Any]) -> None:
+        turn_id = event.get("turn_id")
+        if isinstance(turn_id, str) and turn_id:
+            self.turn_ids.add(turn_id)
+        source = event.get("source")
+        if isinstance(source, str) and source:
+            self.sources.add(source)
+
         event_type = event.get("type")
         if event_type == "turn_start":
             self.turns_started += 1
@@ -131,6 +140,8 @@ class TurnEventStatsCollector:
             tool_ends=self.tool_ends,
             error_tools=self.error_tools,
             detail_ops=sorted(self.detail_ops),
+            turn_ids=sorted(self.turn_ids),
+            sources=sorted(self.sources),
         )
 
 
