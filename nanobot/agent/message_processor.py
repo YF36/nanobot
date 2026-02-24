@@ -71,13 +71,14 @@ class SystemMessageHandler:
         self.deps = deps
         self.turn_executor = TurnExecutionCoordinator(deps)
         self.message_builder = TurnMessageBuilder(deps)
+        self.tool_context = ToolContextInitializer(deps.hooks)
 
     async def handle(self, msg: InboundMessage) -> OutboundMessage:
         channel, chat_id = (msg.chat_id.split(":", 1) if ":" in msg.chat_id else ("cli", msg.chat_id))
         RequestContextBinder.bind_system(msg, channel, chat_id)
         key = f"{channel}:{chat_id}"
         session = self.deps.sessions.get_or_create(key)
-        self.deps.hooks.set_tool_context(channel, chat_id, (msg.metadata or {}).get("message_id"))
+        self.tool_context.set_from_message(msg, channel=channel, chat_id=chat_id)
         messages = self.message_builder.build(
             session=session,
             msg=msg,
@@ -216,6 +217,16 @@ class TurnMessageBuilder:
         return self.deps.context.build_messages(**kwargs)
 
 
+class ToolContextInitializer:
+    """Initialize tool routing context from inbound message metadata."""
+
+    def __init__(self, hooks: MessageProcessingHooks) -> None:
+        self.hooks = hooks
+
+    def set_from_message(self, msg: InboundMessage, *, channel: str, chat_id: str) -> None:
+        self.hooks.set_tool_context(channel, chat_id, (msg.metadata or {}).get("message_id"))
+
+
 class UserMessageHandler:
     """Handle normal user messages and progress events."""
 
@@ -225,6 +236,7 @@ class UserMessageHandler:
         self.message_tool = MessageToolTurnController(deps.tools)
         self.turn_executor = TurnExecutionCoordinator(deps)
         self.message_builder = TurnMessageBuilder(deps)
+        self.tool_context = ToolContextInitializer(deps.hooks)
 
     def _schedule_background_consolidation_if_needed(self, session: Any) -> None:
         if len(session.messages) <= self.deps.memory_window:
@@ -236,7 +248,7 @@ class UserMessageHandler:
 
     def _prepare_turn(self, msg: InboundMessage, session: Any) -> None:
         self._schedule_background_consolidation_if_needed(session)
-        self.deps.hooks.set_tool_context(msg.channel, msg.chat_id, (msg.metadata or {}).get("message_id"))
+        self.tool_context.set_from_message(msg, channel=msg.channel, chat_id=msg.chat_id)
         self.message_tool.start_turn()
 
     def _build_initial_messages(self, msg: InboundMessage, session: Any) -> list[dict[str, Any]]:
