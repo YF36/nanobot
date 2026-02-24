@@ -72,11 +72,7 @@ class SystemMessageHandler:
 
     async def handle(self, msg: InboundMessage) -> OutboundMessage:
         channel, chat_id = (msg.chat_id.split(":", 1) if ":" in msg.chat_id else ("cli", msg.chat_id))
-        structlog.contextvars.clear_contextvars()
-        structlog.contextvars.bind_contextvars(
-            channel=channel, sender_id=msg.sender_id, session_key=f"{channel}:{chat_id}",
-        )
-        logger.info("Processing system message")
+        RequestContextBinder.bind_system(msg, channel, chat_id)
         key = f"{channel}:{chat_id}"
         session = self.deps.sessions.get_or_create(key)
         self.deps.hooks.set_tool_context(channel, chat_id, (msg.metadata or {}).get("message_id"))
@@ -140,6 +136,32 @@ class MessageToolTurnController:
         return bool(getattr(tool, "sent_in_turn", getattr(tool, "_sent_in_turn", False)))
 
 
+class RequestContextBinder:
+    """Bind per-request logging context for system/user message processing."""
+
+    @staticmethod
+    def bind_system(msg: InboundMessage, channel: str, chat_id: str) -> None:
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(
+            channel=channel,
+            sender_id=msg.sender_id,
+            session_key=f"{channel}:{chat_id}",
+        )
+        logger.info("Processing system message")
+
+    @staticmethod
+    def bind_user(msg: InboundMessage, session_key: str) -> None:
+        preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(
+            channel=msg.channel,
+            sender_id=msg.sender_id,
+            session_key=session_key,
+            chat_id=msg.chat_id,
+        )
+        logger.info("Processing message", preview=preview)
+
+
 class UserMessageHandler:
     """Handle normal user messages and progress events."""
 
@@ -147,15 +169,6 @@ class UserMessageHandler:
         self.deps = deps
         self.progress = ProgressPublisher(deps.bus)
         self.message_tool = MessageToolTurnController(deps.tools)
-
-    def _bind_request_context(self, msg: InboundMessage, key: str) -> None:
-        preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
-        structlog.contextvars.clear_contextvars()
-        structlog.contextvars.bind_contextvars(
-            channel=msg.channel, sender_id=msg.sender_id,
-            session_key=key, chat_id=msg.chat_id,
-        )
-        logger.info("Processing message", preview=preview)
 
     def _schedule_background_consolidation_if_needed(self, session: Any) -> None:
         if len(session.messages) <= self.deps.memory_window:
@@ -212,7 +225,7 @@ class UserMessageHandler:
         on_progress: Callable[[str], Awaitable[None]] | None,
     ) -> OutboundMessage | None:
         key = session_key or msg.session_key
-        self._bind_request_context(msg, key)
+        RequestContextBinder.bind_user(msg, key)
 
         session = self.deps.sessions.get_or_create(key)
 
