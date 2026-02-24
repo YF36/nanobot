@@ -184,6 +184,75 @@ class AgentLoop:
             return f'{tc.name}("{val[:40]}…")' if len(val) > 40 else f'{tc.name}("{val}")'
         return ", ".join(_fmt(tc) for tc in tool_calls)
 
+    _IN_LOOP_TOOL_RESULT_MAX_CHARS = 4000
+    _IN_LOOP_ASSISTANT_TEXT_MAX_CHARS = 1000
+
+    def _estimate_msg_tokens(self, msg: dict[str, Any]) -> int:
+        """Estimate message tokens using ContextBuilder's tokenizer helpers."""
+        est = getattr(self.context, "_estimate_message_tokens", None)
+        if callable(est):
+            return int(est(msg))
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            return max(1, len(content) // 4) if content else 0
+        return 0
+
+    def _truncate_runtime_message_for_budget(self, msg: dict[str, Any]) -> dict[str, Any]:
+        """Reduce oversized content in current-turn runtime messages."""
+        role = msg.get("role")
+        content = msg.get("content")
+        if role == "tool" and isinstance(content, str) and len(content) > self._IN_LOOP_TOOL_RESULT_MAX_CHARS:
+            return {**msg, "content": content[:self._IN_LOOP_TOOL_RESULT_MAX_CHARS] + "\n... (truncated)"}
+        if (
+            role == "assistant"
+            and isinstance(content, str)
+            and not msg.get("tool_calls")
+            and len(content) > self._IN_LOOP_ASSISTANT_TEXT_MAX_CHARS
+        ):
+            return {**msg, "content": content[:self._IN_LOOP_ASSISTANT_TEXT_MAX_CHARS] + "\n... (truncated)"}
+        return msg
+
+    def _guard_loop_messages(
+        self, messages: list[dict[str, Any]], current_turn_start: int
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Re-budget messages before each LLM iteration to avoid context overflows."""
+        if not messages:
+            return messages, current_turn_start
+
+        system_count = 1 if messages and messages[0].get("role") == "system" else 0
+        current_turn_start = max(system_count, min(current_turn_start, len(messages)))
+
+        system_part = messages[:system_count]
+        history = messages[system_count:current_turn_start]
+        current_turn = messages[current_turn_start:]
+
+        # 1) Trim prior-history aggressively while keeping current turn intact.
+        max_ctx = getattr(self.context, "_max_context_tokens", 30_000)
+        reserve = max(512, min(int(getattr(self, "max_tokens", 4096) or 4096), 4096))
+        fixed_tokens = sum(self._estimate_msg_tokens(m) for m in system_part + current_turn)
+        history_budget = max_ctx - reserve - fixed_tokens
+
+        compacted = self.context._compact_history(history) if history else []
+        trimmed_history = self.context._trim_history(compacted, max(history_budget, 0)) if compacted else []
+
+        # 2) If current turn itself is too large, truncate bulky tool/assistant text content.
+        guarded_current_turn = [self._truncate_runtime_message_for_budget(m) for m in current_turn]
+        guarded = [*system_part, *trimmed_history, *guarded_current_turn]
+        new_turn_start = system_count + len(trimmed_history)
+
+        total_tokens = sum(self._estimate_msg_tokens(m) for m in guarded)
+        if total_tokens + reserve > max_ctx:
+            logger.warning(
+                "loop_context_budget_exceeded_after_guard",
+                total_tokens=total_tokens,
+                reserve=reserve,
+                max_context_tokens=max_ctx,
+                history_messages=len(history),
+                trimmed_history_messages=len(trimmed_history),
+                current_turn_messages=len(current_turn),
+            )
+        return guarded, new_turn_start
+
     async def _run_agent_loop(
         self,
         initial_messages: list[dict],
@@ -191,12 +260,14 @@ class AgentLoop:
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop. Returns (final_content, tools_used, messages)."""
         messages = initial_messages
+        current_turn_start = len(initial_messages) - 1 if initial_messages else 0
         iteration = 0
         final_content = None
         tools_used: list[str] = []
 
         while iteration < self.max_iterations:
             iteration += 1
+            messages, current_turn_start = self._guard_loop_messages(messages, current_turn_start)
 
             response = await self.provider.chat(
                 messages=messages,

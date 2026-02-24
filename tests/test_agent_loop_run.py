@@ -79,3 +79,51 @@ async def test_run_sets_stopped_event_when_cancelled() -> None:
         await task
 
     assert await agent.wait_stopped(timeout=0.2) is True
+
+
+def test_guard_loop_messages_trims_history_before_current_turn(tmp_path: Path) -> None:
+    agent = AgentLoop.__new__(AgentLoop)
+    agent.context = ContextBuilder(tmp_path, max_context_tokens=120)
+    agent.max_tokens = 64
+
+    # Build a sizable history, then a compact current turn.
+    history = []
+    for i in range(8):
+        history.append({"role": "user", "content": f"old question {i} " + ("x " * 20)})
+        history.append({"role": "assistant", "content": f"old answer {i} " + ("y " * 20)})
+
+    messages = [{"role": "system", "content": "sys"}] + history + [
+        {"role": "user", "content": "current question"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "t", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c1", "name": "t", "content": "ok"},
+    ]
+    current_turn_start = 1 + len(history)
+
+    guarded, new_start = agent._guard_loop_messages(messages, current_turn_start)
+
+    assert guarded[0]["role"] == "system"
+    assert guarded[new_start]["role"] == "user"
+    assert guarded[new_start]["content"] == "current question"
+    assert len(guarded) < len(messages)  # history should be trimmed
+
+
+def test_guard_loop_messages_truncates_large_tool_result_in_current_turn(tmp_path: Path) -> None:
+    agent = AgentLoop.__new__(AgentLoop)
+    agent.context = ContextBuilder(tmp_path, max_context_tokens=80)
+    agent.max_tokens = 64
+
+    large_tool_output = "z" * 10000
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "current question"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "fetch", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c1", "name": "fetch", "content": large_tool_output},
+    ]
+
+    guarded, new_start = agent._guard_loop_messages(messages, current_turn_start=1)
+
+    assert new_start == 1
+    assert guarded[-1]["role"] == "tool"
+    assert isinstance(guarded[-1]["content"], str)
+    assert guarded[-1]["content"].endswith("\n... (truncated)")
+    assert len(guarded[-1]["content"]) < len(large_tool_output)
