@@ -82,6 +82,7 @@ class TurnRunner:
         initial_messages: list[dict[str, Any]],
         on_progress: Callable[..., Awaitable[None]] | None = None,
         on_event: TurnEventCallback | None = None,
+        event_source: str = "turn_runner",
     ) -> tuple[str | None, list[str], list[dict[str, Any]]]:
         """Run the iterative turn loop. Returns (final_content, tools_used, messages)."""
         messages = initial_messages
@@ -101,6 +102,7 @@ class TurnRunner:
                 "turn_id": turn_id,
                 "sequence": event_sequence,
                 "timestamp_ms": int(time.time() * 1000),
+                "source": event_source,
                 **payload,
             })
 

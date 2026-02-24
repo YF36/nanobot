@@ -301,6 +301,7 @@ class AgentLoop:
             initial_messages,
             on_progress=on_progress,
             on_event=_fanout_event,
+            event_source="agent_loop",
         )
 
     async def _on_turn_event(self, event: dict[str, Any]) -> None:

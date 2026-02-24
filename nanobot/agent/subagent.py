@@ -264,7 +264,7 @@ class SubagentManager:
                 strip_think=lambda text: text,
                 tool_hint=lambda _: "",
             )
-            final_result, _, _ = await runner.run(messages)
+            final_result, _, _ = await runner.run(messages, event_source="subagent")
 
             if final_result is None:
                 final_result = "Task completed but no final response was generated."
