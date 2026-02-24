@@ -1,10 +1,12 @@
 """Tests for ToolRegistry audit logging."""
 
+from pathlib import Path
 import pytest
 from typing import Any
 from unittest.mock import patch, MagicMock
 
 from nanobot.agent.tools.base import Tool, ToolExecutionResult
+from nanobot.agent.tools.filesystem import EditFileTool
 from nanobot.agent.tools.registry import ToolRegistry
 
 
@@ -211,6 +213,41 @@ async def test_execute_result_supports_structured_tool_response(registry):
     assert result.text == "ok"
     assert result.details == {"foo": "bar"}
     assert result.is_error is False
+
+
+@pytest.mark.asyncio
+async def test_audit_logs_structured_result_details_metadata(registry):
+    with patch("nanobot.agent.tools.registry.audit_log") as mock_log:
+        await registry.execute_result("structured", {})
+
+    completed = [c for c in mock_log.info.call_args_list if c.args and c.args[0] == "tool_call_completed"]
+    assert len(completed) == 1
+    kwargs = completed[0].kwargs
+    assert kwargs["has_details"] is True
+    assert kwargs["detail_op"] is None  # structured test tool returns {"foo": "bar"}
+    assert kwargs["is_error"] is False
+
+
+@pytest.mark.asyncio
+async def test_audit_logs_detail_op_for_edit_file(tmp_path: Path):
+    file_path = tmp_path / "sample.txt"
+    file_path.write_text("hello\nworld\n", encoding="utf-8")
+
+    reg = ToolRegistry(audit=True)
+    reg.register(EditFileTool(workspace=tmp_path, audit_operations=False))
+
+    with patch("nanobot.agent.tools.registry.audit_log") as mock_log:
+        result = await reg.execute_result(
+            "edit_file",
+            {"path": "sample.txt", "old_text": "world", "new_text": "nanobot"},
+        )
+
+    assert result.is_error is False
+    completed = [c for c in mock_log.info.call_args_list if c.args and c.args[0] == "tool_call_completed"]
+    assert len(completed) == 1
+    kwargs = completed[0].kwargs
+    assert kwargs["has_details"] is True
+    assert kwargs["detail_op"] == "edit_file"
 
 
 @pytest.mark.asyncio

@@ -103,6 +103,9 @@ class ToolRegistry:
                     tool=name,
                     duration_ms=round(elapsed, 1),
                     result_length=len(result.text),
+                    is_error=result.is_error,
+                    has_details=bool(result.details),
+                    detail_op=result.details.get("op") if result.details else None,
                 )
             return result
         except Exception as e:
