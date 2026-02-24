@@ -257,42 +257,50 @@ class AgentLoop:
         """Run the agent loop, processing messages from the bus."""
         self._running = True
         self._stopped_event.clear()
-        await self._connect_mcp()
-        logger.info("Agent loop started")
+        try:
+            await self._connect_mcp()
+            logger.info("Agent loop started")
 
-        while self._running:
-            try:
-                msg = await asyncio.wait_for(
-                    self.bus.consume_inbound(),
-                    timeout=1.0
-                )
+            while self._running:
                 try:
-                    response = await self._process_message(msg)
-                    if response is not None:
-                        await self.bus.publish_outbound(response)
-                    elif msg.channel == "cli":
-                        await self.bus.publish_outbound(OutboundMessage(
-                            channel=msg.channel, chat_id=msg.chat_id, content="", metadata=msg.metadata or {},
-                        ))
-                except Exception as e:
-                    logger.exception(
-                        "Error processing message",
-                        error_type=type(e).__name__,
-                        channel=msg.channel,
-                        sender_id=msg.sender_id,
-                        session_key=msg.session_key,
+                    msg = await asyncio.wait_for(
+                        self.bus.consume_inbound(),
+                        timeout=1.0
                     )
-                    await self.bus.publish_outbound(OutboundMessage(
-                        channel=msg.channel,
-                        chat_id=msg.chat_id,
-                        content="Sorry, I encountered an error. Please try again."
-                    ))
-            except asyncio.TimeoutError:
-                continue
-
-        await self.close_mcp()
-        self._stopped_event.set()
-        logger.info("Agent loop stopped")
+                    try:
+                        response = await self._process_message(msg)
+                        if response is not None:
+                            await self.bus.publish_outbound(response)
+                        elif msg.channel == "cli":
+                            await self.bus.publish_outbound(OutboundMessage(
+                                channel=msg.channel, chat_id=msg.chat_id, content="", metadata=msg.metadata or {},
+                            ))
+                    except Exception as e:
+                        logger.exception(
+                            "Error processing message",
+                            error_type=type(e).__name__,
+                            channel=msg.channel,
+                            sender_id=msg.sender_id,
+                            session_key=msg.session_key,
+                        )
+                        await self.bus.publish_outbound(OutboundMessage(
+                            channel=msg.channel,
+                            chat_id=msg.chat_id,
+                            content="Sorry, I encountered an error. Please try again."
+                        ))
+                except asyncio.TimeoutError:
+                    continue
+        finally:
+            self._running = False
+            try:
+                await self.close_mcp()
+            except asyncio.CancelledError:
+                # Ensure wait_stopped() can complete even if run() is cancelled during shutdown.
+                self._stopped_event.set()
+                logger.info("Agent loop stopped")
+                raise
+            self._stopped_event.set()
+            logger.info("Agent loop stopped")
 
     async def close_mcp(self) -> None:
         """Close MCP connections."""

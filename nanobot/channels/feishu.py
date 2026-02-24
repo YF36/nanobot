@@ -313,9 +313,20 @@ class FeishuChannel(BaseChannel):
         self._running = False
         if self._ws_client:
             try:
-                self._ws_client.stop()
+                stop_fn = getattr(self._ws_client, "stop", None)
+                if callable(stop_fn):
+                    stop_fn()
+                else:
+                    logger.debug("Feishu WebSocket client has no stop() method; relying on _running flag")
             except Exception as e:
                 logger.warning("Error stopping WebSocket client", error=str(e))
+        if self._ws_thread and self._ws_thread.is_alive():
+            try:
+                await asyncio.to_thread(self._ws_thread.join, 2.0)
+                if self._ws_thread.is_alive():
+                    logger.warning("Feishu WebSocket thread did not stop within timeout")
+            except Exception as e:
+                logger.warning("Error joining Feishu WebSocket thread", error=str(e))
         logger.info("Feishu bot stopped")
     
     def _add_reaction_sync(self, message_id: str, emoji_type: str) -> None:
