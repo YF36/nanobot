@@ -1,7 +1,17 @@
 """Base class for agent tools."""
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Any
+
+
+@dataclass(slots=True)
+class ToolExecutionResult:
+    """Structured tool result used internally by the agent runtime."""
+
+    text: str
+    details: dict[str, Any] = field(default_factory=dict)
+    is_error: bool = False
 
 
 class Tool(ABC):
@@ -40,7 +50,7 @@ class Tool(ABC):
         pass
     
     @abstractmethod
-    async def execute(self, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> str | ToolExecutionResult:
         """
         Execute the tool with given parameters.
         
@@ -48,7 +58,7 @@ class Tool(ABC):
             **kwargs: Tool-specific parameters.
         
         Returns:
-            String result of the tool execution.
+            Tool result as plain text (legacy) or a structured ToolExecutionResult.
         """
         pass
 

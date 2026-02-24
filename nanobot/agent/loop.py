@@ -17,12 +17,10 @@ from nanobot.agent.context import ContextBuilder
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from nanobot.agent.tools.factory import create_standard_tool_registry
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
-from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
@@ -82,6 +80,7 @@ class AgentLoop:
         self.filesystem_config = filesystem_config or FilesystemToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
+        self.audit_tool_calls = audit_tool_calls
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
@@ -112,24 +111,17 @@ class AgentLoop:
 
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
-        allowed_dir = self.workspace if self.restrict_to_workspace else None
-        audit = self.filesystem_config.audit_operations
-        for cls in (ReadFileTool, WriteFileTool, EditFileTool, ListDirTool):
-            self.tools.register(cls(workspace=self.workspace, allowed_dir=allowed_dir, audit_operations=audit))
-        self.tools.register(ExecTool(
-            working_dir=str(self.workspace),
-            timeout=self.exec_config.timeout,
-            deny_patterns=self.exec_config.deny_patterns,
-            allow_patterns=self.exec_config.allow_patterns,
+        self.tools = create_standard_tool_registry(
+            workspace=self.workspace,
+            brave_api_key=self.brave_api_key,
+            exec_config=self.exec_config,
+            filesystem_config=self.filesystem_config,
             restrict_to_workspace=self.restrict_to_workspace,
-            audit_executions=self.exec_config.audit_executions,
-        ))
-        self.tools.register(WebSearchTool(api_key=self.brave_api_key))
-        self.tools.register(WebFetchTool())
-        self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
-        self.tools.register(SpawnTool(manager=self.subagents))
-        if self.cron_service:
-            self.tools.register(CronTool(self.cron_service))
+            audit_tool_calls=self.audit_tool_calls,
+            message_send_callback=self.bus.publish_outbound,
+            spawn_manager=self.subagents,
+            cron_service=self.cron_service,
+        )
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
@@ -304,9 +296,9 @@ class AgentLoop:
                     tools_used.append(tool_call.name)
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info("Tool call", tool=tool_call.name, args=args_str[:200])
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    tool_result = await self.tools.execute_result(tool_call.name, tool_call.arguments)
                     messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_call.name, result
+                        messages, tool_call.id, tool_call.name, tool_result.text
                     )
             else:
                 messages = self.context.add_assistant_message(

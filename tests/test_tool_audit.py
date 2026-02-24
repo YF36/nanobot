@@ -4,7 +4,7 @@ import pytest
 from typing import Any
 from unittest.mock import patch, MagicMock
 
-from nanobot.agent.tools.base import Tool
+from nanobot.agent.tools.base import Tool, ToolExecutionResult
 from nanobot.agent.tools.registry import ToolRegistry
 
 
@@ -80,12 +80,33 @@ class WriteTool(Tool):
         return "written"
 
 
+class StructuredTool(Tool):
+    @property
+    def name(self) -> str:
+        return "structured"
+
+    @property
+    def description(self) -> str:
+        return "returns structured result"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {},
+        }
+
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
+        return ToolExecutionResult(text="ok", details={"foo": "bar"})
+
+
 @pytest.fixture
 def registry():
     reg = ToolRegistry(audit=True)
     reg.register(EchoTool())
     reg.register(FailTool())
     reg.register(WriteTool())
+    reg.register(StructuredTool())
     return reg
 
 
@@ -184,6 +205,21 @@ async def test_sanitize_truncates_long_message(registry):
 
 
 @pytest.mark.asyncio
+async def test_execute_result_supports_structured_tool_response(registry):
+    result = await registry.execute_result("structured", {})
+
+    assert result.text == "ok"
+    assert result.details == {"foo": "bar"}
+    assert result.is_error is False
+
+
+@pytest.mark.asyncio
+async def test_execute_keeps_legacy_string_api_for_structured_tool(registry):
+    result = await registry.execute("structured", {})
+    assert result == "ok"
+
+
+@pytest.mark.asyncio
 async def test_sanitize_short_message_unchanged(registry):
     """Short message param is not truncated."""
     with patch("nanobot.agent.tools.registry.audit_log") as mock_log:
@@ -209,4 +245,3 @@ def test_sanitize_params_unit():
     assert result["content"] == "y" * 200 + "..."
     assert result["command"] == "short"
     assert result["other"] == 42
-

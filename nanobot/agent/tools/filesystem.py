@@ -81,6 +81,18 @@ def _resolve_path(path: str, workspace: Path | None = None, allowed_dir: Path | 
     return resolved
 
 
+def _first_changed_line(old_content: str, new_content: str) -> int | None:
+    """Return 1-based line number of the first detected change."""
+    old_lines = old_content.splitlines()
+    new_lines = new_content.splitlines()
+    for idx, (old_line, new_line) in enumerate(zip(old_lines, new_lines), start=1):
+        if old_line != new_line:
+            return idx
+    if len(old_lines) != len(new_lines):
+        return min(len(old_lines), len(new_lines)) + 1
+    return None
+
+
 class ReadFileTool(Tool):
     """Tool to read file contents."""
 
@@ -105,12 +117,22 @@ class ReadFileTool(Tool):
                 "path": {
                     "type": "string",
                     "description": "The file path to read"
-                }
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Optional 1-based line number to start reading from"
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Optional maximum number of lines to return"
+                },
             },
             "required": ["path"]
         }
 
-    async def execute(self, path: str, **kwargs: Any) -> str:
+    async def execute(self, path: str, offset: int | None = None, limit: int | None = None, **kwargs: Any) -> str:
         try:
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
             if not file_path.exists():
@@ -119,6 +141,21 @@ class ReadFileTool(Tool):
                 return f"Error: Not a file: {path}"
 
             content = file_path.read_text(encoding="utf-8")
+            if offset is not None or limit is not None:
+                if not content:
+                    return ""
+                lines = content.splitlines()
+                start = (offset or 1) - 1
+                if start >= len(lines):
+                    return f"Error: Offset {offset} is beyond end of file ({len(lines)} lines total)"
+                end = len(lines) if limit is None else min(start + limit, len(lines))
+                selected = "\n".join(lines[start:end])
+                if end < len(lines):
+                    selected += (
+                        f"\n\n[Showing lines {start + 1}-{end} of {len(lines)}. "
+                        f"Use offset={end + 1} to continue.]"
+                    )
+                content = selected
             if self._audit:
                 audit_log.info("file_read", path=str(file_path))
             return content
@@ -236,10 +273,23 @@ class EditFileTool(Tool):
                 return f"Warning: old_text appears {count} times. Please provide more context to make it unique."
 
             new_content = content.replace(old_text, new_text, 1)
+            diff_text = "\n".join(
+                difflib.unified_diff(
+                    content.splitlines(),
+                    new_content.splitlines(),
+                    fromfile=f"{path} (before)",
+                    tofile=f"{path} (after)",
+                    lineterm="",
+                )
+            )
+            first_changed = _first_changed_line(content, new_content)
             _safe_write(file_path, new_content)
             if self._audit:
                 audit_log.info("file_edited", path=str(file_path))
-            return f"Successfully edited {file_path}"
+            if len(diff_text) > 4000:
+                diff_text = diff_text[:4000] + "\n... (diff truncated)"
+            line_hint = f" (first change at line {first_changed})" if first_changed else ""
+            return f"Successfully edited {file_path}{line_hint}\n\nDiff:\n{diff_text}"
         except PermissionError as e:
             if self._audit:
                 audit_log.warning("file_edit_blocked", path=path, reason=str(e))

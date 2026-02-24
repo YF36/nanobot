@@ -11,10 +11,7 @@ from nanobot.logging import get_logger
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
+from nanobot.agent.tools.factory import create_standard_tool_registry
 
 logger = get_logger(__name__)
 
@@ -120,23 +117,13 @@ class SubagentManager:
         
         try:
             # Build subagent tools (no message tool, no spawn tool)
-            tools = ToolRegistry()
-            allowed_dir = self.workspace if self.restrict_to_workspace else None
-            audit = self.filesystem_config.audit_operations
-            tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, audit_operations=audit))
-            tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir, audit_operations=audit))
-            tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir, audit_operations=audit))
-            tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir, audit_operations=audit))
-            tools.register(ExecTool(
-                working_dir=str(self.workspace),
-                timeout=self.exec_config.timeout,
-                deny_patterns=self.exec_config.deny_patterns,
-                allow_patterns=self.exec_config.allow_patterns,
+            tools = create_standard_tool_registry(
+                workspace=self.workspace,
+                brave_api_key=self.brave_api_key,
+                exec_config=self.exec_config,
+                filesystem_config=self.filesystem_config,
                 restrict_to_workspace=self.restrict_to_workspace,
-                audit_executions=self.exec_config.audit_executions,
-            ))
-            tools.register(WebSearchTool(api_key=self.brave_api_key))
-            tools.register(WebFetchTool())
+            )
             
             # Build messages with subagent-specific prompt
             system_prompt = self._build_subagent_prompt(task)
@@ -184,12 +171,12 @@ class SubagentManager:
                     for tool_call in response.tool_calls:
                         args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                         logger.debug("Subagent executing tool", task_id=task_id, tool=tool_call.name, args=args_str)
-                        result = await tools.execute(tool_call.name, tool_call.arguments)
+                        tool_result = await tools.execute_result(tool_call.name, tool_call.arguments)
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call.id,
                             "name": tool_call.name,
-                            "content": result,
+                            "content": tool_result.text,
                         })
                 else:
                     final_result = response.content

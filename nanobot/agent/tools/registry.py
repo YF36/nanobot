@@ -3,7 +3,7 @@
 import time
 from typing import Any
 
-from nanobot.agent.tools.base import Tool
+from nanobot.agent.tools.base import Tool, ToolExecutionResult
 from nanobot.logging import get_logger
 
 audit_log = get_logger("nanobot.audit")
@@ -55,22 +55,22 @@ class ToolRegistry:
                 sanitized[k] = v
         return sanitized
 
-    async def execute(self, name: str, params: dict[str, Any]) -> str:
-        """
-        Execute a tool by name with given parameters.
+    @staticmethod
+    def _ensure_result(result: str | ToolExecutionResult) -> ToolExecutionResult:
+        if isinstance(result, ToolExecutionResult):
+            return result
+        return ToolExecutionResult(text=str(result))
 
-        Args:
-            name: Tool name.
-            params: Tool parameters.
-
-        Returns:
-            Tool execution result as string.
-        """
+    async def execute_result(self, name: str, params: dict[str, Any]) -> ToolExecutionResult:
+        """Execute a tool and return a structured result (compatibly wraps legacy string returns)."""
         _HINT = "\n\n[Analyze the error above and try a different approach.]"
 
         tool = self._tools.get(name)
         if not tool:
-            return f"Error: Tool '{name}' not found. Available: {', '.join(self.tool_names)}"
+            return ToolExecutionResult(
+                text=f"Error: Tool '{name}' not found. Available: {', '.join(self.tool_names)}",
+                is_error=True,
+            )
 
         if self._audit:
             audit_log.info(
@@ -86,18 +86,24 @@ class ToolRegistry:
                 msg = f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors) + _HINT
                 if self._audit:
                     audit_log.warning("tool_call_failed", tool=name, error="invalid_params")
-                return msg
-            result = await tool.execute(**params)
+                return ToolExecutionResult(text=msg, is_error=True)
+
+            raw_result = await tool.execute(**params)
+            result = self._ensure_result(raw_result)
+            if result.text.startswith("Error") and not result.text.endswith(_HINT):
+                result = ToolExecutionResult(
+                    text=result.text + _HINT,
+                    details=result.details,
+                    is_error=True if not result.is_error else result.is_error,
+                )
             if self._audit:
                 elapsed = (time.monotonic() - t0) * 1000
                 audit_log.info(
                     "tool_call_completed",
                     tool=name,
                     duration_ms=round(elapsed, 1),
-                    result_length=len(result),
+                    result_length=len(result.text),
                 )
-            if isinstance(result, str) and result.startswith("Error"):
-                return result + _HINT
             return result
         except Exception as e:
             if self._audit:
@@ -108,7 +114,21 @@ class ToolRegistry:
                     error=str(e),
                     duration_ms=round(elapsed, 1),
                 )
-            return f"Error executing {name}: {str(e)}" + _HINT
+            return ToolExecutionResult(text=f"Error executing {name}: {str(e)}" + _HINT, is_error=True)
+
+    async def execute(self, name: str, params: dict[str, Any]) -> str:
+        """
+        Execute a tool by name with given parameters.
+
+        Args:
+            name: Tool name.
+            params: Tool parameters.
+
+        Returns:
+            Tool execution result as string.
+        """
+        return (await self.execute_result(name, params)).text
+
     @property
     def tool_names(self) -> list[str]:
         """Get list of registered tool names."""
