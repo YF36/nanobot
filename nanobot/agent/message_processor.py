@@ -50,42 +50,27 @@ class MessageProcessingHooks:
     consolidate_memory: ConsolidateSessionCallback
 
 
-class MessageProcessor:
-    """Handle inbound message processing using AgentLoop-provided callbacks."""
+@dataclass(frozen=True)
+class MessageProcessorDeps:
+    """Shared dependencies for system/user message handlers."""
 
-    def __init__(
-        self,
-        *,
-        sessions: SessionStoreProtocol,
-        context: ContextBuilderProtocol,
-        tools: ToolRegistryProtocol,
-        bus: MessageBus,
-        command_handler: CommandHandlerProtocol,
-        consolidation: ConsolidationCoordinator,
-        memory_window: int,
-        hooks: MessageProcessingHooks,
-    ) -> None:
-        self.sessions = sessions
-        self.context = context
-        self.tools = tools
-        self.bus = bus
-        self.command_handler = command_handler
-        self.consolidation = consolidation
-        self.memory_window = memory_window
-        self.hooks = hooks
+    sessions: SessionStoreProtocol
+    context: ContextBuilderProtocol
+    tools: ToolRegistryProtocol
+    bus: MessageBus
+    command_handler: CommandHandlerProtocol
+    consolidation: ConsolidationCoordinator
+    memory_window: int
+    hooks: MessageProcessingHooks
 
-    async def process(
-        self,
-        msg: InboundMessage,
-        session_key: str | None = None,
-        on_progress: Callable[[str], Awaitable[None]] | None = None,
-    ) -> OutboundMessage | None:
-        """Process a single inbound message and return the response."""
-        if msg.channel == "system":
-            return await self._process_system_message(msg)
-        return await self._process_regular_message(msg, session_key=session_key, on_progress=on_progress)
 
-    async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage:
+class SystemMessageHandler:
+    """Handle internal/system messages."""
+
+    def __init__(self, deps: MessageProcessorDeps) -> None:
+        self.deps = deps
+
+    async def handle(self, msg: InboundMessage) -> OutboundMessage:
         channel, chat_id = (msg.chat_id.split(":", 1) if ":" in msg.chat_id else ("cli", msg.chat_id))
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(
@@ -93,26 +78,33 @@ class MessageProcessor:
         )
         logger.info("Processing system message")
         key = f"{channel}:{chat_id}"
-        session = self.sessions.get_or_create(key)
-        self.hooks.set_tool_context(channel, chat_id, (msg.metadata or {}).get("message_id"))
-        history = session.get_history(max_messages=self.memory_window)
-        messages = self.context.build_messages(
+        session = self.deps.sessions.get_or_create(key)
+        self.deps.hooks.set_tool_context(channel, chat_id, (msg.metadata or {}).get("message_id"))
+        history = session.get_history(max_messages=self.deps.memory_window)
+        messages = self.deps.context.build_messages(
             history=history,
             current_message=msg.content,
             channel=channel,
             chat_id=chat_id,
         )
         skip = len(messages) - 1  # include current user message in saved turn
-        final_content, _, all_msgs = await self.hooks.run_agent_loop(messages)
-        self.hooks.save_turn(session, all_msgs, skip)
-        self.sessions.save(session)
+        final_content, _, all_msgs = await self.deps.hooks.run_agent_loop(messages)
+        self.deps.hooks.save_turn(session, all_msgs, skip)
+        self.deps.sessions.save(session)
         return OutboundMessage(
             channel=channel,
             chat_id=chat_id,
             content=final_content or "Background task completed.",
         )
 
-    async def _process_regular_message(
+
+class UserMessageHandler:
+    """Handle normal user messages and progress events."""
+
+    def __init__(self, deps: MessageProcessorDeps) -> None:
+        self.deps = deps
+
+    async def handle(
         self,
         msg: InboundMessage,
         *,
@@ -129,22 +121,25 @@ class MessageProcessor:
         )
         logger.info("Processing message", preview=preview)
 
-        session = self.sessions.get_or_create(key)
+        session = self.deps.sessions.get_or_create(key)
 
-        command_response = await self.command_handler.handle(msg, session)
+        command_response = await self.deps.command_handler.handle(msg, session)
         if command_response is not None:
             return command_response
 
-        if len(session.messages) > self.memory_window:
-            self.consolidation.start_background(session.key, lambda: self.hooks.consolidate_memory(session))
+        if len(session.messages) > self.deps.memory_window:
+            self.deps.consolidation.start_background(
+                session.key,
+                lambda: self.deps.hooks.consolidate_memory(session),
+            )
 
-        self.hooks.set_tool_context(msg.channel, msg.chat_id, (msg.metadata or {}).get("message_id"))
-        if message_tool := self.tools.get("message"):
+        self.deps.hooks.set_tool_context(msg.channel, msg.chat_id, (msg.metadata or {}).get("message_id"))
+        if message_tool := self.deps.tools.get("message"):
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()
 
-        history = session.get_history(max_messages=self.memory_window)
-        initial_messages = self.context.build_messages(
+        history = session.get_history(max_messages=self.deps.memory_window)
+        initial_messages = self.deps.context.build_messages(
             history=history,
             current_message=msg.content,
             media=msg.media if msg.media else None,
@@ -158,7 +153,10 @@ class MessageProcessor:
         # Save current_user + all LLM responses, so skip system + history.
         skip = len(initial_messages) - 1
 
-        final_content, _, all_msgs = await self.hooks.run_agent_loop(initial_messages, on_progress=progress_cb)
+        final_content, _, all_msgs = await self.deps.hooks.run_agent_loop(
+            initial_messages,
+            on_progress=progress_cb,
+        )
 
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
@@ -166,10 +164,10 @@ class MessageProcessor:
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info("Response sent", preview=preview)
 
-        self.hooks.save_turn(session, all_msgs, skip)
-        self.sessions.save(session)
+        self.deps.hooks.save_turn(session, all_msgs, skip)
+        self.deps.sessions.save(session)
 
-        if message_tool := self.tools.get("message"):
+        if message_tool := self.deps.tools.get("message"):
             if isinstance(message_tool, MessageTool) and message_tool._sent_in_turn:
                 return None
 
@@ -185,7 +183,7 @@ class MessageProcessor:
             meta = dict(msg.metadata or {})
             meta["_progress"] = True
             meta["_tool_hint"] = tool_hint
-            await self.bus.publish_outbound(OutboundMessage(
+            await self.deps.bus.publish_outbound(OutboundMessage(
                 channel=msg.channel,
                 chat_id=msg.chat_id,
                 content=content,
@@ -193,3 +191,43 @@ class MessageProcessor:
             ))
 
         return _bus_progress
+
+
+class MessageProcessor:
+    """Dispatch inbound messages to system/user handlers."""
+
+    def __init__(
+        self,
+        *,
+        sessions: SessionStoreProtocol,
+        context: ContextBuilderProtocol,
+        tools: ToolRegistryProtocol,
+        bus: MessageBus,
+        command_handler: CommandHandlerProtocol,
+        consolidation: ConsolidationCoordinator,
+        memory_window: int,
+        hooks: MessageProcessingHooks,
+    ) -> None:
+        deps = MessageProcessorDeps(
+            sessions=sessions,
+            context=context,
+            tools=tools,
+            bus=bus,
+            command_handler=command_handler,
+            consolidation=consolidation,
+            memory_window=memory_window,
+            hooks=hooks,
+        )
+        self._system = SystemMessageHandler(deps)
+        self._user = UserMessageHandler(deps)
+
+    async def process(
+        self,
+        msg: InboundMessage,
+        session_key: str | None = None,
+        on_progress: Callable[[str], Awaitable[None]] | None = None,
+    ) -> OutboundMessage | None:
+        """Process a single inbound message and return the response."""
+        if msg.channel == "system":
+            return await self._system.handle(msg)
+        return await self._user.handle(msg, session_key=session_key, on_progress=on_progress)
