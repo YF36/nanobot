@@ -273,11 +273,17 @@ class AgentLoop:
                             channel=msg.channel, chat_id=msg.chat_id, content="", metadata=msg.metadata or {},
                         ))
                 except Exception as e:
-                    logger.error("Error processing message", error=str(e))
+                    logger.exception(
+                        "Error processing message",
+                        error_type=type(e).__name__,
+                        channel=msg.channel,
+                        sender_id=msg.sender_id,
+                        session_key=msg.session_key,
+                    )
                     await self.bus.publish_outbound(OutboundMessage(
                         channel=msg.channel,
                         chat_id=msg.chat_id,
-                        content=f"Sorry, I encountered an error: {str(e)}"
+                        content="Sorry, I encountered an error. Please try again."
                     ))
             except asyncio.TimeoutError:
                 continue

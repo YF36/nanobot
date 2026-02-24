@@ -40,6 +40,9 @@ class SubagentManager:
         exec_config: "ExecToolConfig | None" = None,
         filesystem_config: "FilesystemToolConfig | None" = None,
         restrict_to_workspace: bool = False,
+        max_concurrent_subagents: int = 5,
+        subagent_timeout: float = 300.0,
+        subagent_max_iterations: int = 15,
     ):
         from nanobot.config.schema import ExecToolConfig, FilesystemToolConfig
         self.provider = provider
@@ -52,6 +55,9 @@ class SubagentManager:
         self.exec_config = exec_config or ExecToolConfig()
         self.filesystem_config = filesystem_config or FilesystemToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
+        self.max_concurrent_subagents = max_concurrent_subagents
+        self.subagent_timeout = subagent_timeout
+        self.subagent_max_iterations = subagent_max_iterations
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
     
     async def spawn(
@@ -73,23 +79,32 @@ class SubagentManager:
         Returns:
             Status message indicating the subagent was started.
         """
+        if len(self._running_tasks) >= self.max_concurrent_subagents:
+            return (
+                f"Cannot spawn subagent: limit of {self.max_concurrent_subagents} "
+                f"concurrent subagents reached. Wait for one to finish."
+            )
+
         task_id = str(uuid.uuid4())[:8]
         display_label = label or task[:30] + ("..." if len(task) > 30 else "")
-        
+
         origin = {
             "channel": origin_channel,
             "chat_id": origin_chat_id,
         }
-        
-        # Create background task
+
+        # Create background task with timeout wrapper
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin)
+            asyncio.wait_for(
+                self._run_subagent(task_id, task, display_label, origin),
+                timeout=self.subagent_timeout,
+            )
         )
         self._running_tasks[task_id] = bg_task
-        
+
         # Cleanup when done
         bg_task.add_done_callback(lambda _: self._running_tasks.pop(task_id, None))
-        
+
         logger.info("Spawned subagent", task_id=task_id, label=display_label)
         return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
     
@@ -131,10 +146,10 @@ class SubagentManager:
             ]
             
             # Run agent loop (limited iterations)
-            max_iterations = 15
+            max_iterations = self.subagent_max_iterations
             iteration = 0
             final_result: str | None = None
-            
+
             while iteration < max_iterations:
                 iteration += 1
                 

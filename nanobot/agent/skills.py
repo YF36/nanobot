@@ -13,15 +13,17 @@ BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "skills"
 class SkillsLoader:
     """
     Loader for agent skills.
-    
+
     Skills are markdown files (SKILL.md) that teach the agent how to use
     specific tools or perform certain tasks.
     """
-    
+
     def __init__(self, workspace: Path, builtin_skills_dir: Path | None = None):
         self.workspace = workspace
         self.workspace_skills = workspace / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
+        # mtime cache: path -> (mtime, content)
+        self._cache: dict[str, tuple[float, str]] = {}
     
     def list_skills(self, filter_unavailable: bool = True) -> list[dict[str, str]]:
         """
@@ -56,27 +58,38 @@ class SkillsLoader:
             return [s for s in skills if self._check_requirements(self._get_skill_meta(s["name"]))]
         return skills
     
+    def _read_cached(self, path: Path) -> str:
+        """Read file content, using mtime cache to avoid redundant disk reads."""
+        key = str(path)
+        mtime = path.stat().st_mtime
+        cached = self._cache.get(key)
+        if cached and cached[0] == mtime:
+            return cached[1]
+        content = path.read_text(encoding="utf-8")
+        self._cache[key] = (mtime, content)
+        return content
+
     def load_skill(self, name: str) -> str | None:
         """
         Load a skill by name.
-        
+
         Args:
             name: Skill name (directory name).
-        
+
         Returns:
             Skill content or None if not found.
         """
         # Check workspace first
         workspace_skill = self.workspace_skills / name / "SKILL.md"
         if workspace_skill.exists():
-            return workspace_skill.read_text(encoding="utf-8")
-        
+            return self._read_cached(workspace_skill)
+
         # Check built-in
         if self.builtin_skills:
             builtin_skill = self.builtin_skills / name / "SKILL.md"
             if builtin_skill.exists():
-                return builtin_skill.read_text(encoding="utf-8")
-        
+                return self._read_cached(builtin_skill)
+
         return None
     
     def load_skills_for_context(self, skill_names: list[str]) -> str:
