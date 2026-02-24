@@ -36,6 +36,86 @@ class _SubagentContextAdapter:
         messages.append(entry)
         return messages
 
+
+class _SubagentPromptBuilder:
+    """Build focused system prompts for subagent runs."""
+
+    @staticmethod
+    def build(workspace: Path, task: str) -> str:
+        from datetime import datetime
+        import time as _time
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
+        tz = _time.strftime("%Z") or "UTC"
+
+        return f"""# Subagent
+
+## Current Time
+{now} ({tz})
+
+You are a subagent spawned by the main agent to complete a specific task.
+
+## Rules
+1. Stay focused - complete only the assigned task, nothing else
+2. Your final response will be reported back to the main agent
+3. Do not initiate conversations or take on side tasks
+4. Be concise but informative in your findings
+
+## What You Can Do
+- Read and write files in the workspace
+- Execute shell commands
+- Search the web and fetch web pages
+- Complete the task thoroughly
+
+## What You Cannot Do
+- Send messages directly to users (no message tool available)
+- Spawn other subagents
+- Access the main agent's conversation history
+
+## Workspace
+Your workspace is at: {workspace}
+Skills are available at: {workspace}/skills/ (read SKILL.md files as needed)
+
+When you have completed the task, provide a clear summary of your findings or actions."""
+
+
+class _SubagentResultAnnouncer:
+    """Format and publish subagent results back to the main agent via the bus."""
+
+    def __init__(self, bus: MessageBus) -> None:
+        self.bus = bus
+
+    @staticmethod
+    def build_content(label: str, task: str, result: str, status: str) -> str:
+        status_text = "completed successfully" if status == "ok" else "failed"
+        return f"""[Subagent '{label}' {status_text}]
+
+Task: {task}
+
+Result:
+{result}
+
+Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not mention technical details like "subagent" or task IDs."""
+
+    async def publish(
+        self,
+        *,
+        task_id: str,
+        label: str,
+        task: str,
+        result: str,
+        origin: dict[str, str],
+        status: str,
+    ) -> None:
+        msg = InboundMessage(
+            channel="system",
+            sender_id="subagent",
+            chat_id=f"{origin['channel']}:{origin['chat_id']}",
+            content=self.build_content(label, task, result, status),
+        )
+        await self.bus.publish_inbound(msg)
+        logger.debug("Subagent announced result", task_id=task_id, channel=origin['channel'], chat_id=origin['chat_id'])
+
     @staticmethod
     def add_tool_result(
         messages: list[dict[str, Any]],
@@ -92,6 +172,7 @@ class SubagentManager:
         self.subagent_timeout = subagent_timeout
         self.subagent_max_iterations = subagent_max_iterations
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
+        self._result_announcer = _SubagentResultAnnouncer(bus)
     
     async def spawn(
         self,
@@ -204,64 +285,18 @@ class SubagentManager:
         status: str,
     ) -> None:
         """Announce the subagent result to the main agent via the message bus."""
-        status_text = "completed successfully" if status == "ok" else "failed"
-        
-        announce_content = f"""[Subagent '{label}' {status_text}]
-
-Task: {task}
-
-Result:
-{result}
-
-Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not mention technical details like "subagent" or task IDs."""
-        
-        # Inject as system message to trigger main agent
-        msg = InboundMessage(
-            channel="system",
-            sender_id="subagent",
-            chat_id=f"{origin['channel']}:{origin['chat_id']}",
-            content=announce_content,
+        await self._result_announcer.publish(
+            task_id=task_id,
+            label=label,
+            task=task,
+            result=result,
+            origin=origin,
+            status=status,
         )
-        
-        await self.bus.publish_inbound(msg)
-        logger.debug("Subagent announced result", task_id=task_id, channel=origin['channel'], chat_id=origin['chat_id'])
     
     def _build_subagent_prompt(self, task: str) -> str:
         """Build a focused system prompt for the subagent."""
-        from datetime import datetime
-        import time as _time
-        now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
-        tz = _time.strftime("%Z") or "UTC"
-
-        return f"""# Subagent
-
-## Current Time
-{now} ({tz})
-
-You are a subagent spawned by the main agent to complete a specific task.
-
-## Rules
-1. Stay focused - complete only the assigned task, nothing else
-2. Your final response will be reported back to the main agent
-3. Do not initiate conversations or take on side tasks
-4. Be concise but informative in your findings
-
-## What You Can Do
-- Read and write files in the workspace
-- Execute shell commands
-- Search the web and fetch web pages
-- Complete the task thoroughly
-
-## What You Cannot Do
-- Send messages directly to users (no message tool available)
-- Spawn other subagents
-- Access the main agent's conversation history
-
-## Workspace
-Your workspace is at: {self.workspace}
-Skills are available at: {self.workspace}/skills/ (read SKILL.md files as needed)
-
-When you have completed the task, provide a clear summary of your findings or actions."""
+        return _SubagentPromptBuilder.build(self.workspace, task)
     
     def get_running_count(self) -> int:
         """Return the number of currently running subagents."""
