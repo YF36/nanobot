@@ -454,7 +454,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         if trimmed and trimmed[-1].get("role") == "user":
             trimmed.pop()
 
-        messages.extend(trimmed)
+        messages.extend(self._sanitize_history_for_llm(trimmed))
 
         # Current message (with optional image attachments)
         messages.append({"role": "user", "content": user_content})
@@ -519,7 +519,8 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         messages: list[dict[str, Any]],
         tool_call_id: str,
         tool_name: str,
-        result: str
+        result: str,
+        metadata: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Add a tool result to the message list.
@@ -533,13 +534,27 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         Returns:
             Updated message list.
         """
-        messages.append({
+        msg: dict[str, Any] = {
             "role": "tool",
             "tool_call_id": tool_call_id,
             "name": tool_name,
-            "content": result
-        })
+            "content": result,
+        }
+        if metadata:
+            msg["_tool_details"] = metadata
+        messages.append(msg)
         return messages
+
+    @staticmethod
+    def _sanitize_history_for_llm(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Strip internal-only fields from stored history before sending to providers."""
+        sanitized: list[dict[str, Any]] = []
+        for msg in history:
+            if "_tool_details" in msg:
+                sanitized.append({k: v for k, v in msg.items() if k != "_tool_details"})
+            else:
+                sanitized.append(msg)
+        return sanitized
     
     def add_assistant_message(
         self,

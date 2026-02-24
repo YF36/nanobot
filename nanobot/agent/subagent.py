@@ -122,6 +122,7 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
         tool_call_id: str,
         tool_name: str,
         content: str,
+        metadata: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         messages.append({
             "role": "tool",
@@ -129,6 +130,7 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
             "name": tool_name,
             "content": content,
         })
+        # Ignore internal metadata in subagent loop to preserve previous provider payload shape.
         return messages
 
 

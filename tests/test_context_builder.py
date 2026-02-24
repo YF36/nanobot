@@ -140,6 +140,42 @@ def test_build_messages_counts_current_image_payload_in_budget(tmp_path) -> None
     assert isinstance(messages[-1]["content"], list)
 
 
+def test_build_messages_strips_internal_tool_details_from_history(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    history = [
+        {"role": "user", "content": "edit file"},
+        {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "name": "edit_file",
+            "content": "Successfully edited ...",
+            "_tool_details": {"op": "edit_file", "path": "/tmp/x"},
+        },
+    ]
+
+    messages = builder.build_messages(history=history, current_message="next")
+
+    tool_msgs = [m for m in messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 1
+    assert "_tool_details" not in tool_msgs[0]
+
+
+def test_add_tool_result_can_store_internal_metadata(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    messages: list[dict] = []
+
+    out = builder.add_tool_result(
+        messages,
+        tool_call_id="call_1",
+        tool_name="edit_file",
+        result="ok",
+        metadata={"op": "edit_file", "first_changed_line": 3},
+    )
+
+    assert out is messages
+    assert messages[-1]["_tool_details"]["op"] == "edit_file"
+
+
 def test_build_system_prompt_parts_moves_rules_to_static_and_time_to_dynamic(tmp_path) -> None:
     builder = _builder(tmp_path)
 

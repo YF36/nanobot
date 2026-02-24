@@ -10,6 +10,21 @@ from nanobot.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _session_tool_details(details: dict[str, Any]) -> dict[str, Any]:
+    """Keep a compact, safe subset of tool details for session persistence only."""
+    if not details:
+        return {}
+    keep_keys = (
+        "op",
+        "path",
+        "requested_path",
+        "first_changed_line",
+        "replacement_count",
+        "diff_truncated",
+    )
+    return {k: details[k] for k in keep_keys if k in details}
+
+
 class TurnRunner:
     """Run a single agent turn including iterative tool calls."""
 
@@ -103,7 +118,13 @@ class TurnRunner:
                                 if k in tool_result.details
                             },
                         )
-                    messages = self.context.add_tool_result(messages, tool_call.id, tool_call.name, tool_result.text)
+                    messages = self.context.add_tool_result(
+                        messages,
+                        tool_call.id,
+                        tool_call.name,
+                        tool_result.text,
+                        metadata=_session_tool_details(tool_result.details),
+                    )
             else:
                 messages = self.context.add_assistant_message(
                     messages,
