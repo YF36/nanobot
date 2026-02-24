@@ -11,7 +11,7 @@ logger = get_logger(__name__)
 
 
 def _session_tool_details(details: dict[str, Any]) -> dict[str, Any]:
-    """Keep a compact, safe subset of tool details for session persistence only."""
+    """Keep a compact, versioned subset of tool details for session persistence only."""
     if not details:
         return {}
     keep_keys = (
@@ -22,7 +22,14 @@ def _session_tool_details(details: dict[str, Any]) -> dict[str, Any]:
         "replacement_count",
         "diff_truncated",
     )
-    return {k: details[k] for k in keep_keys if k in details}
+    compact = {k: details[k] for k in keep_keys if k in details}
+    if not compact:
+        return {}
+    return {
+        "schema_version": 1,
+        "tool": details.get("op"),
+        "data": compact,
+    }
 
 
 class TurnRunner:
