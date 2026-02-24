@@ -89,10 +89,18 @@ class TurnRunner:
         final_content = None
         tools_used: list[str] = []
         turn_id = f"turn_{uuid.uuid4().hex[:12]}"
+        event_sequence = 0
+
+        async def _emit_event(payload: dict[str, Any]) -> None:
+            nonlocal event_sequence
+            if not on_event:
+                return
+            event_sequence += 1
+            await on_event({"turn_id": turn_id, "sequence": event_sequence, **payload})
+
         if on_event:
-            await on_event({
+            await _emit_event({
                 "type": "turn_start",
-                "turn_id": turn_id,
                 "initial_message_count": len(initial_messages),
                 "max_iterations": self.max_iterations,
             })
@@ -139,9 +147,8 @@ class TurnRunner:
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info("Tool call", tool=tool_call.name, args=args_str[:200])
                     if on_event:
-                        await on_event({
+                        await _emit_event({
                             "type": "tool_start",
-                            "turn_id": turn_id,
                             "iteration": iteration,
                             "tool": tool_call.name,
                             "tool_call_id": tool_call.id,
@@ -160,9 +167,8 @@ class TurnRunner:
                             },
                         )
                     if on_event:
-                        await on_event({
+                        await _emit_event({
                             "type": "tool_end",
-                            "turn_id": turn_id,
                             "iteration": iteration,
                             "tool": tool_call.name,
                             "tool_call_id": tool_call.id,
@@ -193,9 +199,8 @@ class TurnRunner:
                 "without completing the task. You can try breaking the task into smaller steps."
             )
         if on_event:
-            await on_event({
+            await _emit_event({
                 "type": "turn_end",
-                "turn_id": turn_id,
                 "iterations": iteration,
                 "tool_count": len(tools_used),
                 "completed": final_content is not None,
