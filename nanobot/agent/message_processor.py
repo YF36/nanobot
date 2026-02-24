@@ -70,6 +70,7 @@ class SystemMessageHandler:
     def __init__(self, deps: MessageProcessorDeps) -> None:
         self.deps = deps
         self.turn_executor = TurnExecutionCoordinator(deps)
+        self.message_builder = TurnMessageBuilder(deps)
 
     async def handle(self, msg: InboundMessage) -> OutboundMessage:
         channel, chat_id = (msg.chat_id.split(":", 1) if ":" in msg.chat_id else ("cli", msg.chat_id))
@@ -77,12 +78,12 @@ class SystemMessageHandler:
         key = f"{channel}:{chat_id}"
         session = self.deps.sessions.get_or_create(key)
         self.deps.hooks.set_tool_context(channel, chat_id, (msg.metadata or {}).get("message_id"))
-        history = session.get_history(max_messages=self.deps.memory_window)
-        messages = self.deps.context.build_messages(
-            history=history,
-            current_message=msg.content,
+        messages = self.message_builder.build(
+            session=session,
+            msg=msg,
             channel=channel,
             chat_id=chat_id,
+            include_media=False,
         )
         skip = len(messages) - 1  # include current user message in saved turn
         final_content, _, _ = await self.turn_executor.run_and_persist(
@@ -188,6 +189,33 @@ class TurnExecutionCoordinator:
         return final_content, tools_used, all_msgs
 
 
+class TurnMessageBuilder:
+    """Build initial LLM messages for a turn from session history + inbound message."""
+
+    def __init__(self, deps: MessageProcessorDeps) -> None:
+        self.deps = deps
+
+    def build(
+        self,
+        *,
+        session: Any,
+        msg: InboundMessage,
+        channel: str,
+        chat_id: str,
+        include_media: bool,
+    ) -> list[dict[str, Any]]:
+        history = session.get_history(max_messages=self.deps.memory_window)
+        kwargs: dict[str, Any] = {
+            "history": history,
+            "current_message": msg.content,
+            "channel": channel,
+            "chat_id": chat_id,
+        }
+        if include_media:
+            kwargs["media"] = msg.media if msg.media else None
+        return self.deps.context.build_messages(**kwargs)
+
+
 class UserMessageHandler:
     """Handle normal user messages and progress events."""
 
@@ -196,6 +224,7 @@ class UserMessageHandler:
         self.progress = ProgressPublisher(deps.bus)
         self.message_tool = MessageToolTurnController(deps.tools)
         self.turn_executor = TurnExecutionCoordinator(deps)
+        self.message_builder = TurnMessageBuilder(deps)
 
     def _schedule_background_consolidation_if_needed(self, session: Any) -> None:
         if len(session.messages) <= self.deps.memory_window:
@@ -211,22 +240,18 @@ class UserMessageHandler:
         self.message_tool.start_turn()
 
     def _build_initial_messages(self, msg: InboundMessage, session: Any) -> list[dict[str, Any]]:
-        history = session.get_history(max_messages=self.deps.memory_window)
-        return self.deps.context.build_messages(
-            history=history,
-            current_message=msg.content,
-            media=msg.media if msg.media else None,
+        return self.message_builder.build(
+            session=session,
+            msg=msg,
             channel=msg.channel,
             chat_id=msg.chat_id,
+            include_media=True,
         )
 
     def _finalize_response(
         self,
         msg: InboundMessage,
-        session: Any,
         final_content: str,
-        all_msgs: list[dict[str, Any]],
-        skip: int,
     ) -> OutboundMessage | None:
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info("Response sent", preview=preview)
@@ -276,7 +301,7 @@ class UserMessageHandler:
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
 
-        return self._finalize_response(msg, session, final_content, all_msgs, skip)
+        return self._finalize_response(msg, final_content)
 
 
 class MessageProcessor:
