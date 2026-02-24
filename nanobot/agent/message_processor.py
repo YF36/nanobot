@@ -69,14 +69,18 @@ class MessageProcessorDeps:
     hooks: MessageProcessingHooks
 
 
-class SystemMessageHandler:
-    """Handle internal/system messages."""
+class BaseTurnHandler:
+    """Common helper wiring for handlers that execute/persist turns."""
 
     def __init__(self, deps: MessageProcessorDeps) -> None:
         self.deps = deps
         self.turn_executor = TurnExecutionCoordinator(deps)
         self.message_builder = TurnMessageBuilder(deps)
         self.tool_context = ToolContextInitializer(deps.hooks)
+
+
+class SystemMessageHandler(BaseTurnHandler):
+    """Handle internal/system messages."""
 
     async def handle(self, msg: InboundMessage) -> OutboundMessage:
         channel, chat_id = (msg.chat_id.split(":", 1) if ":" in msg.chat_id else ("cli", msg.chat_id))
@@ -104,16 +108,13 @@ class SystemMessageHandler:
         )
 
 
-class UserMessageHandler:
+class UserMessageHandler(BaseTurnHandler):
     """Handle normal user messages and progress events."""
 
     def __init__(self, deps: MessageProcessorDeps) -> None:
-        self.deps = deps
+        super().__init__(deps)
         self.progress = ProgressPublisher(deps.bus)
         self.message_tool = MessageToolTurnController(deps.tools)
-        self.turn_executor = TurnExecutionCoordinator(deps)
-        self.message_builder = TurnMessageBuilder(deps)
-        self.tool_context = ToolContextInitializer(deps.hooks)
 
     def _schedule_background_consolidation_if_needed(self, session: Any) -> None:
         if len(session.messages) <= self.deps.memory_window:
@@ -180,7 +181,7 @@ class UserMessageHandler:
         # Save current_user + all LLM responses, so skip system + history.
         skip = len(initial_messages) - 1
 
-        final_content, _, all_msgs = await self.turn_executor.run_and_persist(
+        final_content, _, _ = await self.turn_executor.run_and_persist(
             session=session,
             messages=initial_messages,
             skip=skip,
