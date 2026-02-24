@@ -406,10 +406,10 @@ def gateway(
         except KeyboardInterrupt:
             console.print("\nShutting down...")
         finally:
-            await agent.close_mcp()
             heartbeat.stop()
             cron.stop()
             agent.stop()
+            await agent.wait_stopped(timeout=30.0)
             await channels.stop_all()
     
     asyncio.run(run())
@@ -583,7 +583,7 @@ def agent(
                 agent_loop.stop()
                 outbound_task.cancel()
                 await asyncio.gather(bus_task, outbound_task, return_exceptions=True)
-                await agent_loop.close_mcp()
+                await agent_loop.wait_stopped(timeout=30.0)
 
         asyncio.run(run_interactive())
 

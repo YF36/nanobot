@@ -100,6 +100,7 @@ class AgentLoop:
         )
 
         self._running = False
+        self._stopped_event = asyncio.Event()
         self._mcp_servers = mcp_servers or {}
         self._mcp_stack: AsyncExitStack | None = None
         self._mcp_connected = False
@@ -255,6 +256,7 @@ class AgentLoop:
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""
         self._running = True
+        self._stopped_event.clear()
         await self._connect_mcp()
         logger.info("Agent loop started")
 
@@ -288,6 +290,10 @@ class AgentLoop:
             except asyncio.TimeoutError:
                 continue
 
+        await self.close_mcp()
+        self._stopped_event.set()
+        logger.info("Agent loop stopped")
+
     async def close_mcp(self) -> None:
         """Close MCP connections."""
         if self._mcp_stack:
@@ -298,9 +304,26 @@ class AgentLoop:
             self._mcp_stack = None
 
     def stop(self) -> None:
-        """Stop the agent loop."""
+        """Signal the agent loop to stop. Returns immediately; use wait_stopped() to await shutdown."""
         self._running = False
         logger.info("Agent loop stopping")
+
+    async def wait_stopped(self, timeout: float = 30.0) -> bool:
+        """Wait for the agent loop to finish processing the current message and shut down.
+
+        Args:
+            timeout: Maximum seconds to wait. Returns False if timeout exceeded.
+
+        Returns:
+            True if loop stopped cleanly, False if timeout was reached.
+        """
+        try:
+            await asyncio.wait_for(self._stopped_event.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            logger.warning("Agent loop did not stop within {}s, forcing close", timeout)
+            await self.close_mcp()
+            return False
 
     def _get_consolidation_lock(self, session_key: str) -> asyncio.Lock:
         lock = self._consolidation_locks.get(session_key)

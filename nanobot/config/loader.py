@@ -33,11 +33,20 @@ def load_config(config_path: Path | None = None) -> Config:
         try:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Config file {path} contains invalid JSON: {e}\n"
+                "Fix the file or delete it to use defaults."
+            ) from e
+
+        try:
             data = _migrate_config(data)
             return Config.model_validate(data)
-        except (json.JSONDecodeError, ValueError) as e:
-            print(f"Warning: Failed to load config from {path}: {e}")
-            print("Using default configuration.")
+        except Exception as e:
+            raise ValueError(
+                f"Config file {path} has invalid values: {e}\n"
+                "Fix the file or delete it to use defaults."
+            ) from e
 
     return Config()
 
