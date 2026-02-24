@@ -146,7 +146,8 @@ class TestReadFileTool:
     async def test_read_normal(self, workspace):
         tool = ReadFileTool(workspace=workspace, allowed_dir=workspace)
         result = await tool.execute(path="hello.txt")
-        assert result == "hello world"
+        text = result.text if isinstance(result, ToolExecutionResult) else result
+        assert text == "hello world"
 
     @pytest.mark.asyncio
     async def test_read_symlink_escape_blocked(self, workspace, outside_dir):
@@ -168,7 +169,8 @@ class TestWriteFileTool:
     async def test_write_normal(self, workspace):
         tool = WriteFileTool(workspace=workspace, allowed_dir=workspace)
         result = await tool.execute(path="new.txt", content="data")
-        assert "Successfully" in result
+        text = result.text if isinstance(result, ToolExecutionResult) else result
+        assert "Successfully" in text
         assert (workspace / "new.txt").read_text() == "data"
 
     @pytest.mark.asyncio

@@ -132,7 +132,13 @@ class ReadFileTool(Tool):
             "required": ["path"]
         }
 
-    async def execute(self, path: str, offset: int | None = None, limit: int | None = None, **kwargs: Any) -> str:
+    async def execute(
+        self,
+        path: str,
+        offset: int | None = None,
+        limit: int | None = None,
+        **kwargs: Any,
+    ) -> str | ToolExecutionResult:
         try:
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
             if not file_path.exists():
@@ -141,14 +147,35 @@ class ReadFileTool(Tool):
                 return f"Error: Not a file: {path}"
 
             content = file_path.read_text(encoding="utf-8")
+            total_lines = len(content.splitlines()) if content else 0
+            paged = False
+            page_start_line: int | None = None
+            page_end_line: int | None = None
             if offset is not None or limit is not None:
+                paged = True
                 if not content:
-                    return ""
+                    result = ToolExecutionResult(
+                        text="",
+                        details={
+                            "op": "read_file",
+                            "path": str(file_path),
+                            "requested_path": path,
+                            "bytes_read": 0,
+                            "total_lines": 0,
+                            "paged": True,
+                            "offset": offset,
+                            "limit": limit,
+                        },
+                    )
+                    if self._audit:
+                        audit_log.info("file_read", path=str(file_path))
+                    return result
                 lines = content.splitlines()
                 start = (offset or 1) - 1
                 if start >= len(lines):
                     return f"Error: Offset {offset} is beyond end of file ({len(lines)} lines total)"
                 end = len(lines) if limit is None else min(start + limit, len(lines))
+                page_start_line, page_end_line = start + 1, end
                 selected = "\n".join(lines[start:end])
                 if end < len(lines):
                     selected += (
@@ -158,7 +185,21 @@ class ReadFileTool(Tool):
                 content = selected
             if self._audit:
                 audit_log.info("file_read", path=str(file_path))
-            return content
+            return ToolExecutionResult(
+                text=content,
+                details={
+                    "op": "read_file",
+                    "path": str(file_path),
+                    "requested_path": path,
+                    "bytes_read": len(content.encode("utf-8")),
+                    "total_lines": total_lines,
+                    "paged": paged,
+                    "offset": offset,
+                    "limit": limit,
+                    "page_start_line": page_start_line,
+                    "page_end_line": page_end_line,
+                },
+            )
         except PermissionError as e:
             if self._audit:
                 audit_log.warning("file_read_blocked", path=path, reason=str(e))
@@ -200,9 +241,10 @@ class WriteFileTool(Tool):
             "required": ["path", "content"]
         }
 
-    async def execute(self, path: str, content: str, **kwargs: Any) -> str:
+    async def execute(self, path: str, content: str, **kwargs: Any) -> str | ToolExecutionResult:
         try:
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
+            existed_before = file_path.exists()
             # Check parent symlink chain before mkdir
             if self._allowed_dir:
                 _check_symlink_chain(file_path.parent, self._allowed_dir)
@@ -210,7 +252,16 @@ class WriteFileTool(Tool):
             _safe_write(file_path, content)
             if self._audit:
                 audit_log.info("file_written", path=str(file_path))
-            return f"Successfully wrote {len(content)} bytes to {file_path}"
+            return ToolExecutionResult(
+                text=f"Successfully wrote {len(content)} bytes to {file_path}",
+                details={
+                    "op": "write_file",
+                    "path": str(file_path),
+                    "requested_path": path,
+                    "bytes_written": len(content.encode("utf-8")),
+                    "file_existed": existed_before,
+                },
+            )
         except PermissionError as e:
             if self._audit:
                 audit_log.warning("file_write_blocked", path=path, reason=str(e))

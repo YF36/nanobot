@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from nanobot.agent.tools.base import ToolExecutionResult
-from nanobot.agent.tools.filesystem import EditFileTool, ReadFileTool
+from nanobot.agent.tools.filesystem import EditFileTool, ReadFileTool, WriteFileTool
 
 
 @pytest.mark.asyncio
@@ -14,8 +14,13 @@ async def test_read_file_supports_offset_and_limit(tmp_path: Path) -> None:
     tool = ReadFileTool(workspace=tmp_path)
     result = await tool.execute(path="sample.txt", offset=2, limit=2)
 
-    assert "b\nc" in result
-    assert "Use offset=4 to continue" in result
+    assert isinstance(result, ToolExecutionResult)
+    assert "b\nc" in result.text
+    assert "Use offset=4 to continue" in result.text
+    assert result.details["op"] == "read_file"
+    assert result.details["paged"] is True
+    assert result.details["page_start_line"] == 2
+    assert result.details["page_end_line"] == 3
 
 
 @pytest.mark.asyncio
@@ -27,6 +32,19 @@ async def test_read_file_offset_out_of_range(tmp_path: Path) -> None:
     result = await tool.execute(path="sample.txt", offset=10)
 
     assert "beyond end of file" in result
+
+
+@pytest.mark.asyncio
+async def test_write_file_returns_structured_details(tmp_path: Path) -> None:
+    tool = WriteFileTool(workspace=tmp_path)
+    result = await tool.execute(path="out.txt", content="hello")
+
+    assert isinstance(result, ToolExecutionResult)
+    assert "Successfully wrote" in result.text
+    assert result.details["op"] == "write_file"
+    assert result.details["requested_path"] == "out.txt"
+    assert result.details["bytes_written"] == 5
+    assert result.details["file_existed"] is False
 
 
 @pytest.mark.asyncio
