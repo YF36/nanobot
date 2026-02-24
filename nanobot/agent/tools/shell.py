@@ -7,7 +7,7 @@ import shlex
 from pathlib import Path
 from typing import Any, Callable
 
-from nanobot.agent.tools.base import Tool
+from nanobot.agent.tools.base import Tool, ToolExecutionResult
 from nanobot.logging import get_logger
 
 audit_log = get_logger("nanobot.audit")
@@ -19,7 +19,7 @@ class ShellOutputFormatter:
     def __init__(self, max_len: int = 10000):
         self.max_len = max_len
 
-    def format(self, stdout: bytes | None, stderr: bytes | None, returncode: int | None) -> str:
+    def format(self, stdout: bytes | None, stderr: bytes | None, returncode: int | None) -> tuple[str, bool]:
         output_parts: list[str] = []
 
         if stdout:
@@ -34,15 +34,24 @@ class ShellOutputFormatter:
             output_parts.append(f"\nExit code: {returncode}")
 
         result = "\n".join(output_parts) if output_parts else "(no output)"
+        truncated = False
         if len(result) > self.max_len:
             result = result[: self.max_len] + f"\n... (truncated, {len(result) - self.max_len} more chars)"
-        return result
+            truncated = True
+        return result, truncated
 
 
 class ShellExecutor:
     """Execute shell commands with timeout handling."""
 
-    async def run(self, command: str, *, cwd: str, timeout: int, formatter: ShellOutputFormatter) -> str:
+    async def run(
+        self,
+        command: str,
+        *,
+        cwd: str,
+        timeout: int,
+        formatter: ShellOutputFormatter,
+    ) -> ToolExecutionResult:
         process = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
@@ -57,9 +66,32 @@ class ShellExecutor:
                 await asyncio.wait_for(process.wait(), timeout=5.0)
             except asyncio.TimeoutError:
                 pass
-            return f"Error: Command timed out after {timeout} seconds"
+            return ToolExecutionResult(
+                text=f"Error: Command timed out after {timeout} seconds",
+                details={
+                    "op": "exec",
+                    "cwd": cwd,
+                    "timed_out": True,
+                    "timeout_s": timeout,
+                },
+                is_error=True,
+            )
 
-        return formatter.format(stdout, stderr, process.returncode)
+        text, truncated = formatter.format(stdout, stderr, process.returncode)
+        return ToolExecutionResult(
+            text=text,
+            details={
+                "op": "exec",
+                "cwd": cwd,
+                "timed_out": False,
+                "timeout_s": timeout,
+                "exit_code": process.returncode,
+                "output_truncated": truncated,
+                "had_stdout": bool(stdout),
+                "had_stderr": bool(stderr and stderr.strip()),
+            },
+            is_error=bool(process.returncode not in (None, 0)),
+        )
 
 
 class ShellGuard:
@@ -228,11 +260,25 @@ class ExecTool(Tool):
             "required": ["command"]
         }
     
-    async def execute(self, command: str, working_dir: str | None = None, **kwargs: Any) -> str:
+    async def execute(
+        self,
+        command: str,
+        working_dir: str | None = None,
+        **kwargs: Any,
+    ) -> str | ToolExecutionResult:
         cwd = working_dir or self.working_dir or os.getcwd()
         guard_error = self._guard_command(command, cwd)
         if guard_error:
-            return guard_error
+            return ToolExecutionResult(
+                text=guard_error,
+                details={
+                    "op": "exec",
+                    "cwd": cwd,
+                    "blocked": True,
+                    "timed_out": False,
+                },
+                is_error=True,
+            )
 
         if self.audit_executions:
             audit_log.info("shell_command_executed", command=command, working_dir=cwd)
@@ -240,7 +286,16 @@ class ExecTool(Tool):
         try:
             return await self._executor.run(command, cwd=cwd, timeout=self.timeout, formatter=self._formatter)
         except Exception as e:
-            return f"Error executing command: {str(e)}"
+            return ToolExecutionResult(
+                text=f"Error executing command: {str(e)}",
+                details={
+                    "op": "exec",
+                    "cwd": cwd,
+                    "timed_out": False,
+                    "exception_type": type(e).__name__,
+                },
+                is_error=True,
+            )
 
     def _audit_blocked(self, command: str, reason: str) -> None:
         """Log a blocked command to the audit log."""

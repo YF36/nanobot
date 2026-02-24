@@ -2,6 +2,7 @@
 
 import pytest
 
+from nanobot.agent.tools.base import ToolExecutionResult
 from nanobot.agent.tools.shell import ExecTool
 
 
@@ -178,9 +179,17 @@ class TestExecuteIntegration:
     async def test_blocked_command_returns_error(self) -> None:
         tool = ExecTool(working_dir="/tmp")
         result = await tool.execute("rm -rf /")
-        assert "blocked" in result.lower()
+        text = result.text if isinstance(result, ToolExecutionResult) else result
+        assert "blocked" in text.lower()
+        if isinstance(result, ToolExecutionResult):
+            assert result.details["op"] == "exec"
+            assert result.details["blocked"] is True
 
     async def test_allowed_command_runs(self) -> None:
         tool = ExecTool(working_dir="/tmp")
         result = await tool.execute("echo hello")
-        assert "hello" in result
+        text = result.text if isinstance(result, ToolExecutionResult) else result
+        assert "hello" in text
+        if isinstance(result, ToolExecutionResult):
+            assert result.details["op"] == "exec"
+            assert result.details["timed_out"] is False
