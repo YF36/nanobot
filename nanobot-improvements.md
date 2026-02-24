@@ -367,11 +367,73 @@
 3. `ExecTool` 拆 guard/executor/formatter（行为不变）
 4. 抽 `ToolFactory`，消除主 agent / subagent 工具注册重复
 
+状态（截至 2026-02-24）：已完成
+
+- 已完成：工具协议兼容升级（`ToolExecutionResult` + `ToolRegistry.execute_result()`）
+- 已完成：`filesystem` 工具 UX 增强（分页读、`edit_file` diff）
+- 已完成：`ExecTool` 内部拆分为 guard/executor/formatter（行为保持）
+- 已完成：主 agent / subagent 工具工厂去重
+
 ## Phase 2（中风险，收益大）
 
 1. `AgentLoop` 拆分：`MessageProcessor` + `TurnRunner` + `ConsolidationCoordinator`
 2. 引入内部事件模型（先不改外部接口）
 3. `SubagentManager` 复用 `TurnRunner`
+
+状态（截至 2026-02-24）：部分完成（2/3）
+
+- 已完成：`AgentLoop` 拆分（`TurnRunner`、`SessionCommandHandler`、`ConsolidationCoordinator`、`MessageProcessor`、`TurnHistoryWriter` 等）
+- 已完成：`SubagentManager` 复用 `TurnRunner`
+- 未开始：内部事件模型（当前仍以 `on_progress` 文本回调为主）
+
+## 已落地进展（截至 2026-02-24）
+
+下面是本次分析后已在代码中完成并提交的主要改造（按主题归类）：
+
+### 核心运行时与架构拆分
+
+- 已落地：`AgentLoop` 主循环拆分为 `TurnRunner` / `MessageProcessor` / `SessionCommandHandler` / `ConsolidationCoordinator`
+- 已落地：`TurnHistoryWriter` 抽离（会话 turn 持久化、内容裁剪、图片占位）
+- 已落地：`MessageProcessor` 再拆为 handlers/helpers/types 模块（`message_processor.py` / `message_processor_helpers.py` / `message_processor_types.py`）
+- 已落地：`SubagentManager` 复用 `TurnRunner`，消除重复 mini-agent loop
+- 已落地：`SubagentManager` prompt/result announcement helper 拆分（可读性提升）
+
+### 工具运行时与兼容层
+
+- 已落地：`ToolExecutionResult` 结构化工具结果类型（兼容旧 `str` 返回）
+- 已落地：`ToolRegistry.execute_result()` 兼容层（保留旧 `execute()` 字符串接口）
+- 已落地：`ToolRegistry` 审计日志增加结构化结果可观测字段：`has_details` / `detail_op` / `is_error`
+- 已落地：`TurnRunner` 会话 `_tool_details` metadata envelope（含 `schema_version`）
+- 已落地：`ContextBuilder` 在发给 LLM 前剥离 `_tool_details`（会话可存、模型不可见）
+
+### 工具能力与 UX（对标 pi-mono 的高 ROI 部分）
+
+- 已落地：`read_file` 支持 `offset` / `limit` 分页读取
+- 已落地：`edit_file` 返回 diff 预览与首个变更行提示
+- 已落地：`exec`（shell）内部职责拆分（guard / executor / formatter）
+- 已落地：`exec`（shell）结构化 `details`（超时/阻断/退出码/输出截断等）
+- 已落地：`filesystem` 工具结构化 `details`
+- 已落地：`message` 工具结构化 `details`
+- 已落地：`spawn` 工具结构化 `details`
+
+### 测试与验证基线
+
+- 已落地：补充 `filesystem` 工具结构化结果测试
+- 已落地：补充 `turn_runner` `_tool_details` envelope 测试
+- 已落地：补充 `message` / `spawn` 工具结构化结果测试
+- 已落地：补充 `ToolRegistry` 审计 `detail_op` 在 `edit_file` / `exec` / `message` / `spawn` 的真实工具覆盖
+- 已验证：Phase 2 回归基线（选定 pytest 子集）`219 passed`
+
+### 代表性提交（节选）
+
+- `ae59c25` `refactor tools runtime and improve filesystem tool UX`
+- `df27c47` `refactor agent loop turn and consolidation orchestration`
+- `8941ec8` `refactor agent message processing orchestration`
+- `d315e14` `refactor subagent loop to reuse turn runner`
+- `06d4849` `feat structured edit_file tool details`
+- `2b9ee6f` `feat retain structured tool details in session history`
+- `fd8e551` `feat structured exec tool details`
+- `2f8bf25` `feat structured details for message and spawn tools`
 
 ## Phase 3（能力升级）
 
@@ -406,4 +468,3 @@
   - `MultimodalBuilder`
 
 这样能在不重写产品能力的前提下，把 nanobot 的后续演进空间打开。
-
