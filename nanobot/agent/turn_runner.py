@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from typing import Any, Awaitable, Callable
 
@@ -96,7 +97,12 @@ class TurnRunner:
             if not on_event:
                 return
             event_sequence += 1
-            await on_event({"turn_id": turn_id, "sequence": event_sequence, **payload})
+            await on_event({
+                "turn_id": turn_id,
+                "sequence": event_sequence,
+                "timestamp_ms": int(time.time() * 1000),
+                **payload,
+            })
 
         if on_event:
             await _emit_event({
