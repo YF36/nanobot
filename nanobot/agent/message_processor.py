@@ -69,6 +69,7 @@ class SystemMessageHandler:
 
     def __init__(self, deps: MessageProcessorDeps) -> None:
         self.deps = deps
+        self.turn_executor = TurnExecutionCoordinator(deps)
 
     async def handle(self, msg: InboundMessage) -> OutboundMessage:
         channel, chat_id = (msg.chat_id.split(":", 1) if ":" in msg.chat_id else ("cli", msg.chat_id))
@@ -84,9 +85,11 @@ class SystemMessageHandler:
             chat_id=chat_id,
         )
         skip = len(messages) - 1  # include current user message in saved turn
-        final_content, _, all_msgs = await self.deps.hooks.run_agent_loop(messages)
-        self.deps.hooks.save_turn(session, all_msgs, skip)
-        self.deps.sessions.save(session)
+        final_content, _, _ = await self.turn_executor.run_and_persist(
+            session=session,
+            messages=messages,
+            skip=skip,
+        )
         return OutboundMessage(
             channel=channel,
             chat_id=chat_id,
@@ -162,6 +165,29 @@ class RequestContextBinder:
         logger.info("Processing message", preview=preview)
 
 
+class TurnExecutionCoordinator:
+    """Run a turn and persist its resulting messages to the session."""
+
+    def __init__(self, deps: MessageProcessorDeps) -> None:
+        self.deps = deps
+
+    async def run_and_persist(
+        self,
+        *,
+        session: Any,
+        messages: list[dict[str, Any]],
+        skip: int,
+        on_progress: ProgressCallback | None = None,
+    ) -> tuple[str | None, list[str], list[dict[str, Any]]]:
+        final_content, tools_used, all_msgs = await self.deps.hooks.run_agent_loop(
+            messages,
+            on_progress=on_progress,
+        )
+        self.deps.hooks.save_turn(session, all_msgs, skip)
+        self.deps.sessions.save(session)
+        return final_content, tools_used, all_msgs
+
+
 class UserMessageHandler:
     """Handle normal user messages and progress events."""
 
@@ -169,6 +195,7 @@ class UserMessageHandler:
         self.deps = deps
         self.progress = ProgressPublisher(deps.bus)
         self.message_tool = MessageToolTurnController(deps.tools)
+        self.turn_executor = TurnExecutionCoordinator(deps)
 
     def _schedule_background_consolidation_if_needed(self, session: Any) -> None:
         if len(session.messages) <= self.deps.memory_window:
@@ -203,9 +230,6 @@ class UserMessageHandler:
     ) -> OutboundMessage | None:
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info("Response sent", preview=preview)
-
-        self.deps.hooks.save_turn(session, all_msgs, skip)
-        self.deps.sessions.save(session)
 
         if self.message_tool.sent_reply_in_turn():
             return None
@@ -242,8 +266,10 @@ class UserMessageHandler:
         # Save current_user + all LLM responses, so skip system + history.
         skip = len(initial_messages) - 1
 
-        final_content, _, all_msgs = await self.deps.hooks.run_agent_loop(
-            initial_messages,
+        final_content, _, all_msgs = await self.turn_executor.run_and_persist(
+            session=session,
+            messages=initial_messages,
+            skip=skip,
             on_progress=progress_cb,
         )
 
