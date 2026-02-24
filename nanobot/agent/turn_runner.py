@@ -21,6 +21,19 @@ def _session_tool_details(details: dict[str, Any]) -> dict[str, Any]:
         "first_changed_line",
         "replacement_count",
         "diff_truncated",
+        "channel",
+        "chat_id",
+        "message_id",
+        "attachment_count",
+        "sent",
+        "accepted",
+        "origin_channel",
+        "origin_chat_id",
+        "label",
+        "task_len",
+        "blocked",
+        "timed_out",
+        "exit_code",
     )
     compact = {k: details[k] for k in keep_keys if k in details}
     if not compact:

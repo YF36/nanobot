@@ -3,11 +3,13 @@
 from pathlib import Path
 import pytest
 from typing import Any
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 
 from nanobot.agent.tools.base import Tool, ToolExecutionResult
 from nanobot.agent.tools.filesystem import EditFileTool
+from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.shell import ExecTool
+from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.registry import ToolRegistry
 
 
@@ -265,6 +267,40 @@ async def test_audit_logs_detail_op_for_exec_tool(tmp_path: Path):
     kwargs = completed[0].kwargs
     assert kwargs["has_details"] is True
     assert kwargs["detail_op"] == "exec"
+
+
+@pytest.mark.asyncio
+async def test_audit_logs_detail_op_for_message_tool():
+    async def _send(_msg):
+        return None
+
+    reg = ToolRegistry(audit=True)
+    reg.register(MessageTool(send_callback=_send, default_channel="cli", default_chat_id="chat"))
+
+    with patch("nanobot.agent.tools.registry.audit_log") as mock_log:
+        result = await reg.execute_result("message", {"content": "hello"})
+
+    assert result.is_error is False
+    completed = [c for c in mock_log.info.call_args_list if c.args and c.args[0] == "tool_call_completed"]
+    assert len(completed) == 1
+    assert completed[0].kwargs["detail_op"] == "message"
+
+
+@pytest.mark.asyncio
+async def test_audit_logs_detail_op_for_spawn_tool():
+    manager = MagicMock()
+    manager.spawn = AsyncMock(return_value="Subagent [x] started (id: abc12345). I'll notify you when it completes.")
+
+    reg = ToolRegistry(audit=True)
+    reg.register(SpawnTool(manager))
+
+    with patch("nanobot.agent.tools.registry.audit_log") as mock_log:
+        result = await reg.execute_result("spawn", {"task": "do x", "label": "x"})
+
+    assert result.is_error is False
+    completed = [c for c in mock_log.info.call_args_list if c.args and c.args[0] == "tool_call_completed"]
+    assert len(completed) == 1
+    assert completed[0].kwargs["detail_op"] == "spawn"
 
 
 @pytest.mark.asyncio

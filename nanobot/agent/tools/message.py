@@ -2,7 +2,7 @@
 
 from typing import Any, Awaitable, Callable
 
-from nanobot.agent.tools.base import Tool
+from nanobot.agent.tools.base import Tool, ToolExecutionResult
 from nanobot.bus.events import OutboundMessage
 
 
@@ -83,22 +83,43 @@ class MessageTool(Tool):
         message_id: str | None = None,
         media: list[str] | None = None,
         **kwargs: Any
-    ) -> str:
+    ) -> str | ToolExecutionResult:
         channel = channel or self._default_channel
         chat_id = chat_id or self._default_chat_id
         message_id = message_id or self._default_message_id
+        attachments = media or []
 
         if not channel or not chat_id:
-            return "Error: No target channel/chat specified"
+            return ToolExecutionResult(
+                text="Error: No target channel/chat specified",
+                details={
+                    "op": "message",
+                    "channel": channel,
+                    "chat_id": chat_id,
+                    "attachment_count": len(attachments),
+                    "sent": False,
+                },
+                is_error=True,
+            )
 
         if not self._send_callback:
-            return "Error: Message sending not configured"
+            return ToolExecutionResult(
+                text="Error: Message sending not configured",
+                details={
+                    "op": "message",
+                    "channel": channel,
+                    "chat_id": chat_id,
+                    "attachment_count": len(attachments),
+                    "sent": False,
+                },
+                is_error=True,
+            )
 
         msg = OutboundMessage(
             channel=channel,
             chat_id=chat_id,
             content=content,
-            media=media or [],
+            media=attachments,
             metadata={
                 "message_id": message_id,
             }
@@ -108,6 +129,28 @@ class MessageTool(Tool):
             await self._send_callback(msg)
             self._sent_in_turn = True
             media_info = f" with {len(media)} attachments" if media else ""
-            return f"Message sent to {channel}:{chat_id}{media_info}"
+            return ToolExecutionResult(
+                text=f"Message sent to {channel}:{chat_id}{media_info}",
+                details={
+                    "op": "message",
+                    "channel": channel,
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "attachment_count": len(attachments),
+                    "sent": True,
+                },
+            )
         except Exception as e:
-            return f"Error sending message: {str(e)}"
+            return ToolExecutionResult(
+                text=f"Error sending message: {str(e)}",
+                details={
+                    "op": "message",
+                    "channel": channel,
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "attachment_count": len(attachments),
+                    "sent": False,
+                    "exception_type": type(e).__name__,
+                },
+                is_error=True,
+            )

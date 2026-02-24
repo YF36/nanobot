@@ -2,7 +2,7 @@
 
 from typing import Any, TYPE_CHECKING
 
-from nanobot.agent.tools.base import Tool
+from nanobot.agent.tools.base import Tool, ToolExecutionResult
 
 if TYPE_CHECKING:
     from nanobot.agent.subagent import SubagentManager
@@ -55,11 +55,24 @@ class SpawnTool(Tool):
             "required": ["task"],
         }
     
-    async def execute(self, task: str, label: str | None = None, **kwargs: Any) -> str:
+    async def execute(self, task: str, label: str | None = None, **kwargs: Any) -> str | ToolExecutionResult:
         """Spawn a subagent to execute the given task."""
-        return await self._manager.spawn(
+        text = await self._manager.spawn(
             task=task,
             label=label,
             origin_channel=self._origin_channel,
             origin_chat_id=self._origin_chat_id,
+        )
+        accepted = not text.lower().startswith("cannot spawn subagent")
+        return ToolExecutionResult(
+            text=text,
+            details={
+                "op": "spawn",
+                "accepted": accepted,
+                "origin_channel": self._origin_channel,
+                "origin_chat_id": self._origin_chat_id,
+                "label": label,
+                "task_len": len(task),
+            },
+            is_error=not accepted,
         )
