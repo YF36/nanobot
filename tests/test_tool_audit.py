@@ -7,6 +7,7 @@ from unittest.mock import patch, MagicMock
 
 from nanobot.agent.tools.base import Tool, ToolExecutionResult
 from nanobot.agent.tools.filesystem import EditFileTool
+from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.registry import ToolRegistry
 
 
@@ -248,6 +249,22 @@ async def test_audit_logs_detail_op_for_edit_file(tmp_path: Path):
     kwargs = completed[0].kwargs
     assert kwargs["has_details"] is True
     assert kwargs["detail_op"] == "edit_file"
+
+
+@pytest.mark.asyncio
+async def test_audit_logs_detail_op_for_exec_tool(tmp_path: Path):
+    reg = ToolRegistry(audit=True)
+    reg.register(ExecTool(working_dir=str(tmp_path), audit_executions=False))
+
+    with patch("nanobot.agent.tools.registry.audit_log") as mock_log:
+        result = await reg.execute_result("exec", {"command": "echo hello"})
+
+    assert result.is_error is False
+    completed = [c for c in mock_log.info.call_args_list if c.args and c.args[0] == "tool_call_completed"]
+    assert len(completed) == 1
+    kwargs = completed[0].kwargs
+    assert kwargs["has_details"] is True
+    assert kwargs["detail_op"] == "exec"
 
 
 @pytest.mark.asyncio
