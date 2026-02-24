@@ -11,21 +11,54 @@ from typing import Any
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.skills import SkillsLoader
 
+# Lazy-loaded tiktoken encoder; None if tiktoken is not installed.
+_tiktoken_encoder: Any = None
+_tiktoken_loaded: bool = False
+
+
+def _get_encoder() -> Any:
+    """Return a tiktoken encoder, or None if tiktoken is unavailable."""
+    global _tiktoken_encoder, _tiktoken_loaded
+    if _tiktoken_loaded:
+        return _tiktoken_encoder
+    _tiktoken_loaded = True
+    try:
+        import tiktoken
+        # cl100k_base covers GPT-4, Claude (approximate), and most modern models.
+        _tiktoken_encoder = tiktoken.get_encoding("cl100k_base")
+    except Exception:
+        _tiktoken_encoder = None
+    return _tiktoken_encoder
+
+
+def count_tokens(text: str) -> int:
+    """Count tokens in *text*. Falls back to char/4 estimate if tiktoken is absent."""
+    enc = _get_encoder()
+    if enc is not None:
+        return len(enc.encode(text))
+    return max(1, len(text) // 4)
+
 
 class ContextBuilder:
     """
     Builds the context (system prompt + messages) for the agent.
-    
+
     Assembles bootstrap files, memory, skills, and conversation history
     into a coherent prompt for the LLM.
     """
-    
+
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
-    
-    def __init__(self, workspace: Path):
+
+    # Rough char-to-token ratio used only when tiktoken is unavailable
+    _CHARS_PER_TOKEN = 4
+    # Default conservative context budget (tokens, not chars)
+    _DEFAULT_MAX_CONTEXT_TOKENS = 30_000
+
+    def __init__(self, workspace: Path, max_context_tokens: int | None = None):
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
+        self._max_context_tokens = max_context_tokens or self._DEFAULT_MAX_CONTEXT_TOKENS
     
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """
@@ -123,77 +156,72 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         
         return "\n\n".join(parts) if parts else ""
     
-    # Rough char-to-token ratio (~4 chars per token) and default budget
-    _CHARS_PER_TOKEN = 4
-    _MAX_CONTEXT_TOKENS = 30_000  # conservative default for most models
-
     @staticmethod
-    def _estimate_message_chars(msg: dict[str, Any]) -> int:
-        """Estimate character count of a message for token budgeting."""
+    def _estimate_message_tokens(msg: dict[str, Any]) -> int:
+        """Estimate token count of a message for context budgeting."""
         total = 0
         content = msg.get("content", "")
         if isinstance(content, str):
-            total += len(content)
+            total += count_tokens(content)
         elif isinstance(content, list):
             for block in content:
                 if isinstance(block, dict):
                     if block.get("type") == "text":
-                        total += len(block.get("text", ""))
+                        total += count_tokens(block.get("text", ""))
                     elif block.get("type") == "image_url":
-                        # base64 images are very large in chars
+                        # base64 images: count chars/4 (tiktoken can't encode binary)
                         url = block.get("image_url", {}).get("url", "")
-                        total += len(url)
+                        total += max(1, len(url) // 4)
         for key in ("tool_call_id", "name"):
             value = msg.get(key)
             if isinstance(value, str):
-                total += len(value)
+                total += count_tokens(value)
         tool_calls = msg.get("tool_calls")
         if isinstance(tool_calls, list):
             for tc in tool_calls:
                 if not isinstance(tc, dict):
-                    total += len(str(tc))
+                    total += count_tokens(str(tc))
                     continue
                 for key in ("id", "type"):
                     value = tc.get(key)
                     if isinstance(value, str):
-                        total += len(value)
+                        total += count_tokens(value)
                 fn = tc.get("function")
                 if isinstance(fn, dict):
                     fn_name = fn.get("name")
                     if isinstance(fn_name, str):
-                        total += len(fn_name)
+                        total += count_tokens(fn_name)
                     args = fn.get("arguments")
                     if isinstance(args, str):
-                        total += len(args)
+                        total += count_tokens(args)
                     elif args is not None:
-                        total += len(json.dumps(args, ensure_ascii=False))
+                        total += count_tokens(json.dumps(args, ensure_ascii=False))
         return total
 
     def _trim_history(
-        self, history: list[dict[str, Any]], budget_chars: int
+        self, history: list[dict[str, Any]], budget_tokens: int
     ) -> list[dict[str, Any]]:
         """Trim history by user-turn chunks to avoid breaking tool-call structure."""
         if not history:
             return history
-        if budget_chars <= 0:
+        if budget_tokens <= 0:
             return []
         history = self._drop_leading_non_user(history)
         if not history:
             return []
-        total = sum(self._estimate_message_chars(m) for m in history)
-        if total <= budget_chars:
+        total = sum(self._estimate_message_tokens(m) for m in history)
+        if total <= budget_tokens:
             return history
 
         chunks = self._split_history_chunks(history)
         kept_reversed: list[list[dict[str, Any]]] = []
         kept_total = 0
         for chunk in reversed(chunks):
-            chunk_chars = sum(self._estimate_message_chars(m) for m in chunk)
-            if kept_total + chunk_chars > budget_chars:
-                # Do not split a turn chunk; keep protocol structure intact.
+            chunk_tokens = sum(self._estimate_message_tokens(m) for m in chunk)
+            if kept_total + chunk_tokens > budget_tokens:
                 break
             kept_reversed.append(chunk)
-            kept_total += chunk_chars
+            kept_total += chunk_tokens
 
         if not kept_reversed:
             return []
@@ -366,18 +394,16 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         # Build current message first so image payload size can be counted in budgeting.
         user_content = self._build_user_content(current_message, media)
 
-        # Budget for history = total budget minus system prompt and current message payload
-        system_chars = len(system_prompt)
-        current_chars = self._estimate_message_chars({"content": user_content})
-        budget_chars = (
-            self._MAX_CONTEXT_TOKENS * self._CHARS_PER_TOKEN
-            - system_chars - current_chars
-        )
-        budget_chars = max(budget_chars, 0)
+        # Budget for history = total budget minus system prompt and current message (tokens)
+        system_tokens = count_tokens(system_prompt)
+        current_tokens = self._estimate_message_tokens({"content": user_content})
+        # Reserve 4096 tokens for the LLM reply
+        budget_tokens = self._max_context_tokens - system_tokens - current_tokens - 4096
+        budget_tokens = max(budget_tokens, 0)
 
         # History (compact then trim to fit budget)
         compacted = self._compact_history(history)
-        trimmed = self._trim_history(compacted, budget_chars)
+        trimmed = self._trim_history(compacted, budget_tokens)
 
         # Drop trailing user message in history if it was never answered —
         # the current message supersedes it, avoids consecutive user messages.

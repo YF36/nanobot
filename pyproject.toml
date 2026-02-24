@@ -53,6 +53,9 @@ dev = [
 langfuse = [
     "langfuse>=2.0.0",
 ]
+token = [
+    "tiktoken>=0.7.0",
+]
 
 [project.scripts]
 nanobot = "nanobot.cli.commands:app"

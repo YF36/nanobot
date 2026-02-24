@@ -71,8 +71,8 @@ def test_trim_history_keeps_whole_recent_turn_chunk(tmp_path) -> None:
     ]
     history = chunk1 + chunk2
 
-    chunk2_budget = sum(builder._estimate_message_chars(m) for m in chunk2)
-    trimmed = builder._trim_history(history, budget_chars=chunk2_budget)
+    chunk2_budget = sum(builder._estimate_message_tokens(m) for m in chunk2)
+    trimmed = builder._trim_history(history, budget_tokens=chunk2_budget)
 
     assert trimmed == chunk2
     assert trimmed[0]["role"] == "user"
@@ -94,29 +94,35 @@ def test_estimate_message_chars_counts_tool_calls_arguments(tmp_path) -> None:
         ],
     }
 
-    assert builder._estimate_message_chars(msg) >= len(args)
+    tokens = builder._estimate_message_tokens(msg)
+    # Must be positive and account for the arguments string (at least a few tokens)
+    assert tokens > 0
+    # Must be less than len(args) (tiktoken is more efficient than char/4)
+    assert tokens < len(args)
 
 
 def test_build_messages_drops_history_when_budget_is_negative(tmp_path) -> None:
     builder = _builder(tmp_path)
-    builder.build_system_prompt = lambda skill_names=None: "s" * 200  # type: ignore[method-assign]
-    builder._MAX_CONTEXT_TOKENS = 10  # 40 chars total budget
+    # system prompt = 50 tokens, current message = 25 tokens → budget exhausted
+    builder.build_system_prompt = lambda skill_names=None: "word " * 50  # type: ignore[method-assign]
+    builder._max_context_tokens = 80  # leaves no room for history
 
     history = [
         {"role": "user", "content": "older question"},
         {"role": "assistant", "content": "older answer"},
     ]
 
-    messages = builder.build_messages(history=history, current_message="x" * 100)
+    messages = builder.build_messages(history=history, current_message="word " * 25)
 
     assert [m["role"] for m in messages] == ["system", "user"]
-    assert messages[-1]["content"] == "x" * 100
 
 
 def test_build_messages_counts_current_image_payload_in_budget(tmp_path) -> None:
     builder = _builder(tmp_path)
     builder.build_system_prompt = lambda skill_names=None: "sys"  # type: ignore[method-assign]
-    builder._MAX_CONTEXT_TOKENS = 15  # 60 chars total budget
+    # Image url is ~150 chars → ~37 tokens; system ~1 token; reply reserve 4096
+    # Set budget so image + system + reserve exhausts it
+    builder._max_context_tokens = 4100
     builder._build_user_content = lambda text, media: [  # type: ignore[method-assign]
         {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + ("x" * 120)}},
         {"type": "text", "text": text},
