@@ -7,13 +7,10 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from nanobot.agent.tools.message import MessageTool
+from nanobot.agent.message_processor_types import MessageProcessingHooks, MessageProcessorDeps, ProgressCallback, ToolRegistryProtocol
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.logging import get_logger
-
-if TYPE_CHECKING:
-    from nanobot.agent.message_processor import MessageProcessingHooks, MessageProcessorDeps, ToolRegistryProtocol
-    from nanobot.agent.message_processor import ProgressCallback
 
 logger = get_logger(__name__)
 
@@ -24,7 +21,7 @@ class ProgressPublisher:
     def __init__(self, bus: MessageBus) -> None:
         self.bus = bus
 
-    def for_message(self, msg: InboundMessage) -> "ProgressCallback":
+    def for_message(self, msg: InboundMessage) -> ProgressCallback:
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
             meta = dict(msg.metadata or {})
             meta["_progress"] = True
@@ -42,7 +39,7 @@ class ProgressPublisher:
 class MessageToolTurnController:
     """Thin adapter for message-tool turn lifecycle and reply detection."""
 
-    def __init__(self, tools: "ToolRegistryProtocol") -> None:
+    def __init__(self, tools: ToolRegistryProtocol) -> None:
         self.tools = tools
 
     def _get_message_tool(self) -> MessageTool | None:
@@ -89,7 +86,7 @@ class RequestContextBinder:
 class TurnExecutionCoordinator:
     """Run a turn and persist its resulting messages to the session."""
 
-    def __init__(self, deps: "MessageProcessorDeps") -> None:
+    def __init__(self, deps: MessageProcessorDeps) -> None:
         self.deps = deps
 
     async def run_and_persist(
@@ -98,7 +95,7 @@ class TurnExecutionCoordinator:
         session: Any,
         messages: list[dict[str, Any]],
         skip: int,
-        on_progress: "ProgressCallback" | None = None,
+        on_progress: ProgressCallback | None = None,
     ) -> tuple[str | None, list[str], list[dict[str, Any]]]:
         final_content, tools_used, all_msgs = await self.deps.hooks.run_agent_loop(
             messages,
@@ -139,7 +136,7 @@ class TurnMessageBuilder:
 class ToolContextInitializer:
     """Initialize tool routing context from inbound message metadata."""
 
-    def __init__(self, hooks: "MessageProcessingHooks") -> None:
+    def __init__(self, hooks: MessageProcessingHooks) -> None:
         self.hooks = hooks
 
     def set_from_message(self, msg: InboundMessage, *, channel: str, chat_id: str) -> None:
