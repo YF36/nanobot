@@ -20,6 +20,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 
 from nanobot import __version__, __logo__
 from nanobot.config.schema import Config
+from nanobot.health import HealthServer
 
 app = typer.Typer(
     name="nanobot",
@@ -394,11 +395,15 @@ def gateway(
         console.print(f"[green]✓[/green] Cron: {cron_status['jobs']} scheduled jobs")
     
     console.print(f"[green]✓[/green] Heartbeat: every 30m")
-    
+
+    health = HealthServer(agent=agent, bus=bus, channels=channels)
+
     async def run():
         try:
             await cron.start()
             await heartbeat.start()
+            await health.start()
+            console.print(f"[green]✓[/green] Health check: http://{health.host}:{health.port}/health")
             await asyncio.gather(
                 agent.run(),
                 channels.start_all(),
@@ -411,6 +416,7 @@ def gateway(
             agent.stop()
             await agent.wait_stopped(timeout=30.0)
             await channels.stop_all()
+            await health.stop()
     
     asyncio.run(run())
 
