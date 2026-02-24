@@ -157,6 +157,53 @@ class UserMessageHandler:
         )
         logger.info("Processing message", preview=preview)
 
+    def _schedule_background_consolidation_if_needed(self, session: Any) -> None:
+        if len(session.messages) <= self.deps.memory_window:
+            return
+        self.deps.consolidation.start_background(
+            session.key,
+            lambda: self.deps.hooks.consolidate_memory(session),
+        )
+
+    def _prepare_turn(self, msg: InboundMessage, session: Any) -> None:
+        self._schedule_background_consolidation_if_needed(session)
+        self.deps.hooks.set_tool_context(msg.channel, msg.chat_id, (msg.metadata or {}).get("message_id"))
+        self.message_tool.start_turn()
+
+    def _build_initial_messages(self, msg: InboundMessage, session: Any) -> list[dict[str, Any]]:
+        history = session.get_history(max_messages=self.deps.memory_window)
+        return self.deps.context.build_messages(
+            history=history,
+            current_message=msg.content,
+            media=msg.media if msg.media else None,
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+        )
+
+    def _finalize_response(
+        self,
+        msg: InboundMessage,
+        session: Any,
+        final_content: str,
+        all_msgs: list[dict[str, Any]],
+        skip: int,
+    ) -> OutboundMessage | None:
+        preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
+        logger.info("Response sent", preview=preview)
+
+        self.deps.hooks.save_turn(session, all_msgs, skip)
+        self.deps.sessions.save(session)
+
+        if self.message_tool.sent_reply_in_turn():
+            return None
+
+        return OutboundMessage(
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            content=final_content,
+            metadata=msg.metadata or {},
+        )
+
     async def handle(
         self,
         msg: InboundMessage,
@@ -173,23 +220,8 @@ class UserMessageHandler:
         if command_response is not None:
             return command_response
 
-        if len(session.messages) > self.deps.memory_window:
-            self.deps.consolidation.start_background(
-                session.key,
-                lambda: self.deps.hooks.consolidate_memory(session),
-            )
-
-        self.deps.hooks.set_tool_context(msg.channel, msg.chat_id, (msg.metadata or {}).get("message_id"))
-        self.message_tool.start_turn()
-
-        history = session.get_history(max_messages=self.deps.memory_window)
-        initial_messages = self.deps.context.build_messages(
-            history=history,
-            current_message=msg.content,
-            media=msg.media if msg.media else None,
-            channel=msg.channel,
-            chat_id=msg.chat_id,
-        )
+        self._prepare_turn(msg, session)
+        initial_messages = self._build_initial_messages(msg, session)
 
         progress_cb = on_progress or self.progress.for_message(msg)
 
@@ -205,21 +237,7 @@ class UserMessageHandler:
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
 
-        preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
-        logger.info("Response sent", preview=preview)
-
-        self.deps.hooks.save_turn(session, all_msgs, skip)
-        self.deps.sessions.save(session)
-
-        if self.message_tool.sent_reply_in_turn():
-            return None
-
-        return OutboundMessage(
-            channel=msg.channel,
-            chat_id=msg.chat_id,
-            content=final_content,
-            metadata=msg.metadata or {},
-        )
+        return self._finalize_response(msg, session, final_content, all_msgs, skip)
 
 
 class MessageProcessor:
