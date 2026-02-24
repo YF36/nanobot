@@ -98,11 +98,64 @@ class SystemMessageHandler:
         )
 
 
+class ProgressPublisher:
+    """Publish incremental progress messages to the outbound bus."""
+
+    def __init__(self, bus: MessageBus) -> None:
+        self.bus = bus
+
+    def for_message(self, msg: InboundMessage) -> ProgressCallback:
+        async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
+            meta = dict(msg.metadata or {})
+            meta["_progress"] = True
+            meta["_tool_hint"] = tool_hint
+            await self.bus.publish_outbound(OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content=content,
+                metadata=meta,
+            ))
+
+        return _bus_progress
+
+
+class MessageToolTurnController:
+    """Thin adapter for message-tool turn lifecycle and reply detection."""
+
+    def __init__(self, tools: ToolRegistryProtocol) -> None:
+        self.tools = tools
+
+    def _get_message_tool(self) -> MessageTool | None:
+        tool = self.tools.get("message")
+        return tool if isinstance(tool, MessageTool) else None
+
+    def start_turn(self) -> None:
+        if tool := self._get_message_tool():
+            tool.start_turn()
+
+    def sent_reply_in_turn(self) -> bool:
+        tool = self._get_message_tool()
+        if tool is None:
+            return False
+        return bool(getattr(tool, "sent_in_turn", getattr(tool, "_sent_in_turn", False)))
+
+
 class UserMessageHandler:
     """Handle normal user messages and progress events."""
 
     def __init__(self, deps: MessageProcessorDeps) -> None:
         self.deps = deps
+        self.progress = ProgressPublisher(deps.bus)
+        self.message_tool = MessageToolTurnController(deps.tools)
+
+    def _bind_request_context(self, msg: InboundMessage, key: str) -> None:
+        preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(
+            channel=msg.channel, sender_id=msg.sender_id,
+            session_key=key, chat_id=msg.chat_id,
+        )
+        logger.info("Processing message", preview=preview)
 
     async def handle(
         self,
@@ -111,15 +164,8 @@ class UserMessageHandler:
         session_key: str | None,
         on_progress: Callable[[str], Awaitable[None]] | None,
     ) -> OutboundMessage | None:
-        preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
-
         key = session_key or msg.session_key
-        structlog.contextvars.clear_contextvars()
-        structlog.contextvars.bind_contextvars(
-            channel=msg.channel, sender_id=msg.sender_id,
-            session_key=key, chat_id=msg.chat_id,
-        )
-        logger.info("Processing message", preview=preview)
+        self._bind_request_context(msg, key)
 
         session = self.deps.sessions.get_or_create(key)
 
@@ -134,9 +180,7 @@ class UserMessageHandler:
             )
 
         self.deps.hooks.set_tool_context(msg.channel, msg.chat_id, (msg.metadata or {}).get("message_id"))
-        if message_tool := self.deps.tools.get("message"):
-            if isinstance(message_tool, MessageTool):
-                message_tool.start_turn()
+        self.message_tool.start_turn()
 
         history = session.get_history(max_messages=self.deps.memory_window)
         initial_messages = self.deps.context.build_messages(
@@ -147,7 +191,7 @@ class UserMessageHandler:
             chat_id=msg.chat_id,
         )
 
-        progress_cb = on_progress or self._make_bus_progress(msg)
+        progress_cb = on_progress or self.progress.for_message(msg)
 
         # initial_messages = [system, compacted_history..., current_user]
         # Save current_user + all LLM responses, so skip system + history.
@@ -167,9 +211,8 @@ class UserMessageHandler:
         self.deps.hooks.save_turn(session, all_msgs, skip)
         self.deps.sessions.save(session)
 
-        if message_tool := self.deps.tools.get("message"):
-            if isinstance(message_tool, MessageTool) and message_tool._sent_in_turn:
-                return None
+        if self.message_tool.sent_reply_in_turn():
+            return None
 
         return OutboundMessage(
             channel=msg.channel,
@@ -177,20 +220,6 @@ class UserMessageHandler:
             content=final_content,
             metadata=msg.metadata or {},
         )
-
-    def _make_bus_progress(self, msg: InboundMessage) -> ProgressCallback:
-        async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
-            meta = dict(msg.metadata or {})
-            meta["_progress"] = True
-            meta["_tool_hint"] = tool_hint
-            await self.deps.bus.publish_outbound(OutboundMessage(
-                channel=msg.channel,
-                chat_id=msg.chat_id,
-                content=content,
-                metadata=meta,
-            ))
-
-        return _bus_progress
 
 
 class MessageProcessor:

@@ -37,6 +37,11 @@ class MessageTool(Tool):
         self._sent_in_turn = False
 
     @property
+    def sent_in_turn(self) -> bool:
+        """Whether this tool already sent a user-visible message in the current turn."""
+        return self._sent_in_turn
+
+    @property
     def name(self) -> str:
         return "message"
 
