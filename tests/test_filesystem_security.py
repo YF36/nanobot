@@ -217,7 +217,8 @@ class TestListDirTool:
     async def test_list_normal(self, workspace):
         tool = ListDirTool(workspace=workspace, allowed_dir=workspace)
         result = await tool.execute(path=".")
-        assert "hello.txt" in result
+        text = result.text if isinstance(result, ToolExecutionResult) else result
+        assert "hello.txt" in text
 
     @pytest.mark.asyncio
     async def test_list_traversal_blocked(self, workspace):

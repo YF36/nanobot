@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from nanobot.agent.tools.base import ToolExecutionResult
-from nanobot.agent.tools.filesystem import EditFileTool, ReadFileTool, WriteFileTool
+from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 
 
 @pytest.mark.asyncio
@@ -45,6 +45,22 @@ async def test_write_file_returns_structured_details(tmp_path: Path) -> None:
     assert result.details["requested_path"] == "out.txt"
     assert result.details["bytes_written"] == 5
     assert result.details["file_existed"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_dir_returns_structured_details(tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+    (tmp_path / "sub").mkdir()
+
+    tool = ListDirTool(workspace=tmp_path)
+    result = await tool.execute(path=".")
+
+    assert isinstance(result, ToolExecutionResult)
+    assert "a.txt" in result.text
+    assert result.details["op"] == "list_dir"
+    assert result.details["requested_path"] == "."
+    assert result.details["item_count"] == 2
+    assert result.details["has_directories"] is True
 
 
 @pytest.mark.asyncio

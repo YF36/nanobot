@@ -422,7 +422,7 @@ class ListDirTool(Tool):
             "required": ["path"]
         }
 
-    async def execute(self, path: str, **kwargs: Any) -> str:
+    async def execute(self, path: str, **kwargs: Any) -> str | ToolExecutionResult:
         try:
             dir_path = _resolve_path(path, self._workspace, self._allowed_dir)
             if not dir_path.exists():
@@ -439,9 +439,27 @@ class ListDirTool(Tool):
                 audit_log.info("dir_listed", path=str(dir_path))
 
             if not items:
-                return f"Directory {path} is empty"
+                return ToolExecutionResult(
+                    text=f"Directory {path} is empty",
+                    details={
+                        "op": "list_dir",
+                        "path": str(dir_path),
+                        "requested_path": path,
+                        "item_count": 0,
+                        "has_directories": False,
+                    },
+                )
 
-            return "\n".join(items)
+            return ToolExecutionResult(
+                text="\n".join(items),
+                details={
+                    "op": "list_dir",
+                    "path": str(dir_path),
+                    "requested_path": path,
+                    "item_count": len(items),
+                    "has_directories": any(item.is_dir() for item in dir_path.iterdir()),
+                },
+            )
         except PermissionError as e:
             if self._audit:
                 audit_log.warning("dir_list_blocked", path=path, reason=str(e))
