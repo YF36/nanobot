@@ -367,3 +367,54 @@ def test_build_messages_sorts_tools_within_group_for_stability(tmp_path) -> None
     edit_pos = catalog.index("`edit_file`")
     write_pos = catalog.index("`write_file`")
     assert edit_pos < read_pos < write_pos
+
+
+def test_build_messages_uses_compact_tool_catalog_mode_for_many_tools(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    tool_defs = []
+    for i in range(12):
+        tool_defs.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": f"tool_{i}",
+                    "description": "This is a long enough description to be visible in full mode.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}},
+                        "required": ["path"],
+                    },
+                },
+            }
+        )
+    # Add one known high-risk tool so note suppression can be asserted in compact mode.
+    tool_defs.append(
+        {
+            "type": "function",
+            "function": {
+                "name": "exec",
+                "description": "Run shell command.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"command": {"type": "string"}},
+                    "required": ["command"],
+                },
+            },
+        }
+    )
+
+    messages = builder.build_messages(history=[], current_message="hi", tool_definitions=tool_defs)
+    content = messages[0]["content"]
+    if isinstance(content, list):
+        joined = "\n".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    else:
+        joined = str(content)
+
+    catalog = joined.split("## Runtime Tool Catalog", 1)[1]
+    assert "Compact summary mode enabled" in catalog
+    assert "required: command" in catalog
+    assert "note: prefer read-only checks first" not in catalog

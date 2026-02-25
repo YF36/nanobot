@@ -477,6 +477,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         total_seen = 0
         max_tools = 20
         max_per_group = 6
+        compact_mode = len(tool_definitions) > 10
         for item in tool_definitions:
             if not isinstance(item, dict):
                 continue
@@ -502,14 +503,14 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                 if isinstance(required, list):
                     required_names = [str(k) for k in required[:3]]
             suffix_parts: list[str] = []
-            if desc_text:
+            if desc_text and not compact_mode:
                 suffix_parts.append(desc_text)
             if param_names:
                 suffix_parts.append("params: " + ", ".join(param_names))
             if required_names:
                 suffix_parts.append("required: " + ", ".join(required_names))
             caution_note = ContextBuilder._tool_runtime_note(name)
-            if caution_note:
+            if caution_note and not compact_mode:
                 suffix_parts.append("note: " + caution_note)
             line = f"- `{name}`"
             if suffix_parts:
@@ -558,6 +559,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             "## Runtime Tool Catalog\n"
             "Use only tools listed below; registered tools may differ from examples in static instructions.\n"
             "Grouped by capability to reduce prompt noise.\n\n"
+            + ("(Compact summary mode enabled due to tool count.)\n\n" if compact_mode else "")
             + "\n".join(lines)
         )
 
