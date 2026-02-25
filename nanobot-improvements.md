@@ -418,6 +418,14 @@
 - 已落地：`message` 工具结构化 `details`
 - 已落地：`spawn` 工具结构化 `details`
 
+### Session 持久化（`SessionManager.save()`）
+
+- 已落地：跳过未变化 session 的重复保存（减少全量 JSONL 重写）
+- 已落地：恢复 session metadata 中的 `updated_at` 读取（避免保存去重误判）
+- 已落地：session 保存 observability（`session_save_written` / `session_save_skipped`，含耗时与计数）
+- 已落地：session 文件原子写（临时文件 + `replace()` + `fsync`）
+- 已落地：周期性 session save summary metrics（跳过率、区间平均耗时等）
+
 ### 测试与验证基线
 
 - 已落地：补充 `filesystem` 工具结构化结果测试
@@ -425,6 +433,7 @@
 - 已落地：补充 `TurnRunner` 内部事件流测试（顺序、`turn_id`、`sequence`、`timestamp_ms`、`source`）
 - 已落地：补充 `message` / `spawn` 工具结构化结果测试
 - 已落地：补充 `ToolRegistry` 审计 `detail_op` 在 `edit_file` / `exec` / `message` / `spawn` 的真实工具覆盖
+- 已落地：补充 `SessionManager.save()` 去重/原子写/周期汇总观测测试
 - 已验证：Phase 2 回归基线（选定 pytest 子集）`219 passed`
 
 ### 代表性提交（节选）
@@ -444,6 +453,10 @@
 - `099ad03` `feat add timestamps to internal turn events`
 - `6dedc40` `feat add source labels to turn events`
 - `75462e5` `feat include turn ids in message event summaries`
+- `6159e38` `perf dedupe unchanged session saves`
+- `ab43316` `feat add session save observability logging`
+- `40e47a3` `feat write session files atomically`
+- `30c4083` `feat add periodic session save summary metrics`
 
 ## Phase 3（能力升级）
 
