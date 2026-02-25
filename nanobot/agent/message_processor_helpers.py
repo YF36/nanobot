@@ -14,6 +14,13 @@ from nanobot.agent.message_processor_types import (
     ToolRegistryProtocol,
     TurnEventCallback,
 )
+from nanobot.agent.turn_events import (
+    TURN_EVENT_TOOL_END,
+    TURN_EVENT_TOOL_START,
+    TURN_EVENT_TURN_END,
+    TURN_EVENT_TURN_START,
+    TurnEventPayload,
+)
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.logging import get_logger
@@ -102,7 +109,7 @@ class TurnEventStatsCollector:
         self.sources: set[str] = set()
         self.error_tools = 0
 
-    async def on_event(self, event: dict[str, Any]) -> None:
+    async def on_event(self, event: TurnEventPayload) -> None:
         turn_id = event.get("turn_id")
         if isinstance(turn_id, str) and turn_id:
             self.turn_ids.add(turn_id)
@@ -111,16 +118,16 @@ class TurnEventStatsCollector:
             self.sources.add(source)
 
         event_type = event.get("type")
-        if event_type == "turn_start":
+        if event_type == TURN_EVENT_TURN_START:
             self.turns_started += 1
             return
-        if event_type == "turn_end":
+        if event_type == TURN_EVENT_TURN_END:
             self.turns_ended += 1
             return
-        if event_type == "tool_start":
+        if event_type == TURN_EVENT_TOOL_START:
             self.tool_starts += 1
             return
-        if event_type == "tool_end":
+        if event_type == TURN_EVENT_TOOL_END:
             self.tool_ends += 1
             if event.get("is_error"):
                 self.error_tools += 1

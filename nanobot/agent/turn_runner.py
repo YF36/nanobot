@@ -5,13 +5,19 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, cast
 
 from nanobot.logging import get_logger
+from nanobot.agent.turn_events import (
+    TURN_EVENT_TOOL_END,
+    TURN_EVENT_TOOL_START,
+    TURN_EVENT_TURN_END,
+    TURN_EVENT_TURN_START,
+    TurnEventCallback,
+    TurnEventPayload,
+)
 
 logger = get_logger(__name__)
-
-TurnEventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 def _session_tool_details(details: dict[str, Any]) -> dict[str, Any]:
@@ -98,17 +104,18 @@ class TurnRunner:
             if not on_event:
                 return
             event_sequence += 1
-            await on_event({
+            event = cast(TurnEventPayload, {
                 "turn_id": turn_id,
                 "sequence": event_sequence,
                 "timestamp_ms": int(time.time() * 1000),
                 "source": event_source,
                 **payload,
             })
+            await on_event(event)
 
         if on_event:
             await _emit_event({
-                "type": "turn_start",
+                "type": TURN_EVENT_TURN_START,
                 "initial_message_count": len(initial_messages),
                 "max_iterations": self.max_iterations,
             })
@@ -156,7 +163,7 @@ class TurnRunner:
                     logger.info("Tool call", tool=tool_call.name, args=args_str[:200])
                     if on_event:
                         await _emit_event({
-                            "type": "tool_start",
+                            "type": TURN_EVENT_TOOL_START,
                             "iteration": iteration,
                             "tool": tool_call.name,
                             "tool_call_id": tool_call.id,
@@ -176,7 +183,7 @@ class TurnRunner:
                         )
                     if on_event:
                         await _emit_event({
-                            "type": "tool_end",
+                            "type": TURN_EVENT_TOOL_END,
                             "iteration": iteration,
                             "tool": tool_call.name,
                             "tool_call_id": tool_call.id,
@@ -208,7 +215,7 @@ class TurnRunner:
             )
         if on_event:
             await _emit_event({
-                "type": "turn_end",
+                "type": TURN_EVENT_TURN_END,
                 "iterations": iteration,
                 "tool_count": len(tools_used),
                 "completed": final_content is not None,
