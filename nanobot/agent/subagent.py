@@ -12,6 +12,7 @@ from nanobot.agent.turn_events import (
     TURN_EVENT_TOOL_END,
     TURN_EVENT_TOOL_START,
     TurnEventPayload,
+    turn_event_trace_fields,
 )
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
@@ -316,9 +317,7 @@ class SubagentManager:
             logger.debug(
                 "subagent_turn_event",
                 event_type=event_type,
-                source=event.get("source"),
-                turn_id=event.get("turn_id"),
-                sequence=event.get("sequence"),
+                **turn_event_trace_fields(event),
                 tool=event.get("tool"),
                 iteration=event.get("iteration"),
                 tool_call_id=event.get("tool_call_id"),
@@ -329,9 +328,7 @@ class SubagentManager:
         logger.debug(
             "subagent_turn_event",
             event_type=event_type,
-            source=event.get("source"),
-            turn_id=event.get("turn_id"),
-            sequence=event.get("sequence"),
+            **turn_event_trace_fields(event),
             payload=event,
         )
     

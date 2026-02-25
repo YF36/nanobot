@@ -60,3 +60,11 @@ class TurnEndEvent(BaseTurnEvent):
 TurnEventPayload: TypeAlias = TurnStartEvent | ToolStartEvent | ToolEndEvent | TurnEndEvent
 TurnEventCallback: TypeAlias = Callable[[TurnEventPayload], Awaitable[None]]
 
+
+def turn_event_trace_fields(event: TurnEventPayload) -> dict[str, Any]:
+    """Common trace fields for event logging sinks."""
+    return {
+        "source": event.get("source"),
+        "turn_id": event.get("turn_id"),
+        "sequence": event.get("sequence"),
+    }
