@@ -201,6 +201,7 @@ class TurnMessageBuilder:
             "current_message": msg.content,
             "channel": channel,
             "chat_id": chat_id,
+            "tool_definitions": self.deps.tools.get_definitions(),
         }
         if include_media:
             kwargs["media"] = msg.media if msg.media else None

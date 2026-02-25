@@ -30,6 +30,7 @@ class ContextBuilderProtocol(Protocol):
 
 class ToolRegistryProtocol(Protocol):
     def get(self, name: str) -> Any: ...
+    def get_definitions(self) -> list[dict[str, Any]]: ...
 
 
 class CommandHandlerProtocol(Protocol):

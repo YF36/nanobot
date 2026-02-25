@@ -399,6 +399,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         media: list[str] | None = None,
         channel: str | None = None,
         chat_id: str | None = None,
+        tool_definitions: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Build the complete message list for an LLM call.
@@ -410,6 +411,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             media: Optional list of local file paths for images/media.
             channel: Current channel (telegram, feishu, etc.).
             chat_id: Current chat/user ID.
+            tool_definitions: Optional tool schemas used to build a concise runtime tool summary.
 
         Returns:
             List of messages including system prompt.
@@ -418,6 +420,9 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
 
         # System prompt — split into static (cacheable) and dynamic parts
         static_prompt, dynamic_prompt = self.build_system_prompt_parts(skill_names)
+        tool_runtime_prompt = self._build_tool_runtime_prompt(tool_definitions)
+        if tool_runtime_prompt:
+            dynamic_prompt = "\n\n---\n\n".join(p for p in [dynamic_prompt, tool_runtime_prompt] if p)
         session_suffix = f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}" if channel and chat_id else ""
 
         # Build system content as a list of blocks so _apply_cache_control can
@@ -460,6 +465,60 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         messages.append({"role": "user", "content": user_content})
 
         return messages
+
+    @staticmethod
+    def _build_tool_runtime_prompt(tool_definitions: list[dict[str, Any]] | None) -> str:
+        """Build a compact summary of currently registered tools for system prompt alignment."""
+        if not tool_definitions:
+            return ""
+
+        lines: list[str] = []
+        max_tools = 20
+        for item in tool_definitions:
+            if not isinstance(item, dict):
+                continue
+            fn = item.get("function")
+            if not isinstance(fn, dict):
+                continue
+            name = fn.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            desc = fn.get("description")
+            desc_text = ""
+            if isinstance(desc, str) and desc.strip():
+                compact_desc = " ".join(desc.strip().split())
+                desc_text = compact_desc[:120] + ("..." if len(compact_desc) > 120 else "")
+            params = fn.get("parameters")
+            param_names: list[str] = []
+            if isinstance(params, dict):
+                props = params.get("properties")
+                if isinstance(props, dict):
+                    param_names = [str(k) for k in list(props.keys())[:4]]
+            suffix_parts: list[str] = []
+            if desc_text:
+                suffix_parts.append(desc_text)
+            if param_names:
+                suffix_parts.append("params: " + ", ".join(param_names))
+            line = f"- `{name}`"
+            if suffix_parts:
+                line += " — " + " | ".join(suffix_parts)
+            lines.append(line)
+            if len(lines) >= max_tools:
+                break
+
+        if not lines:
+            return ""
+        omitted = 0
+        if isinstance(tool_definitions, list) and len(tool_definitions) > len(lines):
+            omitted = len(tool_definitions) - len(lines)
+        if omitted > 0:
+            lines.append(f"- ...and {omitted} more tool(s)")
+
+        return (
+            "## Runtime Tool Catalog\n"
+            "Use only tools listed below; registered tools may differ from examples in static instructions.\n\n"
+            + "\n".join(lines)
+        )
 
     # Max dimension (px) and file size (bytes) for images sent to LLM
     _IMAGE_MAX_DIM = 1024

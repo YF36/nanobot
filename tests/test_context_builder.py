@@ -184,3 +184,56 @@ def test_build_system_prompt_parts_moves_rules_to_static_and_time_to_dynamic(tmp
     assert "## Tool Call Guidelines" in static
     assert "## Current Time" not in static
     assert "## Current Time" in dynamic
+
+
+def test_build_messages_includes_runtime_tool_catalog_when_provided(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    tool_defs = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a file from the workspace with optional pagination.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}, "offset": {"type": "integer"}},
+                },
+            },
+        }
+    ]
+
+    messages = builder.build_messages(
+        history=[],
+        current_message="hi",
+        tool_definitions=tool_defs,
+    )
+
+    system_msg = messages[0]
+    assert system_msg["role"] == "system"
+    content = system_msg["content"]
+    if isinstance(content, list):
+        joined = "\n".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    else:
+        joined = str(content)
+    assert "## Runtime Tool Catalog" in joined
+    assert "`read_file`" in joined
+    assert "params: path, offset" in joined
+
+
+def test_build_messages_omits_runtime_tool_catalog_when_no_tools(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    messages = builder.build_messages(history=[], current_message="hi", tool_definitions=[])
+    content = messages[0]["content"]
+    if isinstance(content, list):
+        joined = "\n".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    else:
+        joined = str(content)
+    assert "## Runtime Tool Catalog" not in joined
