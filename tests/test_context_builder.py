@@ -297,3 +297,36 @@ def test_build_messages_groups_runtime_tool_catalog_by_capability(tmp_path) -> N
     assert "`exec`" in joined
     assert "`message`" in joined
     assert "`spawn`" in joined
+    assert "note: prefer read-only checks first" in joined
+
+
+def test_build_messages_adds_high_risk_tool_notes(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    tool_defs = [
+        {
+            "type": "function",
+            "function": {
+                "name": "edit_file",
+                "description": "Edit file content.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}},
+                    "required": ["path", "old_text", "new_text"],
+                },
+            },
+        }
+    ]
+
+    messages = builder.build_messages(history=[], current_message="hi", tool_definitions=tool_defs)
+    content = messages[0]["content"]
+    if isinstance(content, list):
+        joined = "\n".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    else:
+        joined = str(content)
+
+    assert "`edit_file`" in joined
+    assert "note: read target first and verify path before modifying" in joined

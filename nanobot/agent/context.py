@@ -508,6 +508,9 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                 suffix_parts.append("params: " + ", ".join(param_names))
             if required_names:
                 suffix_parts.append("required: " + ", ".join(required_names))
+            caution_note = ContextBuilder._tool_runtime_note(name)
+            if caution_note:
+                suffix_parts.append("note: " + caution_note)
             line = f"- `{name}`"
             if suffix_parts:
                 line += " — " + " | ".join(suffix_parts)
@@ -564,6 +567,17 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         if any(key in lower for key in ("memory", "skill")):
             return "memory"
         return "other"
+
+    @staticmethod
+    def _tool_runtime_note(name: str) -> str:
+        lower = name.lower()
+        if lower in {"exec", "shell", "bash"} or "exec" in lower:
+            return "prefer read-only checks first; avoid destructive commands"
+        if lower in {"edit_file", "write_file"} or ("edit" in lower and "file" in lower):
+            return "read target first and verify path before modifying"
+        if lower == "message" or "message" in lower:
+            return "use only when sending to chat is intended; avoid duplicate replies"
+        return ""
 
     # Max dimension (px) and file size (bytes) for images sent to LLM
     _IMAGE_MAX_DIM = 1024
