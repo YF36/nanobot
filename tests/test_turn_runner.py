@@ -205,6 +205,8 @@ async def test_turn_runner_emits_minimal_events_and_keeps_progress() -> None:
     assert tools_used == ["exec"]
     assert [e["type"] for e in events] == ["turn_start", "tool_start", "tool_end", "turn_end"]
     assert [e["sequence"] for e in events] == [1, 2, 3, 4]
+    assert all(e.get("namespace") == "nanobot.turn" for e in events)
+    assert all(e.get("version") == 1 for e in events)
     assert all(isinstance(e.get("timestamp_ms"), int) and e["timestamp_ms"] > 0 for e in events)
     assert all(e.get("source") == "turn_runner" for e in events)
     turn_ids = {e.get("turn_id") for e in events}

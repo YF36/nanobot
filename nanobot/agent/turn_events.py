@@ -8,6 +8,8 @@ TURN_EVENT_TURN_START = "turn_start"
 TURN_EVENT_TOOL_START = "tool_start"
 TURN_EVENT_TOOL_END = "tool_end"
 TURN_EVENT_TURN_END = "turn_end"
+TURN_EVENT_NAMESPACE = "nanobot.turn"
+TURN_EVENT_SCHEMA_VERSION = 1
 
 TurnEventType: TypeAlias = Literal[
     "turn_start",
@@ -18,6 +20,8 @@ TurnEventType: TypeAlias = Literal[
 
 
 class BaseTurnEvent(TypedDict):
+    namespace: str
+    version: int
     type: TurnEventType
     turn_id: str
     sequence: int
@@ -77,6 +81,8 @@ TurnEventCallback: TypeAlias = Callable[[TurnEventPayload], Awaitable[None]]
 def turn_event_trace_fields(event: TurnEventPayload) -> dict[str, Any]:
     """Common trace fields for event logging sinks."""
     return {
+        "namespace": event.get("namespace"),
+        "version": event.get("version"),
         "source": event.get("source"),
         "turn_id": event.get("turn_id"),
         "sequence": event.get("sequence"),

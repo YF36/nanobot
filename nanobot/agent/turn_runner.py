@@ -13,6 +13,8 @@ from nanobot.agent.turn_events import (
     TURN_EVENT_TOOL_END,
     TURN_EVENT_TOOL_START,
     TURN_EVENT_TURN_END,
+    TURN_EVENT_NAMESPACE,
+    TURN_EVENT_SCHEMA_VERSION,
     TURN_EVENT_TURN_START,
     TurnEventCallback,
     TurnEventPayload,
@@ -320,6 +322,8 @@ class TurnRunner:
                 return
             event_sequence += 1
             event = cast(TurnEventPayload, {
+                "namespace": TURN_EVENT_NAMESPACE,
+                "version": TURN_EVENT_SCHEMA_VERSION,
                 "turn_id": turn_id,
                 "sequence": event_sequence,
                 "timestamp_ms": int(time.time() * 1000),
