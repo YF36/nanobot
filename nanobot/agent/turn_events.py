@@ -17,12 +17,26 @@ TurnEventType: TypeAlias = Literal[
     "tool_end",
     "turn_end",
 ]
+TurnEventKind: TypeAlias = Literal[
+    "turn.start",
+    "tool.start",
+    "tool.end",
+    "turn.end",
+]
+
+_TURN_EVENT_KIND_MAP: dict[str, str] = {
+    TURN_EVENT_TURN_START: "turn.start",
+    TURN_EVENT_TOOL_START: "tool.start",
+    TURN_EVENT_TOOL_END: "tool.end",
+    TURN_EVENT_TURN_END: "turn.end",
+}
 
 
 class BaseTurnEvent(TypedDict):
     namespace: str
     version: int
     type: TurnEventType
+    kind: TurnEventKind
     turn_id: str
     sequence: int
     timestamp_ms: int
@@ -87,3 +101,8 @@ def turn_event_trace_fields(event: TurnEventPayload) -> dict[str, Any]:
         "turn_id": event.get("turn_id"),
         "sequence": event.get("sequence"),
     }
+
+
+def turn_event_kind(event_type: str) -> str:
+    """Return hierarchical event kind for a legacy flat event type."""
+    return _TURN_EVENT_KIND_MAP.get(event_type, event_type.replace("_", "."))

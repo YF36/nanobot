@@ -18,6 +18,7 @@ from nanobot.agent.turn_events import (
     TURN_EVENT_TURN_START,
     TurnEventCallback,
     TurnEventPayload,
+    turn_event_kind,
 )
 
 logger = get_logger(__name__)
@@ -321,9 +322,11 @@ class TurnRunner:
             if not on_event:
                 return
             event_sequence += 1
+            payload_type = str(payload.get("type", ""))
             event = cast(TurnEventPayload, {
                 "namespace": TURN_EVENT_NAMESPACE,
                 "version": TURN_EVENT_SCHEMA_VERSION,
+                "kind": turn_event_kind(payload_type),
                 "turn_id": turn_id,
                 "sequence": event_sequence,
                 "timestamp_ms": int(time.time() * 1000),
