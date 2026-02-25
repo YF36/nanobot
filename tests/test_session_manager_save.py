@@ -44,3 +44,23 @@ def test_save_writes_when_last_consolidated_changes(monkeypatch, tmp_path: Path)
 
     assert writes == [1]
 
+
+def test_save_writes_atomically_and_reloads(tmp_path: Path) -> None:
+    manager = SessionManager(Path(tmp_path))
+    session = manager.get_or_create("cli:test")
+    session.add_message("user", "hello")
+    session.add_message("assistant", "world")
+    session.last_consolidated = 1
+
+    manager.save(session)
+
+    path = manager._get_session_path("cli:test")
+    assert path.exists()
+    assert not any(p.name.startswith(f".{path.name}.tmp-") for p in path.parent.iterdir())
+
+    manager.invalidate("cli:test")
+    loaded = manager.get_or_create("cli:test")
+    assert len(loaded.messages) == 2
+    assert loaded.messages[0]["content"] == "hello"
+    assert loaded.messages[1]["content"] == "world"
+    assert loaded.last_consolidated == 1

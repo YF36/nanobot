@@ -1,6 +1,7 @@
 """Session management for conversation history."""
 
 import json
+import os
 import shutil
 import time
 from pathlib import Path
@@ -186,8 +187,10 @@ class SessionManager:
 
     @staticmethod
     def _write_session_file(path: Path, session: Session) -> None:
-        """Write the full session JSONL snapshot to disk."""
-        with open(path, "w", encoding="utf-8") as f:
+        """Write the full session JSONL snapshot to disk atomically."""
+        tmp_name = f".{path.name}.tmp-{os.getpid()}"
+        tmp_path = path.with_name(tmp_name)
+        with open(tmp_path, "w", encoding="utf-8") as f:
             metadata_line = {
                 "_type": "metadata",
                 "key": session.key,
@@ -199,6 +202,9 @@ class SessionManager:
             f.write(json.dumps(metadata_line, ensure_ascii=False) + "\n")
             for msg in session.messages:
                 f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        tmp_path.replace(path)
     
     def save(self, session: Session) -> None:
         """Save a session to disk."""
