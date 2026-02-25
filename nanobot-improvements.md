@@ -402,6 +402,11 @@
 - 已落地（部分）：`steering/follow-up` 最小版
   - 同 session `follow-up` 排队串行处理
   - 工具执行后检测到 pending follow-up 时提前结束当前 turn（`steer v1`）
+- 已落地（部分）：`Phase 3-2` 最小版（`TurnRunner` LLM 调用自动重试 + overflow compaction fallback）
+  - transient 异常/`finish_reason=error` 的有限重试
+  - 上下文超限错误的额外 compaction 重试
+  - `turn_end` 事件携带 LLM 重试统计（retry 次数、overflow compaction 次数）
+  - 已进一步细化 retry policy：仅对明确瞬时错误重试；认证/权限/请求类错误不重试（fatal）
 
 ### 工具运行时与兼容层
 
@@ -441,6 +446,7 @@
 - 已落地：补充 `ToolRegistry` 审计 `detail_op` 在 `edit_file` / `exec` / `message` / `spawn` 的真实工具覆盖
 - 已落地：补充 `SessionManager.save()` 去重/原子写/周期汇总观测测试
 - 已落地：补充 `list_sessions()` metadata 缓存命中/失效与坏文件 debug 日志测试
+- 已落地：补充 `TurnRunner` LLM 自动重试与 overflow compaction fallback 测试
 - 已验证：Phase 2 回归基线（选定 pytest 子集）`219 passed`
 
 ### 代表性提交（节选）
@@ -468,6 +474,9 @@
 - `fa0fa27` `refactor unify structured tool details constants`
 - `090ef93` `feat queue follow-up messages per session`
 - `d0c3069` `feat interrupt turns for pending follow-up messages`
+- `f93ad15` `feat retry llm chat with overflow compaction fallback`
+- `e57dde4` `feat emit llm retry metrics in turn events`
+- `c561bdc` `refactor narrow llm retry policy to transient errors`
 
 ## Phase 3（能力升级）
 
@@ -475,10 +484,10 @@
 2. 自动重试 + overflow 自动 compact/重试
 3. 动态工具集与 system prompt 联动
 
-状态（截至 2026-02-25）：部分完成（1/3）
+状态（截至 2026-02-25）：部分完成（2/3）
 
 - 已部分完成：`steering/follow-up`（follow-up 队列 + `steer v1` 工具后让出）
-- 未开始：自动重试 + overflow 自动 compact/重试
+- 已部分完成：自动重试 + overflow 自动 compact/重试（`TurnRunner` 最小版 + 事件重试指标）
 - 未开始：动态工具集与 system prompt 联动
 
 ## Phase 4（更长期）
