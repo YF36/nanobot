@@ -115,11 +115,35 @@ def turn_event_kind(event_type: str) -> str:
 TURN_EVENT_CAPABILITIES = {
     "namespace": TURN_EVENT_NAMESPACE,
     "version": TURN_EVENT_SCHEMA_VERSION,
+    "base_fields": ["namespace", "version", "type", "kind", "turn_id", "sequence", "timestamp_ms", "source"],
     "events": [
-        {"type": TURN_EVENT_TURN_START, "kind": TURN_EVENT_KIND_TURN_START},
-        {"type": TURN_EVENT_TOOL_START, "kind": TURN_EVENT_KIND_TOOL_START},
-        {"type": TURN_EVENT_TOOL_END, "kind": TURN_EVENT_KIND_TOOL_END},
-        {"type": TURN_EVENT_TURN_END, "kind": TURN_EVENT_KIND_TURN_END},
+        {
+            "type": TURN_EVENT_TURN_START,
+            "kind": TURN_EVENT_KIND_TURN_START,
+            "fields": ["initial_message_count", "max_iterations"],
+        },
+        {
+            "type": TURN_EVENT_TOOL_START,
+            "kind": TURN_EVENT_KIND_TOOL_START,
+            "fields": ["iteration", "tool", "tool_call_id", "arguments"],
+        },
+        {
+            "type": TURN_EVENT_TOOL_END,
+            "kind": TURN_EVENT_KIND_TOOL_END,
+            "fields": ["iteration", "tool", "tool_call_id", "is_error", "has_details", "detail_op"],
+        },
+        {
+            "type": TURN_EVENT_TURN_END,
+            "kind": TURN_EVENT_KIND_TURN_END,
+            "fields": [
+                "iterations",
+                "tool_count",
+                "completed",
+                "max_iterations_reached",
+                "interrupted_for_followup",
+                "llm_retry_count",
+            ],
+        },
     ],
 }
 
@@ -129,5 +153,6 @@ def turn_event_capabilities() -> dict[str, Any]:
     return {
         "namespace": TURN_EVENT_CAPABILITIES["namespace"],
         "version": TURN_EVENT_CAPABILITIES["version"],
+        "base_fields": list(TURN_EVENT_CAPABILITIES["base_fields"]),
         "events": [dict(item) for item in TURN_EVENT_CAPABILITIES["events"]],
     }
