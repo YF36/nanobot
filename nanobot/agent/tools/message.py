@@ -3,6 +3,7 @@
 from typing import Any, Awaitable, Callable
 
 from nanobot.agent.tools.base import Tool, ToolExecutionResult
+from nanobot.agent.tools.tool_details import OP_MESSAGE, details_with_op
 from nanobot.bus.events import OutboundMessage
 
 
@@ -92,26 +93,26 @@ class MessageTool(Tool):
         if not channel or not chat_id:
             return ToolExecutionResult(
                 text="Error: No target channel/chat specified",
-                details={
-                    "op": "message",
-                    "channel": channel,
-                    "chat_id": chat_id,
-                    "attachment_count": len(attachments),
-                    "sent": False,
-                },
+                details=details_with_op(
+                    OP_MESSAGE,
+                    channel=channel,
+                    chat_id=chat_id,
+                    attachment_count=len(attachments),
+                    sent=False,
+                ),
                 is_error=True,
             )
 
         if not self._send_callback:
             return ToolExecutionResult(
                 text="Error: Message sending not configured",
-                details={
-                    "op": "message",
-                    "channel": channel,
-                    "chat_id": chat_id,
-                    "attachment_count": len(attachments),
-                    "sent": False,
-                },
+                details=details_with_op(
+                    OP_MESSAGE,
+                    channel=channel,
+                    chat_id=chat_id,
+                    attachment_count=len(attachments),
+                    sent=False,
+                ),
                 is_error=True,
             )
 
@@ -131,26 +132,26 @@ class MessageTool(Tool):
             media_info = f" with {len(media)} attachments" if media else ""
             return ToolExecutionResult(
                 text=f"Message sent to {channel}:{chat_id}{media_info}",
-                details={
-                    "op": "message",
-                    "channel": channel,
-                    "chat_id": chat_id,
-                    "message_id": message_id,
-                    "attachment_count": len(attachments),
-                    "sent": True,
-                },
+                details=details_with_op(
+                    OP_MESSAGE,
+                    channel=channel,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    attachment_count=len(attachments),
+                    sent=True,
+                ),
             )
         except Exception as e:
             return ToolExecutionResult(
                 text=f"Error sending message: {str(e)}",
-                details={
-                    "op": "message",
-                    "channel": channel,
-                    "chat_id": chat_id,
-                    "message_id": message_id,
-                    "attachment_count": len(attachments),
-                    "sent": False,
-                    "exception_type": type(e).__name__,
-                },
+                details=details_with_op(
+                    OP_MESSAGE,
+                    channel=channel,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    attachment_count=len(attachments),
+                    sent=False,
+                    exception_type=type(e).__name__,
+                ),
                 is_error=True,
             )

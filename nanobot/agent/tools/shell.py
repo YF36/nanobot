@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from nanobot.agent.tools.base import Tool, ToolExecutionResult
+from nanobot.agent.tools.tool_details import OP_EXEC, details_with_op
 from nanobot.logging import get_logger
 
 audit_log = get_logger("nanobot.audit")
@@ -68,28 +69,23 @@ class ShellExecutor:
                 pass
             return ToolExecutionResult(
                 text=f"Error: Command timed out after {timeout} seconds",
-                details={
-                    "op": "exec",
-                    "cwd": cwd,
-                    "timed_out": True,
-                    "timeout_s": timeout,
-                },
+                details=details_with_op(OP_EXEC, cwd=cwd, timed_out=True, timeout_s=timeout),
                 is_error=True,
             )
 
         text, truncated = formatter.format(stdout, stderr, process.returncode)
         return ToolExecutionResult(
             text=text,
-            details={
-                "op": "exec",
-                "cwd": cwd,
-                "timed_out": False,
-                "timeout_s": timeout,
-                "exit_code": process.returncode,
-                "output_truncated": truncated,
-                "had_stdout": bool(stdout),
-                "had_stderr": bool(stderr and stderr.strip()),
-            },
+            details=details_with_op(
+                OP_EXEC,
+                cwd=cwd,
+                timed_out=False,
+                timeout_s=timeout,
+                exit_code=process.returncode,
+                output_truncated=truncated,
+                had_stdout=bool(stdout),
+                had_stderr=bool(stderr and stderr.strip()),
+            ),
             is_error=bool(process.returncode not in (None, 0)),
         )
 
@@ -271,12 +267,7 @@ class ExecTool(Tool):
         if guard_error:
             return ToolExecutionResult(
                 text=guard_error,
-                details={
-                    "op": "exec",
-                    "cwd": cwd,
-                    "blocked": True,
-                    "timed_out": False,
-                },
+                details=details_with_op(OP_EXEC, cwd=cwd, blocked=True, timed_out=False),
                 is_error=True,
             )
 
@@ -288,12 +279,12 @@ class ExecTool(Tool):
         except Exception as e:
             return ToolExecutionResult(
                 text=f"Error executing command: {str(e)}",
-                details={
-                    "op": "exec",
-                    "cwd": cwd,
-                    "timed_out": False,
-                    "exception_type": type(e).__name__,
-                },
+                details=details_with_op(
+                    OP_EXEC,
+                    cwd=cwd,
+                    timed_out=False,
+                    exception_type=type(e).__name__,
+                ),
                 is_error=True,
             )
 

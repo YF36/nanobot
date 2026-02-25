@@ -3,6 +3,7 @@
 from typing import Any, TYPE_CHECKING
 
 from nanobot.agent.tools.base import Tool, ToolExecutionResult
+from nanobot.agent.tools.tool_details import OP_SPAWN, details_with_op
 
 if TYPE_CHECKING:
     from nanobot.agent.subagent import SubagentManager
@@ -66,13 +67,13 @@ class SpawnTool(Tool):
         accepted = not text.lower().startswith("cannot spawn subagent")
         return ToolExecutionResult(
             text=text,
-            details={
-                "op": "spawn",
-                "accepted": accepted,
-                "origin_channel": self._origin_channel,
-                "origin_chat_id": self._origin_chat_id,
-                "label": label,
-                "task_len": len(task),
-            },
+            details=details_with_op(
+                OP_SPAWN,
+                accepted=accepted,
+                origin_channel=self._origin_channel,
+                origin_chat_id=self._origin_chat_id,
+                label=label,
+                task_len=len(task),
+            ),
             is_error=not accepted,
         )
