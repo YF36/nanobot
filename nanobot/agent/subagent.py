@@ -264,7 +264,11 @@ class SubagentManager:
                 strip_think=lambda text: text,
                 tool_hint=lambda _: "",
             )
-            final_result, _, _ = await runner.run(messages, event_source="subagent")
+            final_result, _, _ = await runner.run(
+                messages,
+                on_event=self._on_turn_event,
+                event_source="subagent",
+            )
 
             if final_result is None:
                 final_result = "Task completed but no final response was generated."
@@ -299,6 +303,32 @@ class SubagentManager:
     def _build_subagent_prompt(self, task: str) -> str:
         """Build a focused system prompt for the subagent."""
         return _SubagentPromptBuilder.build(self.workspace, task)
+
+    async def _on_turn_event(self, event: dict[str, Any]) -> None:
+        """Internal subagent turn event sink for debug/observability."""
+        event_type = event.get("type", "unknown")
+        if event_type in {"tool_start", "tool_end"}:
+            logger.debug(
+                "subagent_turn_event",
+                event_type=event_type,
+                source=event.get("source"),
+                turn_id=event.get("turn_id"),
+                sequence=event.get("sequence"),
+                tool=event.get("tool"),
+                iteration=event.get("iteration"),
+                tool_call_id=event.get("tool_call_id"),
+                is_error=event.get("is_error"),
+                detail_op=event.get("detail_op"),
+            )
+            return
+        logger.debug(
+            "subagent_turn_event",
+            event_type=event_type,
+            source=event.get("source"),
+            turn_id=event.get("turn_id"),
+            sequence=event.get("sequence"),
+            payload=event,
+        )
     
     def get_running_count(self) -> int:
         """Return the number of currently running subagents."""
