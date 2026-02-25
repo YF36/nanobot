@@ -197,6 +197,7 @@ def test_build_messages_includes_runtime_tool_catalog_when_provided(tmp_path) ->
                 "parameters": {
                     "type": "object",
                     "properties": {"path": {"type": "string"}, "offset": {"type": "integer"}},
+                    "required": ["path"],
                 },
             },
         }
@@ -222,6 +223,7 @@ def test_build_messages_includes_runtime_tool_catalog_when_provided(tmp_path) ->
     assert "## Runtime Tool Catalog" in joined
     assert "`read_file`" in joined
     assert "params: path, offset" in joined
+    assert "required: path" in joined
 
 
 def test_build_messages_omits_runtime_tool_catalog_when_no_tools(tmp_path) -> None:

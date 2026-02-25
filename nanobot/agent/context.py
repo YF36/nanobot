@@ -493,15 +493,21 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                 desc_text = compact_desc[:120] + ("..." if len(compact_desc) > 120 else "")
             params = fn.get("parameters")
             param_names: list[str] = []
+            required_names: list[str] = []
             if isinstance(params, dict):
                 props = params.get("properties")
                 if isinstance(props, dict):
                     param_names = [str(k) for k in list(props.keys())[:4]]
+                required = params.get("required")
+                if isinstance(required, list):
+                    required_names = [str(k) for k in required[:3]]
             suffix_parts: list[str] = []
             if desc_text:
                 suffix_parts.append(desc_text)
             if param_names:
                 suffix_parts.append("params: " + ", ".join(param_names))
+            if required_names:
+                suffix_parts.append("required: " + ", ".join(required_names))
             line = f"- `{name}`"
             if suffix_parts:
                 line += " — " + " | ".join(suffix_parts)
