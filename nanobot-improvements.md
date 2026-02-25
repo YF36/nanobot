@@ -333,6 +333,30 @@
 - overflow 恢复统计
 - 并发/中断策略
 
+## G2. 记忆系统可引入 Daily Files 作为短期→中期过渡层（中优先级，设计建议）
+
+结合 `openclaw` / `pi-mono` 一类实践，建议在 `memory/` 目录下引入按天的记忆文件（例如 `memory/2026-02-25.md`），作为 `MEMORY.md` 与 `HISTORY.md` 之间的过渡层。
+
+动机（解决当前 `MEMORY.md` 污染问题）：
+
+- `MEMORY.md` 应主要承载长期稳定事实（用户偏好、长期项目上下文、稳定环境信息）。
+- 近期对话主题、知识性问答内容、工具执行摘要等更适合进入每日文件，而不是常驻 `MEMORY.md`。
+
+建议分层（保持 nanobot 极简）：
+
+- `memory/MEMORY.md`：长期事实（严格准入，低频更新）
+- `memory/YYYY-MM-DD.md`：每日摘要（对话主题、关键决策、工具活动、重要事件）
+- `memory/HISTORY.md`：长期可 grep 流水/归档（更粗粒度）
+
+设计要点（实施时）：
+
+1. Daily file 写摘要而非原始对话全文，避免重复 `HISTORY.md`。
+2. `MEMORY` 提炼优先从 daily file 归纳，而不是直接从原始消息大量搬运。
+3. Daily file 默认不常驻 system prompt，仅在需要回顾近期上下文时按需读取。
+4. 可加保留/归档策略（如保留最近 N 天 daily files，之后压缩进 `HISTORY.md`）。
+
+这样可以在不推翻 nanobot 现有双文件记忆思路的前提下，显著降低 `MEMORY.md` 噪声与 prompt 污染。
+
 ## H. `SessionManager.save()` 每次全量重写 JSONL（中优先级）
 
 `SessionManager.save()` 每次都会重写整个文件（`nanobot/nanobot/session/manager.py:155`）。
