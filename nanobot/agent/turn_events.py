@@ -10,6 +10,10 @@ TURN_EVENT_TOOL_END = "tool_end"
 TURN_EVENT_TURN_END = "turn_end"
 TURN_EVENT_NAMESPACE = "nanobot.turn"
 TURN_EVENT_SCHEMA_VERSION = 1
+TURN_EVENT_KIND_TURN_START = "turn.start"
+TURN_EVENT_KIND_TOOL_START = "tool.start"
+TURN_EVENT_KIND_TOOL_END = "tool.end"
+TURN_EVENT_KIND_TURN_END = "turn.end"
 
 TurnEventType: TypeAlias = Literal[
     "turn_start",
@@ -25,10 +29,10 @@ TurnEventKind: TypeAlias = Literal[
 ]
 
 _TURN_EVENT_KIND_MAP: dict[str, str] = {
-    TURN_EVENT_TURN_START: "turn.start",
-    TURN_EVENT_TOOL_START: "tool.start",
-    TURN_EVENT_TOOL_END: "tool.end",
-    TURN_EVENT_TURN_END: "turn.end",
+    TURN_EVENT_TURN_START: TURN_EVENT_KIND_TURN_START,
+    TURN_EVENT_TOOL_START: TURN_EVENT_KIND_TOOL_START,
+    TURN_EVENT_TOOL_END: TURN_EVENT_KIND_TOOL_END,
+    TURN_EVENT_TURN_END: TURN_EVENT_KIND_TURN_END,
 }
 
 
