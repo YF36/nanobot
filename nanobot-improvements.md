@@ -407,6 +407,10 @@
   - 上下文超限错误的额外 compaction 重试
   - `turn_end` 事件携带 LLM 重试统计（retry 次数、overflow compaction 次数）
   - 已进一步细化 retry policy：仅对明确瞬时错误重试；认证/权限/请求类错误不重试（fatal）
+  - `turn_end` 事件携带 `finish_reason=error` 分类命中统计（`overflow/retryable/fatal`）
+- 已落地（部分）：`Phase 3-3` 最小版（动态工具集与 system prompt 联动）
+  - `ContextBuilder.build_messages(...)` 支持基于运行时注册工具生成 `Runtime Tool Catalog`
+  - `TurnMessageBuilder` 透传 `tools.get_definitions()`，避免 system prompt 与真实工具集脱节
 
 ### 工具运行时与兼容层
 
@@ -477,6 +481,8 @@
 - `f93ad15` `feat retry llm chat with overflow compaction fallback`
 - `e57dde4` `feat emit llm retry metrics in turn events`
 - `c561bdc` `refactor narrow llm retry policy to transient errors`
+- `ab3276b` `feat track llm error classification metrics`
+- `d131171` `feat add runtime tool catalog to system prompt`
 
 ## Phase 3（能力升级）
 
@@ -484,11 +490,11 @@
 2. 自动重试 + overflow 自动 compact/重试
 3. 动态工具集与 system prompt 联动
 
-状态（截至 2026-02-25）：部分完成（2/3）
+状态（截至 2026-02-25）：部分完成（3/3，含最小版）
 
 - 已部分完成：`steering/follow-up`（follow-up 队列 + `steer v1` 工具后让出）
 - 已部分完成：自动重试 + overflow 自动 compact/重试（`TurnRunner` 最小版 + 事件重试指标）
-- 未开始：动态工具集与 system prompt 联动
+- 已部分完成：动态工具集与 system prompt 联动（最小版运行时工具目录注入）
 
 ## Phase 4（更长期）
 
