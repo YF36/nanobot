@@ -72,6 +72,66 @@ def _is_context_length_error(text: str | None) -> bool:
     )
 
 
+def _is_retryable_error_text(text: str | None) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    transient_markers = (
+        "timed out",
+        "timeout",
+        "temporar",
+        "try again",
+        "rate limit",
+        "429",
+        "service unavailable",
+        "overloaded",
+        "connection reset",
+        "connection aborted",
+        "connection refused",
+        "network error",
+        "upstream failure",
+    )
+    return any(marker in lower for marker in transient_markers)
+
+
+def _is_fatal_error_text(text: str | None) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    fatal_markers = (
+        "invalid api key",
+        "authentication",
+        "unauthorized",
+        "forbidden",
+        "permission denied",
+        "bad request",
+        "invalid request",
+        "model not found",
+        "unsupported model",
+        "quota exceeded",
+    )
+    return any(marker in lower for marker in fatal_markers)
+
+
+def _should_retry_chat_exception(error: Exception) -> bool:
+    if isinstance(error, (asyncio.TimeoutError, TimeoutError, ConnectionError)):
+        return True
+    text = str(error)
+    if _is_fatal_error_text(text):
+        return False
+    return _is_retryable_error_text(text)
+
+
+def _classify_error_finish(content: str | None) -> str:
+    if _is_context_length_error(content):
+        return "overflow"
+    if _is_fatal_error_text(content):
+        return "fatal"
+    if _is_retryable_error_text(content):
+        return "retryable"
+    return "fatal"
+
+
 class TurnRunner:
     """Run a single agent turn including iterative tool calls."""
 
@@ -140,7 +200,16 @@ class TurnRunner:
                     max_tokens=self.max_tokens,
                 )
             except Exception as e:
+                retryable_exception = _should_retry_chat_exception(e)
                 if attempt >= _CHAT_RETRY_MAX_ATTEMPTS:
+                    raise
+                if not retryable_exception:
+                    logger.warning(
+                        "llm_chat_no_retry",
+                        attempt=attempt,
+                        error_type=type(e).__name__,
+                        reason="fatal_exception",
+                    )
                     raise
                 exception_retries += 1
                 delay = _CHAT_RETRY_BASE_DELAY_S * (2 ** (attempt - 1))
@@ -156,7 +225,8 @@ class TurnRunner:
 
             if getattr(response, "finish_reason", "") == "error":
                 content = getattr(response, "content", None)
-                if _is_context_length_error(content) and overflow_compactions < _CONTEXT_OVERFLOW_EXTRA_COMPACTIONS:
+                error_finish_class = _classify_error_finish(content)
+                if error_finish_class == "overflow" and overflow_compactions < _CONTEXT_OVERFLOW_EXTRA_COMPACTIONS:
                     overflow_compactions += 1
                     guarded_messages, guarded_start = self.guard_loop_messages(local_messages, local_turn_start)
                     if guarded_messages == local_messages and guarded_start == local_turn_start:
@@ -171,7 +241,7 @@ class TurnRunner:
                         )
                         local_messages, local_turn_start = guarded_messages, guarded_start
                         continue
-                if attempt < _CHAT_RETRY_MAX_ATTEMPTS:
+                if error_finish_class == "retryable" and attempt < _CHAT_RETRY_MAX_ATTEMPTS:
                     error_finish_retries += 1
                     delay = _CHAT_RETRY_BASE_DELAY_S * (2 ** (attempt - 1))
                     logger.warning(
@@ -179,10 +249,16 @@ class TurnRunner:
                         attempt=attempt,
                         delay_s=delay,
                         reason="finish_reason_error",
-                        context_overflow=_is_context_length_error(content),
+                        error_finish_class=error_finish_class,
                     )
                     await asyncio.sleep(delay)
                     continue
+                if error_finish_class == "fatal":
+                    logger.warning(
+                        "llm_chat_no_retry",
+                        attempt=attempt,
+                        reason="fatal_finish_reason_error",
+                    )
 
             return response, local_messages, local_turn_start, {
                 "llm_retry_count": exception_retries + error_finish_retries,

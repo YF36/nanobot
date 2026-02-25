@@ -124,6 +124,53 @@ class _OverflowThenSuccessProvider:
         )
 
 
+class _FatalExceptionProvider:
+    def __init__(self):
+        self.calls = 0
+
+    async def chat(self, **kwargs):
+        self.calls += 1
+        raise RuntimeError("Invalid API key provided")
+
+
+class _FatalErrorFinishProvider:
+    def __init__(self):
+        self.calls = 0
+
+    async def chat(self, **kwargs):
+        self.calls += 1
+        return SimpleNamespace(
+            has_tool_calls=False,
+            content="Authentication failed: invalid api key",
+            tool_calls=[],
+            reasoning_content=None,
+            finish_reason="error",
+        )
+
+
+class _RetryableErrorFinishThenSuccessProvider:
+    def __init__(self):
+        self.calls = 0
+
+    async def chat(self, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            return SimpleNamespace(
+                has_tool_calls=False,
+                content="Service unavailable, please try again later",
+                tool_calls=[],
+                reasoning_content=None,
+                finish_reason="error",
+            )
+        return SimpleNamespace(
+            has_tool_calls=False,
+            content="Recovered after finish_reason error",
+            tool_calls=[],
+            reasoning_content=None,
+            finish_reason="stop",
+        )
+
+
 @pytest.mark.asyncio
 async def test_turn_runner_emits_minimal_events_and_keeps_progress() -> None:
     runner = TurnRunner(
@@ -289,3 +336,90 @@ async def test_turn_runner_retries_after_context_overflow_with_compaction() -> N
     assert tools_used == []
     assert messages[-1]["content"] == "After compaction"
     assert events[-1]["llm_overflow_compaction_retries"] == 1
+
+
+@pytest.mark.asyncio
+async def test_turn_runner_does_not_retry_fatal_provider_exception() -> None:
+    provider = _FatalExceptionProvider()
+    runner = TurnRunner(
+        provider=provider,
+        tools=_FakeTools(),
+        context_builder=_FakeContext(),
+        model="test",
+        temperature=0.0,
+        max_tokens=256,
+        max_iterations=2,
+        guard_loop_messages=lambda m, i: (m, i),
+        strip_think=lambda s: s,
+        tool_hint=lambda calls: f"Using {len(calls)} tool(s)",
+    )
+
+    with pytest.raises(RuntimeError, match="Invalid API key"):
+        await runner.run([{"role": "user", "content": "hello"}])
+
+    assert provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_turn_runner_does_not_retry_fatal_finish_reason_error() -> None:
+    provider = _FatalErrorFinishProvider()
+    runner = TurnRunner(
+        provider=provider,
+        tools=_FakeTools(),
+        context_builder=_FakeContext(),
+        model="test",
+        temperature=0.0,
+        max_tokens=256,
+        max_iterations=2,
+        guard_loop_messages=lambda m, i: (m, i),
+        strip_think=lambda s: s,
+        tool_hint=lambda calls: f"Using {len(calls)} tool(s)",
+    )
+    events: list[dict] = []
+
+    async def _on_event(event: dict) -> None:
+        events.append(event)
+
+    final_content, tools_used, messages = await runner.run(
+        [{"role": "user", "content": "hello"}],
+        on_event=_on_event,
+    )
+
+    assert provider.calls == 1
+    assert final_content == "Authentication failed: invalid api key"
+    assert tools_used == []
+    assert messages[-1]["content"] == "Authentication failed: invalid api key"
+    assert events[-1].get("llm_retry_count", 0) == 0
+    assert events[-1].get("llm_error_finish_retry_count", 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_turn_runner_retries_retryable_finish_reason_error() -> None:
+    provider = _RetryableErrorFinishThenSuccessProvider()
+    runner = TurnRunner(
+        provider=provider,
+        tools=_FakeTools(),
+        context_builder=_FakeContext(),
+        model="test",
+        temperature=0.0,
+        max_tokens=256,
+        max_iterations=2,
+        guard_loop_messages=lambda m, i: (m, i),
+        strip_think=lambda s: s,
+        tool_hint=lambda calls: f"Using {len(calls)} tool(s)",
+    )
+    events: list[dict] = []
+
+    async def _on_event(event: dict) -> None:
+        events.append(event)
+
+    final_content, tools_used, _ = await runner.run(
+        [{"role": "user", "content": "hello"}],
+        on_event=_on_event,
+    )
+
+    assert provider.calls == 2
+    assert final_content == "Recovered after finish_reason error"
+    assert tools_used == []
+    assert events[-1]["llm_retry_count"] == 1
+    assert events[-1]["llm_error_finish_retry_count"] == 1
