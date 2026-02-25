@@ -57,11 +57,28 @@ class ContextBuilder:
     _TOOL_CATALOG_COMPACT_THRESHOLD = 10
     _TOOL_CATALOG_MAX_CHARS_BEFORE_COMPACT = 2200
 
-    def __init__(self, workspace: Path, max_context_tokens: int | None = None):
+    def __init__(
+        self,
+        workspace: Path,
+        max_context_tokens: int | None = None,
+        *,
+        tool_catalog_compact_threshold: int | None = None,
+        tool_catalog_max_chars_before_compact: int | None = None,
+    ):
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
         self._max_context_tokens = max_context_tokens or self._DEFAULT_MAX_CONTEXT_TOKENS
+        self._tool_catalog_compact_threshold = (
+            tool_catalog_compact_threshold
+            if tool_catalog_compact_threshold is not None
+            else self._TOOL_CATALOG_COMPACT_THRESHOLD
+        )
+        self._tool_catalog_max_chars_before_compact = (
+            tool_catalog_max_chars_before_compact
+            if tool_catalog_max_chars_before_compact is not None
+            else self._TOOL_CATALOG_MAX_CHARS_BEFORE_COMPACT
+        )
     
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """
@@ -469,8 +486,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
 
         return messages
 
-    @staticmethod
-    def _build_tool_runtime_prompt(tool_definitions: list[dict[str, Any]] | None) -> str:
+    def _build_tool_runtime_prompt(self, tool_definitions: list[dict[str, Any]] | None) -> str:
         """Build a compact summary of currently registered tools for system prompt alignment."""
         if not tool_definitions:
             return ""
@@ -568,13 +584,13 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                 + "\n".join(lines)
             )
 
-        compact_mode = len(tool_definitions) > ContextBuilder._TOOL_CATALOG_COMPACT_THRESHOLD
+        compact_mode = len(tool_definitions) > self._tool_catalog_compact_threshold
         grouped_lines, total_seen = _collect_lines(compact_mode=compact_mode)
         rendered = _render(grouped_lines, compact_mode=compact_mode, total_seen=total_seen)
         if (
             not compact_mode
             and rendered
-            and len(rendered) > ContextBuilder._TOOL_CATALOG_MAX_CHARS_BEFORE_COMPACT
+            and len(rendered) > self._tool_catalog_max_chars_before_compact
         ):
             compact_mode = True
             grouped_lines, total_seen = _collect_lines(compact_mode=True)
