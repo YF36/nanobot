@@ -110,3 +110,24 @@ def turn_event_trace_fields(event: TurnEventPayload) -> dict[str, Any]:
 def turn_event_kind(event_type: str) -> str:
     """Return hierarchical event kind for a legacy flat event type."""
     return _TURN_EVENT_KIND_MAP.get(event_type, event_type.replace("_", "."))
+
+
+TURN_EVENT_CAPABILITIES = {
+    "namespace": TURN_EVENT_NAMESPACE,
+    "version": TURN_EVENT_SCHEMA_VERSION,
+    "events": [
+        {"type": TURN_EVENT_TURN_START, "kind": TURN_EVENT_KIND_TURN_START},
+        {"type": TURN_EVENT_TOOL_START, "kind": TURN_EVENT_KIND_TOOL_START},
+        {"type": TURN_EVENT_TOOL_END, "kind": TURN_EVENT_KIND_TOOL_END},
+        {"type": TURN_EVENT_TURN_END, "kind": TURN_EVENT_KIND_TURN_END},
+    ],
+}
+
+
+def turn_event_capabilities() -> dict[str, Any]:
+    """Return a copy of the supported internal turn-event protocol manifest."""
+    return {
+        "namespace": TURN_EVENT_CAPABILITIES["namespace"],
+        "version": TURN_EVENT_CAPABILITIES["version"],
+        "events": [dict(item) for item in TURN_EVENT_CAPABILITIES["events"]],
+    }
