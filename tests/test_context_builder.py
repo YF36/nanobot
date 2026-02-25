@@ -332,3 +332,38 @@ def test_build_messages_adds_high_risk_tool_notes(tmp_path) -> None:
 
     assert "`edit_file`" in joined
     assert "note: read target first and verify path before modifying" in joined
+
+
+def test_build_messages_sorts_tools_within_group_for_stability(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    tool_defs = [
+        {
+            "type": "function",
+            "function": {"name": "write_file", "description": "Write file.", "parameters": {"type": "object"}},
+        },
+        {
+            "type": "function",
+            "function": {"name": "edit_file", "description": "Edit file.", "parameters": {"type": "object"}},
+        },
+        {
+            "type": "function",
+            "function": {"name": "read_file", "description": "Read file.", "parameters": {"type": "object"}},
+        },
+    ]
+
+    messages = builder.build_messages(history=[], current_message="hi", tool_definitions=tool_defs)
+    content = messages[0]["content"]
+    if isinstance(content, list):
+        joined = "\n".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    else:
+        joined = str(content)
+
+    catalog = joined.split("## Runtime Tool Catalog", 1)[1]
+    read_pos = catalog.index("`read_file`")
+    edit_pos = catalog.index("`edit_file`")
+    write_pos = catalog.index("`write_file`")
+    assert edit_pos < read_pos < write_pos

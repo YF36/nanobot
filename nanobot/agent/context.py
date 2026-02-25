@@ -473,7 +473,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         if not tool_definitions:
             return ""
 
-        grouped_lines: dict[str, list[str]] = defaultdict(list)
+        grouped_lines: dict[str, list[tuple[str, str]]] = defaultdict(list)
         total_seen = 0
         max_tools = 20
         max_per_group = 6
@@ -516,7 +516,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                 line += " — " + " | ".join(suffix_parts)
             group = ContextBuilder._tool_runtime_group(name)
             if len(grouped_lines[group]) < max_per_group and total_seen < max_tools:
-                grouped_lines[group].append(line)
+                grouped_lines[group].append((name.lower(), line))
                 total_seen += 1
             if total_seen >= max_tools:
                 break
@@ -549,7 +549,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                 continue
             lines.append(f"### {labels[group]}")
             lines.append(f"_Guidance: {group_guidance[group]}_")
-            lines.extend(group_items)
+            lines.extend(line for _, line in sorted(group_items, key=lambda x: x[0]))
         omitted = max(0, len(tool_definitions) - total_seen)
         if omitted > 0:
             lines.append(f"- ...and {omitted} more tool(s) (not listed in prompt summary)")
