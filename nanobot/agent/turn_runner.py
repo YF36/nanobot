@@ -186,6 +186,9 @@ class TurnRunner:
         overflow_compactions = 0
         exception_retries = 0
         error_finish_retries = 0
+        error_finish_overflow_count = 0
+        error_finish_retryable_count = 0
+        error_finish_fatal_count = 0
         local_messages = messages
         local_turn_start = current_turn_start
 
@@ -209,6 +212,7 @@ class TurnRunner:
                         attempt=attempt,
                         error_type=type(e).__name__,
                         reason="fatal_exception",
+                        retryable=False,
                     )
                     raise
                 exception_retries += 1
@@ -219,6 +223,7 @@ class TurnRunner:
                     delay_s=delay,
                     error_type=type(e).__name__,
                     reason="exception",
+                    retryable=True,
                 )
                 await asyncio.sleep(delay)
                 continue
@@ -226,6 +231,17 @@ class TurnRunner:
             if getattr(response, "finish_reason", "") == "error":
                 content = getattr(response, "content", None)
                 error_finish_class = _classify_error_finish(content)
+                if error_finish_class == "overflow":
+                    error_finish_overflow_count += 1
+                elif error_finish_class == "retryable":
+                    error_finish_retryable_count += 1
+                elif error_finish_class == "fatal":
+                    error_finish_fatal_count += 1
+                logger.debug(
+                    "llm_finish_reason_error_classified",
+                    attempt=attempt,
+                    error_finish_class=error_finish_class,
+                )
                 if error_finish_class == "overflow" and overflow_compactions < _CONTEXT_OVERFLOW_EXTRA_COMPACTIONS:
                     overflow_compactions += 1
                     guarded_messages, guarded_start = self.guard_loop_messages(local_messages, local_turn_start)
@@ -265,6 +281,9 @@ class TurnRunner:
                 "llm_exception_retry_count": exception_retries,
                 "llm_error_finish_retry_count": error_finish_retries,
                 "llm_overflow_compaction_retries": overflow_compactions,
+                "llm_error_finish_overflow_count": error_finish_overflow_count,
+                "llm_error_finish_retryable_count": error_finish_retryable_count,
+                "llm_error_finish_fatal_count": error_finish_fatal_count,
             }
 
     async def run(
@@ -287,6 +306,9 @@ class TurnRunner:
             "llm_exception_retry_count": 0,
             "llm_error_finish_retry_count": 0,
             "llm_overflow_compaction_retries": 0,
+            "llm_error_finish_overflow_count": 0,
+            "llm_error_finish_retryable_count": 0,
+            "llm_error_finish_fatal_count": 0,
         }
         tools_used: list[str] = []
         turn_id = f"turn_{uuid.uuid4().hex[:12]}"

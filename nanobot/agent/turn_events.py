@@ -65,6 +65,9 @@ class TurnEndEvent(BaseTurnEvent):
     llm_exception_retry_count: NotRequired[int]
     llm_error_finish_retry_count: NotRequired[int]
     llm_overflow_compaction_retries: NotRequired[int]
+    llm_error_finish_overflow_count: NotRequired[int]
+    llm_error_finish_retryable_count: NotRequired[int]
+    llm_error_finish_fatal_count: NotRequired[int]
 
 
 TurnEventPayload: TypeAlias = TurnStartEvent | ToolStartEvent | ToolEndEvent | TurnEndEvent

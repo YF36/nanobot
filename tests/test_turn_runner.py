@@ -336,6 +336,9 @@ async def test_turn_runner_retries_after_context_overflow_with_compaction() -> N
     assert tools_used == []
     assert messages[-1]["content"] == "After compaction"
     assert events[-1]["llm_overflow_compaction_retries"] == 1
+    assert events[-1]["llm_error_finish_overflow_count"] == 1
+    assert events[-1].get("llm_error_finish_retryable_count", 0) == 0
+    assert events[-1].get("llm_error_finish_fatal_count", 0) == 0
 
 
 @pytest.mark.asyncio
@@ -391,6 +394,9 @@ async def test_turn_runner_does_not_retry_fatal_finish_reason_error() -> None:
     assert messages[-1]["content"] == "Authentication failed: invalid api key"
     assert events[-1].get("llm_retry_count", 0) == 0
     assert events[-1].get("llm_error_finish_retry_count", 0) == 0
+    assert events[-1]["llm_error_finish_fatal_count"] == 1
+    assert events[-1].get("llm_error_finish_retryable_count", 0) == 0
+    assert events[-1].get("llm_error_finish_overflow_count", 0) == 0
 
 
 @pytest.mark.asyncio
@@ -423,3 +429,6 @@ async def test_turn_runner_retries_retryable_finish_reason_error() -> None:
     assert tools_used == []
     assert events[-1]["llm_retry_count"] == 1
     assert events[-1]["llm_error_finish_retry_count"] == 1
+    assert events[-1]["llm_error_finish_retryable_count"] == 1
+    assert events[-1].get("llm_error_finish_fatal_count", 0) == 0
+    assert events[-1].get("llm_error_finish_overflow_count", 0) == 0
