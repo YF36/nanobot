@@ -97,6 +97,7 @@ class TurnRunner:
         iteration = 0
         final_content = None
         interrupted_for_followup = False
+        interruption_info: dict[str, Any] = {}
         tools_used: list[str] = []
         turn_id = f"turn_{uuid.uuid4().hex[:12]}"
         event_sequence = 0
@@ -203,15 +204,49 @@ class TurnRunner:
                     if should_interrupt_after_tool is not None:
                         should_interrupt = should_interrupt_after_tool()
                         if isinstance(should_interrupt, bool):
-                            interrupt_now = should_interrupt
+                            decision: dict[str, Any] = {"interrupt": should_interrupt}
                         else:
-                            interrupt_now = await should_interrupt
+                            resolved = await should_interrupt
+                            if isinstance(resolved, bool):
+                                decision = {"interrupt": resolved}
+                            elif isinstance(resolved, dict):
+                                decision = {**resolved}
+                                decision.setdefault("interrupt", True)
+                            else:
+                                decision = {"interrupt": bool(resolved)}
+                        interrupt_now = bool(decision.get("interrupt"))
                         if interrupt_now:
                             interrupted_for_followup = True
-                            final_content = (
-                                "A newer message arrived, so I paused this task and will handle the newer message next."
+                            interruption_info = {
+                                "reason": str(decision.get("reason") or "pending_followup"),
+                                "pending_followup_count": decision.get("pending_followup_count"),
+                                "next_followup_preview": decision.get("next_followup_preview"),
+                                "interrupted_at_iteration": iteration,
+                                "interrupted_after_tool": tool_call.name,
+                            }
+                            preview = interruption_info.get("next_followup_preview")
+                            pending_count = interruption_info.get("pending_followup_count")
+                            if isinstance(preview, str) and preview:
+                                final_content = (
+                                    "A newer message arrived, so I paused this task and will handle it next: "
+                                    f"{preview}"
+                                )
+                            elif isinstance(pending_count, int) and pending_count > 0:
+                                final_content = (
+                                    "A newer message arrived, so I paused this task and will handle the next "
+                                    f"queued message now ({pending_count} waiting)."
+                                )
+                            else:
+                                final_content = (
+                                    "A newer message arrived, so I paused this task and will handle the newer message next."
+                                )
+                            logger.info(
+                                "Turn interrupted for pending follow-up",
+                                tool=tool_call.name,
+                                iteration=iteration,
+                                pending_followup_count=interruption_info.get("pending_followup_count"),
+                                next_followup_preview=interruption_info.get("next_followup_preview"),
                             )
-                            logger.info("Turn interrupted for pending follow-up", tool=tool_call.name)
                             break
                 if interrupted_for_followup:
                     break
@@ -231,7 +266,7 @@ class TurnRunner:
                 "without completing the task. You can try breaking the task into smaller steps."
             )
         if on_event:
-            await _emit_event({
+            end_event: dict[str, Any] = {
                 "type": TURN_EVENT_TURN_END,
                 "iterations": iteration,
                 "tool_count": len(tools_used),
@@ -240,6 +275,18 @@ class TurnRunner:
                 "max_iterations_reached": iteration >= self.max_iterations and final_content is not None and (
                     final_content.startswith("I reached the maximum number of tool call iterations")
                 ),
-            })
+            }
+            if interrupted_for_followup:
+                if interruption_info.get("reason"):
+                    end_event["interruption_reason"] = interruption_info["reason"]
+                if interruption_info.get("interrupted_at_iteration") is not None:
+                    end_event["interrupted_at_iteration"] = interruption_info["interrupted_at_iteration"]
+                if interruption_info.get("interrupted_after_tool"):
+                    end_event["interrupted_after_tool"] = interruption_info["interrupted_after_tool"]
+                if interruption_info.get("pending_followup_count") is not None:
+                    end_event["pending_followup_count"] = interruption_info["pending_followup_count"]
+                if interruption_info.get("next_followup_preview"):
+                    end_event["next_followup_preview"] = interruption_info["next_followup_preview"]
+            await _emit_event(end_event)
 
         return final_content, tools_used, messages

@@ -11,7 +11,8 @@ from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 
 ProgressCallback: TypeAlias = Callable[..., Awaitable[None]]
-SteerCheckCallback: TypeAlias = Callable[[], bool | Awaitable[bool]]
+SteerDecision: TypeAlias = bool | dict[str, Any]
+SteerCheckCallback: TypeAlias = Callable[[], SteerDecision | Awaitable[SteerDecision]]
 RunAgentLoopCallback: TypeAlias = Callable[..., Awaitable[tuple[str | None, list[str], list[dict[str, Any]]]]]
 SaveTurnCallback: TypeAlias = Callable[[Any, list[dict[str, Any]], int], None]
 ConsolidateSessionCallback: TypeAlias = Callable[[Any], Awaitable[bool]]

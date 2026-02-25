@@ -56,6 +56,11 @@ class TurnEndEvent(BaseTurnEvent):
     completed: bool
     max_iterations_reached: bool
     interrupted_for_followup: NotRequired[bool]
+    interruption_reason: NotRequired[str]
+    interrupted_at_iteration: NotRequired[int]
+    interrupted_after_tool: NotRequired[str]
+    pending_followup_count: NotRequired[int]
+    next_followup_preview: NotRequired[str]
 
 
 TurnEventPayload: TypeAlias = TurnStartEvent | ToolStartEvent | ToolEndEvent | TurnEndEvent

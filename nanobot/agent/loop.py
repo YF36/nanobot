@@ -504,9 +504,20 @@ class AgentLoop:
     ) -> OutboundMessage | None:
         followup_key = self._followup_session_key(msg, session_key)
 
-        async def _has_pending_followup() -> bool:
+        async def _has_pending_followup() -> bool | dict[str, Any]:
             queue = self._followup_queues.get(followup_key)
-            return bool(queue)
+            if not queue:
+                return False
+            next_msg = queue[0].msg
+            preview = next_msg.content.strip()
+            if len(preview) > 80:
+                preview = preview[:80] + "..."
+            return {
+                "interrupt": True,
+                "reason": "pending_followup",
+                "pending_followup_count": len(queue),
+                "next_followup_preview": preview,
+            }
 
         return await self._message_processor.process(
             msg,

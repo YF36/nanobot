@@ -149,10 +149,15 @@ async def test_turn_runner_interrupts_after_tool_for_followup() -> None:
     checks = 0
     events: list[dict] = []
 
-    async def _steer_check() -> bool:
+    async def _steer_check() -> dict:
         nonlocal checks
         checks += 1
-        return True
+        return {
+            "interrupt": True,
+            "reason": "pending_followup",
+            "pending_followup_count": 2,
+            "next_followup_preview": "second request",
+        }
 
     async def _on_event(event: dict) -> None:
         events.append(event)
@@ -166,6 +171,11 @@ async def test_turn_runner_interrupts_after_tool_for_followup() -> None:
     assert checks == 1
     assert tools_used == ["exec"]
     assert "paused this task" in (final_content or "")
+    assert "second request" in (final_content or "")
     assert [e["type"] for e in events] == ["turn_start", "tool_start", "tool_end", "turn_end"]
     assert events[-1]["interrupted_for_followup"] is True
+    assert events[-1]["interruption_reason"] == "pending_followup"
+    assert events[-1]["interrupted_after_tool"] == "exec"
+    assert events[-1]["pending_followup_count"] == 2
+    assert events[-1]["next_followup_preview"] == "second request"
     assert any(m.get("role") == "tool" for m in messages)
