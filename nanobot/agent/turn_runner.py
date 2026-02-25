@@ -120,10 +120,12 @@ class TurnRunner:
         *,
         messages: list[dict[str, Any]],
         current_turn_start: int,
-    ) -> tuple[Any, list[dict[str, Any]], int]:
+    ) -> tuple[Any, list[dict[str, Any]], int, dict[str, int]]:
         """Call provider.chat with bounded retries and one overflow compaction retry path."""
         attempt = 0
         overflow_compactions = 0
+        exception_retries = 0
+        error_finish_retries = 0
         local_messages = messages
         local_turn_start = current_turn_start
 
@@ -140,6 +142,7 @@ class TurnRunner:
             except Exception as e:
                 if attempt >= _CHAT_RETRY_MAX_ATTEMPTS:
                     raise
+                exception_retries += 1
                 delay = _CHAT_RETRY_BASE_DELAY_S * (2 ** (attempt - 1))
                 logger.warning(
                     "llm_chat_retry",
@@ -169,6 +172,7 @@ class TurnRunner:
                         local_messages, local_turn_start = guarded_messages, guarded_start
                         continue
                 if attempt < _CHAT_RETRY_MAX_ATTEMPTS:
+                    error_finish_retries += 1
                     delay = _CHAT_RETRY_BASE_DELAY_S * (2 ** (attempt - 1))
                     logger.warning(
                         "llm_chat_retry",
@@ -180,7 +184,12 @@ class TurnRunner:
                     await asyncio.sleep(delay)
                     continue
 
-            return response, local_messages, local_turn_start
+            return response, local_messages, local_turn_start, {
+                "llm_retry_count": exception_retries + error_finish_retries,
+                "llm_exception_retry_count": exception_retries,
+                "llm_error_finish_retry_count": error_finish_retries,
+                "llm_overflow_compaction_retries": overflow_compactions,
+            }
 
     async def run(
         self,
@@ -197,6 +206,12 @@ class TurnRunner:
         final_content = None
         interrupted_for_followup = False
         interruption_info: dict[str, Any] = {}
+        retry_stats = {
+            "llm_retry_count": 0,
+            "llm_exception_retry_count": 0,
+            "llm_error_finish_retry_count": 0,
+            "llm_overflow_compaction_retries": 0,
+        }
         tools_used: list[str] = []
         turn_id = f"turn_{uuid.uuid4().hex[:12]}"
         event_sequence = 0
@@ -226,10 +241,12 @@ class TurnRunner:
             iteration += 1
             messages, current_turn_start = self.guard_loop_messages(messages, current_turn_start)
 
-            response, messages, current_turn_start = await self._chat_with_retries(
+            response, messages, current_turn_start, chat_retry_stats = await self._chat_with_retries(
                 messages=messages,
                 current_turn_start=current_turn_start,
             )
+            for key, value in chat_retry_stats.items():
+                retry_stats[key] = retry_stats.get(key, 0) + int(value)
 
             if response.has_tool_calls:
                 if on_progress:
@@ -383,6 +400,9 @@ class TurnRunner:
                     end_event["pending_followup_count"] = interruption_info["pending_followup_count"]
                 if interruption_info.get("next_followup_preview"):
                     end_event["next_followup_preview"] = interruption_info["next_followup_preview"]
+            for key, value in retry_stats.items():
+                if value:
+                    end_event[key] = value
             await _emit_event(end_event)
 
         return final_content, tools_used, messages

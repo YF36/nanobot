@@ -236,11 +236,22 @@ async def test_turn_runner_retries_transient_provider_exception() -> None:
         tool_hint=lambda calls: f"Using {len(calls)} tool(s)",
     )
 
-    final_content, tools_used, messages = await runner.run([{"role": "user", "content": "retry please"}])
+    events: list[dict] = []
+
+    async def _on_event(event: dict) -> None:
+        events.append(event)
+
+    final_content, tools_used, messages = await runner.run(
+        [{"role": "user", "content": "retry please"}],
+        on_event=_on_event,
+    )
 
     assert final_content == "Recovered"
     assert tools_used == []
     assert messages[-1]["content"] == "Recovered"
+    assert events[-1]["llm_retry_count"] == 1
+    assert events[-1]["llm_exception_retry_count"] == 1
+    assert events[-1].get("llm_error_finish_retry_count", 0) == 0
 
 
 @pytest.mark.asyncio
@@ -259,15 +270,22 @@ async def test_turn_runner_retries_after_context_overflow_with_compaction() -> N
         tool_hint=lambda calls: f"Using {len(calls)} tool(s)",
     )
 
+    events: list[dict] = []
+
+    async def _on_event(event: dict) -> None:
+        events.append(event)
+
     final_content, tools_used, messages = await runner.run(
         [
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "old"},
             {"role": "user", "content": "current"},
-        ]
+        ],
+        on_event=_on_event,
     )
 
     assert provider.calls == 2
     assert final_content == "After compaction"
     assert tools_used == []
     assert messages[-1]["content"] == "After compaction"
+    assert events[-1]["llm_overflow_compaction_retries"] == 1

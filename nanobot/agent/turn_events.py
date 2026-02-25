@@ -61,6 +61,10 @@ class TurnEndEvent(BaseTurnEvent):
     interrupted_after_tool: NotRequired[str]
     pending_followup_count: NotRequired[int]
     next_followup_preview: NotRequired[str]
+    llm_retry_count: NotRequired[int]
+    llm_exception_retry_count: NotRequired[int]
+    llm_error_finish_retry_count: NotRequired[int]
+    llm_overflow_compaction_retries: NotRequired[int]
 
 
 TurnEventPayload: TypeAlias = TurnStartEvent | ToolStartEvent | ToolEndEvent | TurnEndEvent
