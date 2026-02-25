@@ -11,6 +11,7 @@ from nanobot.agent.message_processor_types import (
     MessageProcessingHooks,
     MessageProcessorDeps,
     ProgressCallback,
+    SteerCheckCallback,
     ToolRegistryProtocol,
     TurnEventCallback,
 )
@@ -166,11 +167,13 @@ class TurnExecutionCoordinator:
         skip: int,
         on_progress: ProgressCallback | None = None,
         on_event: TurnEventCallback | None = None,
+        on_turn_steer_check: SteerCheckCallback | None = None,
     ) -> tuple[str | None, list[str], list[dict[str, Any]]]:
         final_content, tools_used, all_msgs = await self.deps.hooks.run_agent_loop(
             messages,
             on_progress=on_progress,
             on_event=on_event,
+            should_interrupt_after_tool=on_turn_steer_check,
         )
         self.deps.hooks.save_turn(session, all_msgs, skip)
         self.deps.sessions.save(session)

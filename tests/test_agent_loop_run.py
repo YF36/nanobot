@@ -143,7 +143,7 @@ async def test_process_message_queues_followups_per_session() -> None:
     max_active = 0
 
     class _Processor:
-        async def process(self, msg, session_key=None, on_progress=None):
+        async def process(self, msg, session_key=None, on_progress=None, on_turn_steer_check=None):
             nonlocal active, max_active
             call_order.append(msg.content)
             active += 1
@@ -191,7 +191,7 @@ async def test_process_message_rejects_followup_when_queue_is_full(monkeypatch) 
     release_first = asyncio.Event()
 
     class _Processor:
-        async def process(self, msg, session_key=None, on_progress=None):
+        async def process(self, msg, session_key=None, on_progress=None, on_turn_steer_check=None):
             if msg.content == "first":
                 started.set()
                 await release_first.wait()

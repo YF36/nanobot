@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, Literal, TypeAlias, TypedDict
+from typing import Any, Awaitable, Callable, Literal, NotRequired, TypeAlias, TypedDict
 
 TURN_EVENT_TURN_START = "turn_start"
 TURN_EVENT_TOOL_START = "tool_start"
@@ -55,6 +55,7 @@ class TurnEndEvent(BaseTurnEvent):
     tool_count: int
     completed: bool
     max_iterations_reached: bool
+    interrupted_for_followup: NotRequired[bool]
 
 
 TurnEventPayload: TypeAlias = TurnStartEvent | ToolStartEvent | ToolEndEvent | TurnEndEvent

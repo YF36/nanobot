@@ -297,6 +297,7 @@ class AgentLoop:
         initial_messages: list[dict],
         on_progress: Callable[..., Awaitable[None]] | None = None,
         on_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        should_interrupt_after_tool: Callable[[], bool | Awaitable[bool]] | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop. Returns (final_content, tools_used, messages)."""
         runner = TurnRunner(
@@ -321,6 +322,7 @@ class AgentLoop:
             on_progress=on_progress,
             on_event=_fanout_event,
             event_source="agent_loop",
+            should_interrupt_after_tool=should_interrupt_after_tool,
         )
 
     async def _on_turn_event(self, event: TurnEventPayload) -> None:
@@ -500,7 +502,18 @@ class AgentLoop:
         session_key: str | None = None,
         on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> OutboundMessage | None:
-        return await self._message_processor.process(msg, session_key=session_key, on_progress=on_progress)
+        followup_key = self._followup_session_key(msg, session_key)
+
+        async def _has_pending_followup() -> bool:
+            queue = self._followup_queues.get(followup_key)
+            return bool(queue)
+
+        return await self._message_processor.process(
+            msg,
+            session_key=session_key,
+            on_progress=on_progress,
+            on_turn_steer_check=_has_pending_followup if msg.channel != "system" else None,
+        )
 
     @staticmethod
     def _followup_session_key(msg: InboundMessage, session_key: str | None) -> str:

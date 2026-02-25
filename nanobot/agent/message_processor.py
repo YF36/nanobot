@@ -19,6 +19,7 @@ from nanobot.agent.message_processor_types import (
     MessageProcessingHooks,
     MessageProcessorDeps,
     SessionStoreProtocol,
+    SteerCheckCallback,
     ToolRegistryProtocol,
 )
 from nanobot.agent.consolidation_coordinator import ConsolidationCoordinator
@@ -125,6 +126,7 @@ class UserMessageHandler(BaseTurnHandler):
         *,
         session_key: str | None,
         on_progress: Callable[[str], Awaitable[None]] | None,
+        on_turn_steer_check: SteerCheckCallback | None = None,
     ) -> OutboundMessage | None:
         key = session_key or msg.session_key
         RequestContextBinder.bind_user(msg, key)
@@ -151,6 +153,7 @@ class UserMessageHandler(BaseTurnHandler):
             skip=skip,
             on_progress=progress_cb,
             on_event=turn_events.on_event,
+            on_turn_steer_check=on_turn_steer_check,
         )
         turn_events.log_summary(route="user", msg=msg)
 
@@ -193,8 +196,14 @@ class MessageProcessor:
         msg: InboundMessage,
         session_key: str | None = None,
         on_progress: Callable[[str], Awaitable[None]] | None = None,
+        on_turn_steer_check: SteerCheckCallback | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
         if msg.channel == "system":
             return await self._system.handle(msg)
-        return await self._user.handle(msg, session_key=session_key, on_progress=on_progress)
+        return await self._user.handle(
+            msg,
+            session_key=session_key,
+            on_progress=on_progress,
+            on_turn_steer_check=on_turn_steer_check,
+        )

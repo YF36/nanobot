@@ -89,12 +89,14 @@ class TurnRunner:
         on_progress: Callable[..., Awaitable[None]] | None = None,
         on_event: TurnEventCallback | None = None,
         event_source: str = "turn_runner",
+        should_interrupt_after_tool: Callable[[], bool | Awaitable[bool]] | None = None,
     ) -> tuple[str | None, list[str], list[dict[str, Any]]]:
         """Run the iterative turn loop. Returns (final_content, tools_used, messages)."""
         messages = initial_messages
         current_turn_start = len(initial_messages) - 1 if initial_messages else 0
         iteration = 0
         final_content = None
+        interrupted_for_followup = False
         tools_used: list[str] = []
         turn_id = f"turn_{uuid.uuid4().hex[:12]}"
         event_sequence = 0
@@ -198,6 +200,21 @@ class TurnRunner:
                         tool_result.text,
                         metadata=_session_tool_details(tool_result.details),
                     )
+                    if should_interrupt_after_tool is not None:
+                        should_interrupt = should_interrupt_after_tool()
+                        if isinstance(should_interrupt, bool):
+                            interrupt_now = should_interrupt
+                        else:
+                            interrupt_now = await should_interrupt
+                        if interrupt_now:
+                            interrupted_for_followup = True
+                            final_content = (
+                                "A newer message arrived, so I paused this task and will handle the newer message next."
+                            )
+                            logger.info("Turn interrupted for pending follow-up", tool=tool_call.name)
+                            break
+                if interrupted_for_followup:
+                    break
             else:
                 messages = self.context.add_assistant_message(
                     messages,
@@ -219,6 +236,7 @@ class TurnRunner:
                 "iterations": iteration,
                 "tool_count": len(tools_used),
                 "completed": final_content is not None,
+                "interrupted_for_followup": interrupted_for_followup,
                 "max_iterations_reached": iteration >= self.max_iterations and final_content is not None and (
                     final_content.startswith("I reached the maximum number of tool call iterations")
                 ),

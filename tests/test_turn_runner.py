@@ -129,3 +129,43 @@ async def test_turn_runner_emits_minimal_events_and_keeps_progress() -> None:
     assert any(tool_hint for _, tool_hint in progress_calls)
     tool_msgs = [m for m in messages if m.get("role") == "tool"]
     assert tool_msgs and tool_msgs[0]["_tool_details"]["tool"] == "exec"
+
+
+@pytest.mark.asyncio
+async def test_turn_runner_interrupts_after_tool_for_followup() -> None:
+    runner = TurnRunner(
+        provider=_FakeProvider(),
+        tools=_FakeTools(),
+        context_builder=_FakeContext(),
+        model="test",
+        temperature=0.0,
+        max_tokens=256,
+        max_iterations=5,
+        guard_loop_messages=lambda m, i: (m, i),
+        strip_think=lambda s: s,
+        tool_hint=lambda calls: f"Using {len(calls)} tool(s)",
+    )
+
+    checks = 0
+    events: list[dict] = []
+
+    async def _steer_check() -> bool:
+        nonlocal checks
+        checks += 1
+        return True
+
+    async def _on_event(event: dict) -> None:
+        events.append(event)
+
+    final_content, tools_used, messages = await runner.run(
+        [{"role": "user", "content": "do it"}],
+        on_event=_on_event,
+        should_interrupt_after_tool=_steer_check,
+    )
+
+    assert checks == 1
+    assert tools_used == ["exec"]
+    assert "paused this task" in (final_content or "")
+    assert [e["type"] for e in events] == ["turn_start", "tool_start", "tool_end", "turn_end"]
+    assert events[-1]["interrupted_for_followup"] is True
+    assert any(m.get("role") == "tool" for m in messages)
