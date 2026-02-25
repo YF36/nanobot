@@ -84,6 +84,46 @@ class _FakeProvider:
         )
 
 
+class _RetryThenSuccessProvider:
+    def __init__(self):
+        self.calls = 0
+
+    async def chat(self, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("temporary upstream failure")
+        return SimpleNamespace(
+            has_tool_calls=False,
+            content="Recovered",
+            tool_calls=[],
+            reasoning_content=None,
+            finish_reason="stop",
+        )
+
+
+class _OverflowThenSuccessProvider:
+    def __init__(self):
+        self.calls = 0
+
+    async def chat(self, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            return SimpleNamespace(
+                has_tool_calls=False,
+                content="Error calling LLM: exceeds the model's maximum context length",
+                tool_calls=[],
+                reasoning_content=None,
+                finish_reason="error",
+            )
+        return SimpleNamespace(
+            has_tool_calls=False,
+            content="After compaction",
+            tool_calls=[],
+            reasoning_content=None,
+            finish_reason="stop",
+        )
+
+
 @pytest.mark.asyncio
 async def test_turn_runner_emits_minimal_events_and_keeps_progress() -> None:
     runner = TurnRunner(
@@ -179,3 +219,55 @@ async def test_turn_runner_interrupts_after_tool_for_followup() -> None:
     assert events[-1]["pending_followup_count"] == 2
     assert events[-1]["next_followup_preview"] == "second request"
     assert any(m.get("role") == "tool" for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_turn_runner_retries_transient_provider_exception() -> None:
+    runner = TurnRunner(
+        provider=_RetryThenSuccessProvider(),
+        tools=_FakeTools(),
+        context_builder=_FakeContext(),
+        model="test",
+        temperature=0.0,
+        max_tokens=256,
+        max_iterations=2,
+        guard_loop_messages=lambda m, i: (m, i),
+        strip_think=lambda s: s,
+        tool_hint=lambda calls: f"Using {len(calls)} tool(s)",
+    )
+
+    final_content, tools_used, messages = await runner.run([{"role": "user", "content": "retry please"}])
+
+    assert final_content == "Recovered"
+    assert tools_used == []
+    assert messages[-1]["content"] == "Recovered"
+
+
+@pytest.mark.asyncio
+async def test_turn_runner_retries_after_context_overflow_with_compaction() -> None:
+    provider = _OverflowThenSuccessProvider()
+    runner = TurnRunner(
+        provider=provider,
+        tools=_FakeTools(),
+        context_builder=_FakeContext(),
+        model="test",
+        temperature=0.0,
+        max_tokens=256,
+        max_iterations=2,
+        guard_loop_messages=lambda m, i: (m[1:], max(0, i - 1)) if len(m) > 1 else (m, i),
+        strip_think=lambda s: s,
+        tool_hint=lambda calls: f"Using {len(calls)} tool(s)",
+    )
+
+    final_content, tools_used, messages = await runner.run(
+        [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "old"},
+            {"role": "user", "content": "current"},
+        ]
+    )
+
+    assert provider.calls == 2
+    assert final_content == "After compaction"
+    assert tools_used == []
+    assert messages[-1]["content"] == "After compaction"

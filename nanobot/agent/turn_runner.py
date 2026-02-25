@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -18,6 +19,10 @@ from nanobot.agent.turn_events import (
 )
 
 logger = get_logger(__name__)
+
+_CHAT_RETRY_MAX_ATTEMPTS = 2
+_CHAT_RETRY_BASE_DELAY_S = 0.2
+_CONTEXT_OVERFLOW_EXTRA_COMPACTIONS = 1
 
 
 def _session_tool_details(details: dict[str, Any]) -> dict[str, Any]:
@@ -55,6 +60,18 @@ def _session_tool_details(details: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _is_context_length_error(text: str | None) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    return (
+        "maximum context length" in lower
+        or "exceeds the model's maximum context length" in lower
+        or "input tokens exceeds" in lower
+        or "context length" in lower
+    )
+
+
 class TurnRunner:
     """Run a single agent turn including iterative tool calls."""
 
@@ -82,6 +99,88 @@ class TurnRunner:
         self.guard_loop_messages = guard_loop_messages
         self.strip_think = strip_think
         self.tool_hint = tool_hint
+
+    @staticmethod
+    def _compact_history_once(
+        messages: list[dict[str, Any]],
+        current_turn_start: int,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Emergency compaction: drop one oldest history message before current turn."""
+        if not messages:
+            return messages, current_turn_start
+        system_count = 1 if messages and messages[0].get("role") == "system" else 0
+        if current_turn_start <= system_count:
+            return messages, current_turn_start
+        drop_index = system_count
+        compacted = messages[:drop_index] + messages[drop_index + 1 :]
+        return compacted, max(system_count, current_turn_start - 1)
+
+    async def _chat_with_retries(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        current_turn_start: int,
+    ) -> tuple[Any, list[dict[str, Any]], int]:
+        """Call provider.chat with bounded retries and one overflow compaction retry path."""
+        attempt = 0
+        overflow_compactions = 0
+        local_messages = messages
+        local_turn_start = current_turn_start
+
+        while True:
+            attempt += 1
+            try:
+                response = await self.provider.chat(
+                    messages=local_messages,
+                    tools=self.tools.get_definitions(),
+                    model=self.model,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                )
+            except Exception as e:
+                if attempt >= _CHAT_RETRY_MAX_ATTEMPTS:
+                    raise
+                delay = _CHAT_RETRY_BASE_DELAY_S * (2 ** (attempt - 1))
+                logger.warning(
+                    "llm_chat_retry",
+                    attempt=attempt,
+                    delay_s=delay,
+                    error_type=type(e).__name__,
+                    reason="exception",
+                )
+                await asyncio.sleep(delay)
+                continue
+
+            if getattr(response, "finish_reason", "") == "error":
+                content = getattr(response, "content", None)
+                if _is_context_length_error(content) and overflow_compactions < _CONTEXT_OVERFLOW_EXTRA_COMPACTIONS:
+                    overflow_compactions += 1
+                    guarded_messages, guarded_start = self.guard_loop_messages(local_messages, local_turn_start)
+                    if guarded_messages == local_messages and guarded_start == local_turn_start:
+                        guarded_messages, guarded_start = self._compact_history_once(local_messages, local_turn_start)
+                    if guarded_messages != local_messages or guarded_start != local_turn_start:
+                        logger.warning(
+                            "llm_context_overflow_retry_after_compaction",
+                            attempt=attempt,
+                            compaction_retry=overflow_compactions,
+                            messages_before=len(local_messages),
+                            messages_after=len(guarded_messages),
+                        )
+                        local_messages, local_turn_start = guarded_messages, guarded_start
+                        continue
+                if attempt < _CHAT_RETRY_MAX_ATTEMPTS:
+                    delay = _CHAT_RETRY_BASE_DELAY_S * (2 ** (attempt - 1))
+                    logger.warning(
+                        "llm_chat_retry",
+                        attempt=attempt,
+                        delay_s=delay,
+                        reason="finish_reason_error",
+                        context_overflow=_is_context_length_error(content),
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+
+            return response, local_messages, local_turn_start
 
     async def run(
         self,
@@ -127,12 +226,9 @@ class TurnRunner:
             iteration += 1
             messages, current_turn_start = self.guard_loop_messages(messages, current_turn_start)
 
-            response = await self.provider.chat(
+            response, messages, current_turn_start = await self._chat_with_retries(
                 messages=messages,
-                tools=self.tools.get_definitions(),
-                model=self.model,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
+                current_turn_start=current_turn_start,
             )
 
             if response.has_tool_calls:
