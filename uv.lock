@@ -1436,6 +1436,9 @@ dev = [
 langfuse = [
     { name = "langfuse" },
 ]
+token = [
+    { name = "tiktoken" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1465,11 +1468,12 @@ requires-dist = [
     { name = "slackify-markdown", specifier = ">=0.2.0,<1.0.0" },
     { name = "socksio", specifier = ">=1.0.0,<2.0.0" },
     { name = "structlog", specifier = ">=24.1.0,<25.0.0" },
+    { name = "tiktoken", marker = "extra == 'token'", specifier = ">=0.7.0" },
     { name = "typer", specifier = ">=0.20.0,<1.0.0" },
     { name = "websocket-client", specifier = ">=1.9.0,<2.0.0" },
     { name = "websockets", specifier = ">=16.0,<17.0" },
 ]
-provides-extras = ["dev", "langfuse"]
+provides-extras = ["dev", "langfuse", "token"]
 
 [[package]]
 name = "oauth-cli-kit"
