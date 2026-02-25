@@ -126,3 +126,26 @@ class TestHealthServer:
             assert data["last_processed_at"] is not None
         finally:
             await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_health_debug_events_includes_turn_event_capabilities(self) -> None:
+        """GET /health?debug=events includes turn-event capabilities manifest."""
+        server = _make_server(port=18770)
+        await server.start()
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", 18770)
+            writer.write(b"GET /health?debug=events HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            await writer.drain()
+
+            response = await asyncio.wait_for(reader.read(8192), timeout=3.0)
+            writer.close()
+
+            body = response.split(b"\r\n\r\n", 1)[1]
+            data = json.loads(body)
+            assert "debug" in data
+            manifest = data["debug"]["turn_event_capabilities"]
+            assert manifest["namespace"] == "nanobot.turn"
+            assert manifest["version"] == 1
+            assert any(e["kind"] == "turn.start" for e in manifest["events"])
+        finally:
+            await server.stop()

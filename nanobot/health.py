@@ -12,8 +12,10 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
+from urllib.parse import parse_qs, urlsplit
 from typing import TYPE_CHECKING
 
+from nanobot.agent.turn_events import turn_event_capabilities
 from nanobot.logging import get_logger
 
 if TYPE_CHECKING:
@@ -51,7 +53,7 @@ class HealthServer:
         """Call after each successfully processed message to update timestamp."""
         self.last_processed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-    def _build_payload(self) -> bytes:
+    def _build_payload(self, *, debug: str | None = None) -> bytes:
         channel_status = self.channels.get_status()
         payload = {
             "status": "ok",
@@ -63,6 +65,8 @@ class HealthServer:
             },
             "last_processed_at": self.last_processed_at,
         }
+        if debug == "events":
+            payload["debug"] = {"turn_event_capabilities": turn_event_capabilities()}
         return json.dumps(payload, indent=2).encode()
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -74,7 +78,11 @@ class HealthServer:
                 await writer.drain()
                 return
 
-            method, path = parts[0], parts[1].split("?")[0]
+            method = parts[0]
+            target = parts[1]
+            parsed = urlsplit(target)
+            path = parsed.path
+            query = parse_qs(parsed.query)
 
             # Drain remaining headers
             while True:
@@ -85,7 +93,8 @@ class HealthServer:
             if method != "GET":
                 writer.write(_HTTP_405)
             elif path == "/health":
-                body = self._build_payload()
+                debug_param = query.get("debug", [None])[0]
+                body = self._build_payload(debug=debug_param)
                 writer.write(_HTTP_200 + body)
             else:
                 writer.write(_HTTP_404)
