@@ -23,6 +23,7 @@ from nanobot.agent.turn_events import (
     TURN_EVENT_TOOL_END,
     TURN_EVENT_TOOL_START,
     TurnEventPayload,
+    turn_event_capabilities,
     turn_event_trace_fields,
 )
 from nanobot.agent.turn_runner import TurnRunner
@@ -357,6 +358,7 @@ class AgentLoop:
         try:
             await self._connect_mcp()
             logger.info("Agent loop started")
+            logger.debug("turn_event_capabilities", manifest=turn_event_capabilities())
 
             while self._running:
                 try:
