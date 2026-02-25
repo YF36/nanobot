@@ -17,6 +17,7 @@ from nanobot.agent.message_processor import MessageProcessingHooks, MessageProce
 from nanobot.agent.session_command_handler import SessionCommandHandler
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.turn_history_writer import TurnHistoryWriter
+from nanobot.agent.turn_events import TurnEventPayload
 from nanobot.agent.turn_runner import TurnRunner
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.tools.factory import create_standard_tool_registry
@@ -292,7 +293,7 @@ class AgentLoop:
             strip_think=self._strip_think,
             tool_hint=self._tool_hint,
         )
-        async def _fanout_event(event: dict[str, Any]) -> None:
+        async def _fanout_event(event: TurnEventPayload) -> None:
             await self._on_turn_event(event)
             if on_event:
                 await on_event(event)
@@ -304,7 +305,7 @@ class AgentLoop:
             event_source="agent_loop",
         )
 
-    async def _on_turn_event(self, event: dict[str, Any]) -> None:
+    async def _on_turn_event(self, event: TurnEventPayload) -> None:
         """Internal turn event sink for debug/observability; does not affect behavior."""
         event_type = event.get("type", "unknown")
         if event_type in {"tool_start", "tool_end"}:

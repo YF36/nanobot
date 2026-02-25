@@ -8,6 +8,7 @@ from typing import Any
 from nanobot.logging import get_logger
 
 from nanobot.agent.turn_runner import TurnRunner
+from nanobot.agent.turn_events import TurnEventPayload
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
@@ -304,7 +305,7 @@ class SubagentManager:
         """Build a focused system prompt for the subagent."""
         return _SubagentPromptBuilder.build(self.workspace, task)
 
-    async def _on_turn_event(self, event: dict[str, Any]) -> None:
+    async def _on_turn_event(self, event: TurnEventPayload) -> None:
         """Internal subagent turn event sink for debug/observability."""
         event_type = event.get("type", "unknown")
         if event_type in {"tool_start", "tool_end"}:
