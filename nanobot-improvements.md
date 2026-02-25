@@ -337,10 +337,22 @@
 
 结合 `openclaw` / `pi-mono` 一类实践，建议在 `memory/` 目录下引入按天的记忆文件（例如 `memory/2026-02-25.md`），作为 `MEMORY.md` 与 `HISTORY.md` 之间的过渡层。
 
-动机（解决当前 `MEMORY.md` 污染问题）：
+问题诊断（当前 `MEMORY.md` 污染）：
 
-- `MEMORY.md` 应主要承载长期稳定事实（用户偏好、长期项目上下文、稳定环境信息）。
-- 近期对话主题、知识性问答内容、工具执行摘要等更适合进入每日文件，而不是常驻 `MEMORY.md`。
+- 现有 `MEMORY.md` 中容易混入大量近期对话内容、知识性问答原文摘要、临时系统状态（例如某几天讨论主题/百科型资料）。
+- 这类内容与 `MEMORY.md` 的目标（长期稳定事实）不一致，会导致：
+  - 常驻 prompt 噪声增大
+  - 长期偏好/约束被淹没
+  - token 浪费与上下文污染
+
+根因判断：
+
+- 问题不在“双文件架构（`MEMORY.md` + `HISTORY.md`）”本身，而在于 `MEMORY` 写入准入规则过宽。
+- consolidation/记忆提炼阶段把“聊过的内容”误当成了“应长期记住的内容”。
+
+改进目标：
+
+- 保持 nanobot 的极简记忆设计，但收紧长期记忆准入，并引入一个“短期→中期缓冲层”。
 
 建议分层（保持 nanobot 极简）：
 
@@ -348,14 +360,86 @@
 - `memory/YYYY-MM-DD.md`：每日摘要（对话主题、关键决策、工具活动、重要事件）
 - `memory/HISTORY.md`：长期可 grep 流水/归档（更粗粒度）
 
+建议准入规则（实施时可写入 consolidation prompt / 规则）：
+
+- 应进入 `MEMORY.md`：
+  - 用户稳定偏好（语言、沟通方式、工具偏好）
+  - 长期项目上下文/目标
+  - 稳定环境与约束（常用平台、路径习惯、长期限制）
+- 应进入 daily file（而非 `MEMORY.md`）：
+  - 今日讨论主题
+  - 知识问答摘要
+  - 工具调用结果摘要、调试过程、阶段性结论
+  - 临时系统异常/状态（可后续归档）
+- 应丢弃或仅保留在短期上下文：
+  - 大段百科内容、表格原文、可随时再查的通用知识正文
+
 设计要点（实施时）：
 
 1. Daily file 写摘要而非原始对话全文，避免重复 `HISTORY.md`。
 2. `MEMORY` 提炼优先从 daily file 归纳，而不是直接从原始消息大量搬运。
 3. Daily file 默认不常驻 system prompt，仅在需要回顾近期上下文时按需读取。
 4. 可加保留/归档策略（如保留最近 N 天 daily files，之后压缩进 `HISTORY.md`）。
+5. 给临时系统状态（如 API 错误）增加“易过期”处理策略，避免长期留在 `MEMORY.md`。
 
 这样可以在不推翻 nanobot 现有双文件记忆思路的前提下，显著降低 `MEMORY.md` 噪声与 prompt 污染。
+
+建议实施路线图（M1 / M2 / M3）：
+
+### M1（优先，低风险）：先收紧 `MEMORY.md` 准入规则，不改存储结构
+
+目标：先止住 `MEMORY.md` 污染（保持 `MEMORY.md + HISTORY.md` 结构不变）。
+
+实施建议（先做规则与 prompt，不做结构升级）：
+
+1. 在 consolidation / 记忆提炼 prompt 中明确禁止写入：
+   - 今日讨论主题列表
+   - 大段知识问答原文/表格
+   - 工具调用长输出摘要
+2. 要求写入 `MEMORY.md` 的内容必须同时满足：
+   - 与用户/长期项目相关
+   - 跨会话仍有价值（稳定性）
+3. 对临时系统状态（API 故障、一次性异常）默认降级为：
+   - 不写入 `MEMORY.md`，或写成更短、更可过期的条目
+
+M1 验收标准（建议实现后用测试覆盖）：
+
+- 应写入 `MEMORY.md`：用户长期偏好、长期目标、稳定环境约束。
+- 不应写入 `MEMORY.md`：当天动漫/百科问答详情、剧情表格、长篇知识性摘要。
+- 不应写入 `MEMORY.md`：一次性工具输出细节（长命令输出、网页长摘录）。
+- `MEMORY.md` 的新增内容长度/条目数相较当前策略显著下降（可用简单统计验证）。
+
+### M2（中风险）：引入 daily memory files（`memory/YYYY-MM-DD.md`）
+
+目标：为近期主题与事件提供稳定落点，避免继续挤入 `MEMORY.md`。
+
+实施建议：
+
+- consolidation 输出分流：长期事实 -> `MEMORY.md`；近期摘要/事件 -> daily file；长期归档 -> `HISTORY.md`。
+- daily file 使用固定模板（Topics / Decisions / Tool Activity / Open Questions）。
+- 仅写摘要，不写原始对话全文。
+
+M2 验收标准：
+
+- 当天会自动生成 daily file。
+- `MEMORY.md` 与 daily file 的写入路由符合准入规则。
+- daily file 不包含大段逐轮原始对话复制。
+
+### M3（策略层）：按需读取 daily files + 保留/归档策略
+
+目标：让 daily files 提升近期回忆能力，但不增加常驻 prompt 噪声。
+
+实施建议：
+
+- daily file 默认不注入 system prompt，只在需要回顾近期上下文时按需读取。
+- 设置保留窗口（如最近 7~30 天），更旧 daily files 归档/压缩进 `HISTORY.md`。
+- 为临时系统状态增加过期/降权策略。
+
+M3 验收标准：
+
+- 默认 prompt token 开销无明显上升。
+- 近期问题回顾场景下可准确检索到 daily file 摘要。
+- 归档后关键信息不丢失（抽样验证）。
 
 ## H. `SessionManager.save()` 每次全量重写 JSONL（中优先级）
 
