@@ -411,6 +411,11 @@
 - 已落地（部分）：`Phase 3-3` 最小版（动态工具集与 system prompt 联动）
   - `ContextBuilder.build_messages(...)` 支持基于运行时注册工具生成 `Runtime Tool Catalog`
   - `TurnMessageBuilder` 透传 `tools.get_definitions()`，避免 system prompt 与真实工具集脱节
+  - 已深化：`Runtime Tool Catalog` 按能力分组（Filesystem / Shell / Messaging / Subagents / ...）
+  - 已深化：同组工具按名称稳定排序，减少注册顺序导致的 prompt 抖动
+  - 已深化：工具摘要包含 `required` 参数提示；高风险工具附加简短 `note`
+  - 已深化：支持 compact mode（工具数量或 catalog 长度超阈值时降级输出）
+  - 已深化：compact 阈值支持 `ContextBuilder` 初始化时配置（默认值不变）
 
 ### 工具运行时与兼容层
 
@@ -483,6 +488,14 @@
 - `c561bdc` `refactor narrow llm retry policy to transient errors`
 - `ab3276b` `feat track llm error classification metrics`
 - `d131171` `feat add runtime tool catalog to system prompt`
+- `90f74d0` `refactor group runtime tool catalog by capability`
+- `2d6421b` `feat include required params in tool catalog`
+- `5791cf6` `feat add caution notes to runtime tool catalog`
+- `1826486` `feat add grouped tool catalog guidance hints`
+- `4367dd3` `refactor stabilize tool catalog ordering`
+- `f61ffce` `feat add compact runtime tool catalog mode`
+- `dfb2fce` `feat compact tool catalog on count or length`
+- `0068b66` `feat make tool catalog compact thresholds configurable`
 
 ## Phase 3（能力升级）
 
