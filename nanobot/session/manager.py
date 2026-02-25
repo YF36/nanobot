@@ -74,6 +74,7 @@ class SessionManager:
         self.sessions_dir = ensure_dir(self.workspace / "sessions")
         self.legacy_sessions_dir = Path.home() / ".nanobot" / "sessions"
         self._cache: dict[str, Session] = {}
+        self._persisted_signatures: dict[str, str] = {}
     
     def _get_session_path(self, key: str) -> Path:
         """Get the file path for a session."""
@@ -98,11 +99,12 @@ class SessionManager:
         if key in self._cache:
             return self._cache[key]
         
-        session = self._load(key)
-        if session is None:
-            session = Session(key=key)
+        loaded = self._load(key)
+        session = loaded or Session(key=key)
         
         self._cache[key] = session
+        if loaded is not None:
+            self._persisted_signatures[key] = self._persist_signature(session)
         return session
     
     def _load(self, key: str) -> Session | None:
@@ -124,6 +126,7 @@ class SessionManager:
             messages = []
             metadata = {}
             created_at = None
+            updated_at = None
             last_consolidated = 0
 
             with open(path, encoding="utf-8") as f:
@@ -137,6 +140,7 @@ class SessionManager:
                     if data.get("_type") == "metadata":
                         metadata = data.get("metadata", {})
                         created_at = datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
+                        updated_at = datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else None
                         last_consolidated = data.get("last_consolidated", 0)
                     else:
                         messages.append(data)
@@ -145,17 +149,41 @@ class SessionManager:
                 key=key,
                 messages=messages,
                 created_at=created_at or datetime.now(),
+                updated_at=updated_at or datetime.now(),
                 metadata=metadata,
                 last_consolidated=last_consolidated
             )
         except Exception as e:
             logger.warning("Failed to load session", session_key=key, error=str(e))
             return None
-    
-    def save(self, session: Session) -> None:
-        """Save a session to disk."""
-        path = self._get_session_path(session.key)
 
+    @staticmethod
+    def _persist_signature(session: Session) -> str:
+        """Compute a compact signature for persisted session content."""
+        metadata_json = json.dumps(session.metadata, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        last_msg_json = (
+            json.dumps(session.messages[-1], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            if session.messages else ""
+        )
+        updated_at = (
+            session.updated_at.isoformat() if isinstance(session.updated_at, datetime) else str(session.updated_at)
+        )
+        created_at = (
+            session.created_at.isoformat() if isinstance(session.created_at, datetime) else str(session.created_at)
+        )
+        return "|".join((
+            session.key,
+            created_at,
+            updated_at,
+            str(session.last_consolidated),
+            str(len(session.messages)),
+            metadata_json,
+            last_msg_json,
+        ))
+
+    @staticmethod
+    def _write_session_file(path: Path, session: Session) -> None:
+        """Write the full session JSONL snapshot to disk."""
         with open(path, "w", encoding="utf-8") as f:
             metadata_line = {
                 "_type": "metadata",
@@ -168,12 +196,30 @@ class SessionManager:
             f.write(json.dumps(metadata_line, ensure_ascii=False) + "\n")
             for msg in session.messages:
                 f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+    
+    def save(self, session: Session) -> None:
+        """Save a session to disk."""
+        path = self._get_session_path(session.key)
+        signature = self._persist_signature(session)
+        if path.exists() and self._persisted_signatures.get(session.key) == signature:
+            logger.debug(
+                "Skipping unchanged session save",
+                session_key=session.key,
+                message_count=len(session.messages),
+                last_consolidated=session.last_consolidated,
+            )
+            self._cache[session.key] = session
+            return
+
+        self._write_session_file(path, session)
 
         self._cache[session.key] = session
+        self._persisted_signatures[session.key] = signature
     
     def invalidate(self, key: str) -> None:
         """Remove a session from the in-memory cache."""
         self._cache.pop(key, None)
+        self._persisted_signatures.pop(key, None)
     
     def list_sessions(self) -> list[dict[str, Any]]:
         """
