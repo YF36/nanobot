@@ -415,6 +415,44 @@ def test_build_messages_uses_compact_tool_catalog_mode_for_many_tools(tmp_path) 
         joined = str(content)
 
     catalog = joined.split("## Runtime Tool Catalog", 1)[1]
-    assert "Compact summary mode enabled" in catalog
+    assert "Compact summary mode enabled due to tool count/length." in catalog
     assert "required: command" in catalog
     assert "note: prefer read-only checks first" not in catalog
+
+
+def test_build_messages_uses_compact_tool_catalog_mode_for_long_descriptions(tmp_path, monkeypatch) -> None:
+    builder = _builder(tmp_path)
+    tool_defs = []
+    for i in range(4):
+        tool_defs.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": f"search_tool_{i}",
+                    "description": ("Very long description segment. " * 40).strip(),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                },
+            }
+        )
+    # Force compact fallback by length with fewer than count threshold tools.
+    monkeypatch.setattr(ContextBuilder, "_TOOL_CATALOG_MAX_CHARS_BEFORE_COMPACT", 250)
+
+    messages = builder.build_messages(history=[], current_message="hi", tool_definitions=tool_defs)
+    content = messages[0]["content"]
+    if isinstance(content, list):
+        joined = "\n".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    else:
+        joined = str(content)
+
+    catalog = joined.split("## Runtime Tool Catalog", 1)[1]
+    assert "Compact summary mode enabled due to tool count/length." in catalog
+    # In compact mode, verbose descriptions are removed while required hints remain.
+    assert "required: query" in catalog

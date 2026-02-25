@@ -54,6 +54,8 @@ class ContextBuilder:
     _CHARS_PER_TOKEN = 4
     # Default conservative context budget (tokens, not chars)
     _DEFAULT_MAX_CONTEXT_TOKENS = 30_000
+    _TOOL_CATALOG_COMPACT_THRESHOLD = 10
+    _TOOL_CATALOG_MAX_CHARS_BEFORE_COMPACT = 2200
 
     def __init__(self, workspace: Path, max_context_tokens: int | None = None):
         self.workspace = workspace
@@ -473,95 +475,111 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         if not tool_definitions:
             return ""
 
-        grouped_lines: dict[str, list[tuple[str, str]]] = defaultdict(list)
-        total_seen = 0
         max_tools = 20
         max_per_group = 6
-        compact_mode = len(tool_definitions) > 10
-        for item in tool_definitions:
-            if not isinstance(item, dict):
-                continue
-            fn = item.get("function")
-            if not isinstance(fn, dict):
-                continue
-            name = fn.get("name")
-            if not isinstance(name, str) or not name:
-                continue
-            desc = fn.get("description")
-            desc_text = ""
-            if isinstance(desc, str) and desc.strip():
-                compact_desc = " ".join(desc.strip().split())
-                desc_text = compact_desc[:120] + ("..." if len(compact_desc) > 120 else "")
-            params = fn.get("parameters")
-            param_names: list[str] = []
-            required_names: list[str] = []
-            if isinstance(params, dict):
-                props = params.get("properties")
-                if isinstance(props, dict):
-                    param_names = [str(k) for k in list(props.keys())[:4]]
-                required = params.get("required")
-                if isinstance(required, list):
-                    required_names = [str(k) for k in required[:3]]
-            suffix_parts: list[str] = []
-            if desc_text and not compact_mode:
-                suffix_parts.append(desc_text)
-            if param_names:
-                suffix_parts.append("params: " + ", ".join(param_names))
-            if required_names:
-                suffix_parts.append("required: " + ", ".join(required_names))
-            caution_note = ContextBuilder._tool_runtime_note(name)
-            if caution_note and not compact_mode:
-                suffix_parts.append("note: " + caution_note)
-            line = f"- `{name}`"
-            if suffix_parts:
-                line += " — " + " | ".join(suffix_parts)
-            group = ContextBuilder._tool_runtime_group(name)
-            if len(grouped_lines[group]) < max_per_group and total_seen < max_tools:
-                grouped_lines[group].append((name.lower(), line))
-                total_seen += 1
-            if total_seen >= max_tools:
-                break
 
-        if not grouped_lines:
-            return ""
-        lines: list[str] = []
-        group_order = ["filesystem", "shell", "web", "messaging", "subagents", "memory", "other"]
-        labels = {
-            "filesystem": "Filesystem",
-            "shell": "Shell",
-            "web": "Web/Network",
-            "messaging": "Messaging",
-            "subagents": "Subagents",
-            "memory": "Memory/Knowledge",
-            "other": "Other",
-        }
-        group_guidance = {
-            "filesystem": "Prefer inspect/read before write; confirm paths in workspace.",
-            "shell": "Prefer non-destructive checks first and avoid risky commands.",
-            "web": "Use for fetching/searching current info; summarize results before acting.",
-            "messaging": "Use only for intended external replies; avoid duplicate sends.",
-            "subagents": "Use for parallelizable subtasks with clear scoped goals.",
-            "memory": "Use sparingly; persist only durable facts or reusable knowledge.",
-            "other": "Use only when it best fits the task over safer alternatives.",
-        }
-        for group in group_order:
-            group_items = grouped_lines.get(group)
-            if not group_items:
-                continue
-            lines.append(f"### {labels[group]}")
-            lines.append(f"_Guidance: {group_guidance[group]}_")
-            lines.extend(line for _, line in sorted(group_items, key=lambda x: x[0]))
-        omitted = max(0, len(tool_definitions) - total_seen)
-        if omitted > 0:
-            lines.append(f"- ...and {omitted} more tool(s) (not listed in prompt summary)")
+        def _collect_lines(compact_mode: bool) -> tuple[dict[str, list[tuple[str, str]]], int]:
+            grouped_lines: dict[str, list[tuple[str, str]]] = defaultdict(list)
+            total_seen = 0
+            for item in tool_definitions:
+                if not isinstance(item, dict):
+                    continue
+                fn = item.get("function")
+                if not isinstance(fn, dict):
+                    continue
+                name = fn.get("name")
+                if not isinstance(name, str) or not name:
+                    continue
+                desc = fn.get("description")
+                desc_text = ""
+                if isinstance(desc, str) and desc.strip():
+                    compact_desc = " ".join(desc.strip().split())
+                    desc_text = compact_desc[:120] + ("..." if len(compact_desc) > 120 else "")
+                params = fn.get("parameters")
+                param_names: list[str] = []
+                required_names: list[str] = []
+                if isinstance(params, dict):
+                    props = params.get("properties")
+                    if isinstance(props, dict):
+                        param_names = [str(k) for k in list(props.keys())[:4]]
+                    required = params.get("required")
+                    if isinstance(required, list):
+                        required_names = [str(k) for k in required[:3]]
+                suffix_parts: list[str] = []
+                if desc_text and not compact_mode:
+                    suffix_parts.append(desc_text)
+                if param_names:
+                    suffix_parts.append("params: " + ", ".join(param_names))
+                if required_names:
+                    suffix_parts.append("required: " + ", ".join(required_names))
+                caution_note = ContextBuilder._tool_runtime_note(name)
+                if caution_note and not compact_mode:
+                    suffix_parts.append("note: " + caution_note)
+                line = f"- `{name}`"
+                if suffix_parts:
+                    line += " — " + " | ".join(suffix_parts)
+                group = ContextBuilder._tool_runtime_group(name)
+                if len(grouped_lines[group]) < max_per_group and total_seen < max_tools:
+                    grouped_lines[group].append((name.lower(), line))
+                    total_seen += 1
+                if total_seen >= max_tools:
+                    break
+            return grouped_lines, total_seen
 
-        return (
-            "## Runtime Tool Catalog\n"
-            "Use only tools listed below; registered tools may differ from examples in static instructions.\n"
-            "Grouped by capability to reduce prompt noise.\n\n"
-            + ("(Compact summary mode enabled due to tool count.)\n\n" if compact_mode else "")
-            + "\n".join(lines)
-        )
+        def _render(grouped_lines: dict[str, list[tuple[str, str]]], *, compact_mode: bool, total_seen: int) -> str:
+            if not grouped_lines:
+                return ""
+            lines: list[str] = []
+            group_order = ["filesystem", "shell", "web", "messaging", "subagents", "memory", "other"]
+            labels = {
+                "filesystem": "Filesystem",
+                "shell": "Shell",
+                "web": "Web/Network",
+                "messaging": "Messaging",
+                "subagents": "Subagents",
+                "memory": "Memory/Knowledge",
+                "other": "Other",
+            }
+            group_guidance = {
+                "filesystem": "Prefer inspect/read before write; confirm paths in workspace.",
+                "shell": "Prefer non-destructive checks first and avoid risky commands.",
+                "web": "Use for fetching/searching current info; summarize results before acting.",
+                "messaging": "Use only for intended external replies; avoid duplicate sends.",
+                "subagents": "Use for parallelizable subtasks with clear scoped goals.",
+                "memory": "Use sparingly; persist only durable facts or reusable knowledge.",
+                "other": "Use only when it best fits the task over safer alternatives.",
+            }
+            for group in group_order:
+                group_items = grouped_lines.get(group)
+                if not group_items:
+                    continue
+                lines.append(f"### {labels[group]}")
+                lines.append(f"_Guidance: {group_guidance[group]}_")
+                lines.extend(line for _, line in sorted(group_items, key=lambda x: x[0]))
+            omitted = max(0, len(tool_definitions) - total_seen)
+            if omitted > 0:
+                lines.append(f"- ...and {omitted} more tool(s) (not listed in prompt summary)")
+
+            return (
+                "## Runtime Tool Catalog\n"
+                "Use only tools listed below; registered tools may differ from examples in static instructions.\n"
+                "Grouped by capability to reduce prompt noise.\n\n"
+                + ("(Compact summary mode enabled due to tool count/length.)\n\n" if compact_mode else "")
+                + "\n".join(lines)
+            )
+
+        compact_mode = len(tool_definitions) > ContextBuilder._TOOL_CATALOG_COMPACT_THRESHOLD
+        grouped_lines, total_seen = _collect_lines(compact_mode=compact_mode)
+        rendered = _render(grouped_lines, compact_mode=compact_mode, total_seen=total_seen)
+        if (
+            not compact_mode
+            and rendered
+            and len(rendered) > ContextBuilder._TOOL_CATALOG_MAX_CHARS_BEFORE_COMPACT
+        ):
+            compact_mode = True
+            grouped_lines, total_seen = _collect_lines(compact_mode=True)
+            rendered = _render(grouped_lines, compact_mode=True, total_seen=total_seen)
+        return rendered
 
     @staticmethod
     def _tool_runtime_group(name: str) -> str:
