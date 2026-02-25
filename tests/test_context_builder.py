@@ -290,7 +290,9 @@ def test_build_messages_groups_runtime_tool_catalog_by_capability(tmp_path) -> N
         joined = str(content)
 
     assert "### Filesystem" in joined
+    assert "_Guidance: Prefer inspect/read before write; confirm paths in workspace._" in joined
     assert "### Shell" in joined
+    assert "_Guidance: Prefer non-destructive checks first and avoid risky commands._" in joined
     assert "### Messaging" in joined
     assert "### Subagents" in joined
     assert "`read_file`" in joined

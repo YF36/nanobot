@@ -534,11 +534,21 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             "memory": "Memory/Knowledge",
             "other": "Other",
         }
+        group_guidance = {
+            "filesystem": "Prefer inspect/read before write; confirm paths in workspace.",
+            "shell": "Prefer non-destructive checks first and avoid risky commands.",
+            "web": "Use for fetching/searching current info; summarize results before acting.",
+            "messaging": "Use only for intended external replies; avoid duplicate sends.",
+            "subagents": "Use for parallelizable subtasks with clear scoped goals.",
+            "memory": "Use sparingly; persist only durable facts or reusable knowledge.",
+            "other": "Use only when it best fits the task over safer alternatives.",
+        }
         for group in group_order:
             group_items = grouped_lines.get(group)
             if not group_items:
                 continue
             lines.append(f"### {labels[group]}")
+            lines.append(f"_Guidance: {group_guidance[group]}_")
             lines.extend(group_items)
         omitted = max(0, len(tool_definitions) - total_seen)
         if omitted > 0:
