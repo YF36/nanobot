@@ -313,9 +313,11 @@ class SubagentManager:
     async def _on_turn_event(self, event: TurnEventPayload) -> None:
         """Internal subagent turn event sink for debug/observability."""
         event_type = event.get("type", "unknown")
+        event_kind = event.get("kind", event_type)
         if event_type in {TURN_EVENT_TOOL_START, TURN_EVENT_TOOL_END}:
             logger.debug(
                 "subagent_turn_event",
+                event_kind=event_kind,
                 event_type=event_type,
                 **turn_event_trace_fields(event),
                 tool=event.get("tool"),
@@ -327,6 +329,7 @@ class SubagentManager:
             return
         logger.debug(
             "subagent_turn_event",
+            event_kind=event_kind,
             event_type=event_type,
             **turn_event_trace_fields(event),
             payload=event,

@@ -108,6 +108,7 @@ class TurnEventStatsCollector:
         self.detail_ops: set[str] = set()
         self.turn_ids: set[str] = set()
         self.sources: set[str] = set()
+        self.kinds: set[str] = set()
         self.error_tools = 0
 
     async def on_event(self, event: TurnEventPayload) -> None:
@@ -117,6 +118,9 @@ class TurnEventStatsCollector:
         source = event.get("source")
         if isinstance(source, str) and source:
             self.sources.add(source)
+        kind = event.get("kind")
+        if isinstance(kind, str) and kind:
+            self.kinds.add(kind)
 
         event_type = event.get("type")
         if event_type == TURN_EVENT_TURN_START:
@@ -148,6 +152,7 @@ class TurnEventStatsCollector:
             tool_ends=self.tool_ends,
             error_tools=self.error_tools,
             detail_ops=sorted(self.detail_ops),
+            event_kinds=sorted(self.kinds),
             turn_ids=sorted(self.turn_ids),
             sources=sorted(self.sources),
         )

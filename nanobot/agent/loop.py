@@ -328,9 +328,11 @@ class AgentLoop:
     async def _on_turn_event(self, event: TurnEventPayload) -> None:
         """Internal turn event sink for debug/observability; does not affect behavior."""
         event_type = event.get("type", "unknown")
+        event_kind = event.get("kind", event_type)
         if event_type in {TURN_EVENT_TOOL_START, TURN_EVENT_TOOL_END}:
             logger.debug(
                 "turn_event",
+                event_kind=event_kind,
                 event_type=event_type,
                 **turn_event_trace_fields(event),
                 tool=event.get("tool"),
@@ -340,7 +342,13 @@ class AgentLoop:
                 detail_op=event.get("detail_op"),
             )
             return
-        logger.debug("turn_event", event_type=event_type, **turn_event_trace_fields(event), payload=event)
+        logger.debug(
+            "turn_event",
+            event_kind=event_kind,
+            event_type=event_type,
+            **turn_event_trace_fields(event),
+            payload=event,
+        )
 
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""
