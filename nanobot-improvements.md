@@ -380,11 +380,11 @@
 2. 引入内部事件模型（先不改外部接口）
 3. `SubagentManager` 复用 `TurnRunner`
 
-状态（截至 2026-02-24）：部分完成（2/3）
+状态（截至 2026-02-24）：已完成（按最小版目标）
 
 - 已完成：`AgentLoop` 拆分（`TurnRunner`、`SessionCommandHandler`、`ConsolidationCoordinator`、`MessageProcessor`、`TurnHistoryWriter` 等）
 - 已完成：`SubagentManager` 复用 `TurnRunner`
-- 未开始：内部事件模型（当前仍以 `on_progress` 文本回调为主）
+- 已完成：内部事件模型（最小版，内部使用；外部接口仍保持 `on_progress` 兼容）
 
 ## 已落地进展（截至 2026-02-24）
 
@@ -397,6 +397,8 @@
 - 已落地：`MessageProcessor` 再拆为 handlers/helpers/types 模块（`message_processor.py` / `message_processor_helpers.py` / `message_processor_types.py`）
 - 已落地：`SubagentManager` 复用 `TurnRunner`，消除重复 mini-agent loop
 - 已落地：`SubagentManager` prompt/result announcement helper 拆分（可读性提升）
+- 已落地：内部事件模型（最小版）接入 `TurnRunner` / `AgentLoop` / `MessageProcessor`（内部 debug/可观测性）
+- 已落地：内部事件 payload 基础 trace 字段（`turn_id` / `sequence` / `timestamp_ms` / `source`）
 
 ### 工具运行时与兼容层
 
@@ -420,6 +422,7 @@
 
 - 已落地：补充 `filesystem` 工具结构化结果测试
 - 已落地：补充 `turn_runner` `_tool_details` envelope 测试
+- 已落地：补充 `TurnRunner` 内部事件流测试（顺序、`turn_id`、`sequence`、`timestamp_ms`、`source`）
 - 已落地：补充 `message` / `spawn` 工具结构化结果测试
 - 已落地：补充 `ToolRegistry` 审计 `detail_op` 在 `edit_file` / `exec` / `message` / `spawn` 的真实工具覆盖
 - 已验证：Phase 2 回归基线（选定 pytest 子集）`219 passed`
@@ -434,6 +437,13 @@
 - `2b9ee6f` `feat retain structured tool details in session history`
 - `fd8e551` `feat structured exec tool details`
 - `2f8bf25` `feat structured details for message and spawn tools`
+- `b40d463` `feat add internal turn event hooks in agent loop`
+- `98d0e0a` `feat add message-level turn event stats`
+- `40a6215` `feat add turn ids to internal turn events`
+- `14e1ab9` `feat add event sequence numbers to turn events`
+- `099ad03` `feat add timestamps to internal turn events`
+- `6dedc40` `feat add source labels to turn events`
+- `75462e5` `feat include turn ids in message event summaries`
 
 ## Phase 3（能力升级）
 
