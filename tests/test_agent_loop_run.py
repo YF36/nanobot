@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from nanobot.bus.queue import MessageBus
+from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.loop import AgentLoop
 from nanobot.providers.base import LLMProvider, LLMResponse
@@ -127,3 +128,50 @@ def test_guard_loop_messages_truncates_large_tool_result_in_current_turn(tmp_pat
     assert isinstance(guarded[-1]["content"], str)
     assert guarded[-1]["content"].endswith("\n... (truncated)")
     assert len(guarded[-1]["content"]) < len(large_tool_output)
+
+
+@pytest.mark.asyncio
+async def test_process_message_queues_followups_per_session() -> None:
+    agent = AgentLoop.__new__(AgentLoop)
+    agent._followup_locks = {}
+    agent._followup_queues = {}
+
+    started = asyncio.Event()
+    release_first = asyncio.Event()
+    call_order: list[str] = []
+    active = 0
+    max_active = 0
+
+    class _Processor:
+        async def process(self, msg, session_key=None, on_progress=None):
+            nonlocal active, max_active
+            call_order.append(msg.content)
+            active += 1
+            max_active = max(max_active, active)
+            if msg.content == "first":
+                started.set()
+                await release_first.wait()
+            active -= 1
+            return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content=f"ok:{msg.content}")
+
+    agent._message_processor = _Processor()
+
+    msg1 = InboundMessage(channel="cli", sender_id="u", chat_id="direct", content="first")
+    msg2 = InboundMessage(channel="cli", sender_id="u", chat_id="direct", content="second")
+
+    t1 = asyncio.create_task(agent._process_message(msg1))
+    await started.wait()
+    t2 = asyncio.create_task(agent._process_message(msg2))
+    await asyncio.sleep(0)
+
+    assert len(agent._followup_queues[msg1.session_key]) == 1
+    release_first.set()
+
+    r1 = await t1
+    r2 = await t2
+
+    assert r1 and r1.content == "ok:first"
+    assert r2 and r2.content == "ok:second"
+    assert call_order == ["first", "second"]
+    assert max_active == 1
+    assert msg1.session_key not in agent._followup_queues

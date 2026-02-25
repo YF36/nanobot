@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections import deque
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -39,6 +41,14 @@ if TYPE_CHECKING:
     from nanobot.cron.service import CronService
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class _QueuedFollowup:
+    msg: InboundMessage
+    session_key: str | None
+    on_progress: Callable[[str], Awaitable[None]] | None
+    future: asyncio.Future[OutboundMessage | None]
 
 
 class AgentLoop:
@@ -113,6 +123,8 @@ class AgentLoop:
         self._mcp_connected = False
         self._mcp_connecting = False
         self._consolidation = ConsolidationCoordinator()
+        self._followup_locks: dict[str, asyncio.Lock] = {}
+        self._followup_queues: dict[str, deque[_QueuedFollowup]] = {}
         # Compatibility aliases for existing tests and internal references.
         self._consolidating = self._consolidation.in_progress
         self._consolidation_tasks = self._consolidation.tasks
@@ -420,7 +432,75 @@ class AgentLoop:
         on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
+        if not hasattr(self, "_message_processor"):
+            return None
+
+        followup_key = self._followup_session_key(msg, session_key)
+        lock = self._get_followup_lock(followup_key)
+
+        if lock.locked():
+            future: asyncio.Future[OutboundMessage | None] = asyncio.get_running_loop().create_future()
+            queue = self._followup_queues.setdefault(followup_key, deque())
+            queue.append(_QueuedFollowup(msg=msg, session_key=session_key, on_progress=on_progress, future=future))
+            logger.debug(
+                "followup_enqueued",
+                session_key=followup_key,
+                queue_size=len(queue),
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+            )
+            return await future
+
+        async with lock:
+            response = await self._process_message_once(msg, session_key=session_key, on_progress=on_progress)
+            queue = self._followup_queues.get(followup_key)
+            while queue:
+                item = queue.popleft()
+                try:
+                    next_response = await self._process_message_once(
+                        item.msg,
+                        session_key=item.session_key,
+                        on_progress=item.on_progress,
+                    )
+                except Exception as e:
+                    if not item.future.done():
+                        item.future.set_exception(e)
+                else:
+                    if not item.future.done():
+                        item.future.set_result(next_response)
+                logger.debug(
+                    "followup_drained",
+                    session_key=followup_key,
+                    remaining=len(queue),
+                    channel=item.msg.channel,
+                    chat_id=item.msg.chat_id,
+                )
+            self._followup_queues.pop(followup_key, None)
+            return response
+
+    async def _process_message_once(
+        self,
+        msg: InboundMessage,
+        session_key: str | None = None,
+        on_progress: Callable[[str], Awaitable[None]] | None = None,
+    ) -> OutboundMessage | None:
         return await self._message_processor.process(msg, session_key=session_key, on_progress=on_progress)
+
+    @staticmethod
+    def _followup_session_key(msg: InboundMessage, session_key: str | None) -> str:
+        """Resolve queue key for follow-up serialization (system messages target original session)."""
+        if session_key:
+            return session_key
+        if msg.channel == "system" and ":" in msg.chat_id:
+            return msg.chat_id
+        return msg.session_key
+
+    def _get_followup_lock(self, session_key: str) -> asyncio.Lock:
+        locks = getattr(self, "_followup_locks", None)
+        if locks is None:
+            self._followup_locks = {}
+            locks = self._followup_locks
+        return locks.setdefault(session_key, asyncio.Lock())
 
     _TOOL_RESULT_MAX_CHARS = 500
     _ASSISTANT_HISTORY_MAX_CHARS = 300
