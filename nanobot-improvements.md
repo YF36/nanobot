@@ -407,6 +407,7 @@
 - 已落地：`ToolRegistry` 审计日志增加结构化结果可观测字段：`has_details` / `detail_op` / `is_error`
 - 已落地：`TurnRunner` 会话 `_tool_details` metadata envelope（含 `schema_version`）
 - 已落地：`ContextBuilder` 在发给 LLM 前剥离 `_tool_details`（会话可存、模型不可见）
+- 已落地：结构化 tool `details` 的 `op` 常量与基础 helper 收口（`nanobot/agent/tools/tool_details.py`）
 
 ### 工具能力与 UX（对标 pi-mono 的高 ROI 部分）
 
@@ -461,6 +462,7 @@
 - `40e47a3` `feat write session files atomically`
 - `30c4083` `feat add periodic session save summary metrics`
 - `528e84c` `perf cache session list metadata reads`
+- `fa0fa27` `refactor unify structured tool details constants`
 
 ## Phase 3（能力升级）
 
