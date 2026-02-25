@@ -399,6 +399,10 @@
 - 已落地：`SubagentManager` prompt/result announcement helper 拆分（可读性提升）
 - 已落地：内部事件模型（最小版）接入 `TurnRunner` / `AgentLoop` / `MessageProcessor`（内部 debug/可观测性）
 - 已落地：内部事件 payload 基础 trace 字段（`turn_id` / `sequence` / `timestamp_ms` / `source`）
+- 已落地（部分）：内部事件扩展协议最小版
+  - 事件 payload 增加 `namespace` / `version`（协议扩展字段）
+  - 保留 `type` 兼容，同时增加分层 `kind`（如 `turn.start` / `tool.end`）
+  - `AgentLoop` / `Subagent` / `MessageProcessor` debug sink 开始消费 `kind`
 - 已落地（部分）：`steering/follow-up` 最小版
   - 同 session `follow-up` 排队串行处理
   - 工具执行后检测到 pending follow-up 时提前结束当前 turn（`steer v1`）
@@ -496,6 +500,9 @@
 - `f61ffce` `feat add compact runtime tool catalog mode`
 - `dfb2fce` `feat compact tool catalog on count or length`
 - `0068b66` `feat make tool catalog compact thresholds configurable`
+- `fb8d2bd` `feat add event namespace and version fields`
+- `2a9d0cf` `feat add hierarchical turn event kinds`
+- `a5b32fe` `refactor prefer event kind in debug sinks`
 
 ## Phase 3（能力升级）
 
