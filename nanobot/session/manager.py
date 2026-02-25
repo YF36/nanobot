@@ -79,6 +79,13 @@ class SessionManager:
         self._persisted_signatures: dict[str, str] = {}
         self._save_writes = 0
         self._save_skips = 0
+        self._save_summary_every = 50
+        self._save_summary_ops = 0
+        self._save_summary_writes = 0
+        self._save_summary_skips = 0
+        self._save_summary_elapsed_ms = 0.0
+        self._save_summary_write_elapsed_ms = 0.0
+        self._save_summary_skip_elapsed_ms = 0.0
     
     def _get_session_path(self, key: str) -> Path:
         """Get the file path for a session."""
@@ -205,6 +212,45 @@ class SessionManager:
             f.flush()
             os.fsync(f.fileno())
         tmp_path.replace(path)
+
+    def _record_save_observation(self, *, wrote: bool, elapsed_ms: float) -> None:
+        """Track save metrics and periodically emit a debug summary."""
+        self._save_summary_ops += 1
+        self._save_summary_elapsed_ms += elapsed_ms
+        if wrote:
+            self._save_summary_writes += 1
+            self._save_summary_write_elapsed_ms += elapsed_ms
+        else:
+            self._save_summary_skips += 1
+            self._save_summary_skip_elapsed_ms += elapsed_ms
+
+        if self._save_summary_ops < self._save_summary_every:
+            return
+
+        ops = self._save_summary_ops
+        writes = self._save_summary_writes
+        skips = self._save_summary_skips
+        total_ms = self._save_summary_elapsed_ms
+        write_ms = self._save_summary_write_elapsed_ms
+        skip_ms = self._save_summary_skip_elapsed_ms
+        logger.debug(
+            "session_save_summary",
+            interval_ops=ops,
+            interval_writes=writes,
+            interval_skips=skips,
+            interval_skip_rate=round(skips / ops, 4) if ops else 0.0,
+            interval_avg_ms=round(total_ms / ops, 3) if ops else 0.0,
+            interval_write_avg_ms=round(write_ms / writes, 3) if writes else None,
+            interval_skip_avg_ms=round(skip_ms / skips, 3) if skips else None,
+            save_writes=self._save_writes,
+            save_skips=self._save_skips,
+        )
+        self._save_summary_ops = 0
+        self._save_summary_writes = 0
+        self._save_summary_skips = 0
+        self._save_summary_elapsed_ms = 0.0
+        self._save_summary_write_elapsed_ms = 0.0
+        self._save_summary_skip_elapsed_ms = 0.0
     
     def save(self, session: Session) -> None:
         """Save a session to disk."""
@@ -224,6 +270,7 @@ class SessionManager:
                 save_skips=self._save_skips,
             )
             self._cache[session.key] = session
+            self._record_save_observation(wrote=False, elapsed_ms=elapsed_ms)
             return
 
         self._write_session_file(path, session)
@@ -242,6 +289,7 @@ class SessionManager:
             save_writes=self._save_writes,
             save_skips=self._save_skips,
         )
+        self._record_save_observation(wrote=True, elapsed_ms=elapsed_ms)
     
     def invalidate(self, key: str) -> None:
         """Remove a session from the in-memory cache."""
