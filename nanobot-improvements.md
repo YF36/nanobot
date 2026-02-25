@@ -403,6 +403,7 @@
   - 事件 payload 增加 `namespace` / `version`（协议扩展字段）
   - 保留 `type` 兼容，同时增加分层 `kind`（如 `turn.start` / `tool.end`）
   - `AgentLoop` / `Subagent` / `MessageProcessor` debug sink 开始消费 `kind`
+  - 已落地：`/health?debug=events` 暴露 `turn_event_capabilities`（调试/适配器探测用；默认 `/health` 不变）
 - 已落地（部分）：`steering/follow-up` 最小版
   - 同 session `follow-up` 排队串行处理
   - 工具执行后检测到 pending follow-up 时提前结束当前 turn（`steer v1`）
@@ -503,6 +504,7 @@
 - `fb8d2bd` `feat add event namespace and version fields`
 - `2a9d0cf` `feat add hierarchical turn event kinds`
 - `a5b32fe` `refactor prefer event kind in debug sinks`
+- `5e8ac05` `feat expose turn event capabilities via health debug`
 
 ## Phase 3（能力升级）
 
