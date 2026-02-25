@@ -358,6 +358,34 @@
 
 这也方便做 channel-specific 命令。
 
+## J. `/new` 命令的记忆压缩应考虑“响应优先、后台收尾”（中优先级，未实施）
+
+现象（用户体验问题）：
+
+- 在 IM 渠道（如 Feishu）里发送 `/new` 后，如果旧 session 触发记忆压缩（consolidation），用户会明显等待很久才收到 `New session started.`。
+
+判断：
+
+- `/new` 的核心语义是“切换到新 session”，不是“等待旧 session 压缩完成”。
+- 因此适合把“旧 session 的 consolidation”从 `/new` 同步路径中移出，改为后台收尾（最终一致）。
+
+建议方案（最小版，先不改外部命令语义）：
+
+1. `/new` 同步完成：
+   - 创建/切换新 session
+   - 立即回复 `New session started.`
+2. 对旧 session：
+   - 如需压缩，交给 `ConsolidationCoordinator.start_background(...)`
+   - 增加来源标记（如 `reason="session_reset"` / `source="command:/new"`）便于日志观测
+3. 后台任务失败：
+   - 仅记录 warning/debug，不影响新 session 可用性
+
+设计注意点（实施时）：
+
+- 旧 session 与后续消息可能并发，需继续依赖 `ConsolidationCoordinator` 的 session 级排他/任务管理。
+- 不建议把 `/new` 的全部逻辑异步化；仅异步化“慢收尾”（consolidation + 可选二次保存）。
+- 可选增强：先同步快速保存旧 session，再后台做压缩（两阶段收尾）。
+
 ## 我建议的落地顺序（ROI 排序）
 
 ## Phase 1（高 ROI，低风险，先做）
