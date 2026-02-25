@@ -175,3 +175,44 @@ async def test_process_message_queues_followups_per_session() -> None:
     assert call_order == ["first", "second"]
     assert max_active == 1
     assert msg1.session_key not in agent._followup_queues
+
+
+@pytest.mark.asyncio
+async def test_process_message_rejects_followup_when_queue_is_full(monkeypatch) -> None:
+    import nanobot.agent.loop as loop_module
+
+    monkeypatch.setattr(loop_module, "_FOLLOWUP_QUEUE_MAX_SIZE", 1)
+
+    agent = AgentLoop.__new__(AgentLoop)
+    agent._followup_locks = {}
+    agent._followup_queues = {}
+
+    started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    class _Processor:
+        async def process(self, msg, session_key=None, on_progress=None):
+            if msg.content == "first":
+                started.set()
+                await release_first.wait()
+            return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content=f"ok:{msg.content}")
+
+    agent._message_processor = _Processor()
+
+    msg1 = InboundMessage(channel="cli", sender_id="u", chat_id="direct", content="first")
+    msg2 = InboundMessage(channel="cli", sender_id="u", chat_id="direct", content="second")
+    msg3 = InboundMessage(channel="cli", sender_id="u", chat_id="direct", content="third")
+
+    t1 = asyncio.create_task(agent._process_message(msg1))
+    await started.wait()
+    t2 = asyncio.create_task(agent._process_message(msg2))
+    await asyncio.sleep(0)
+
+    r3 = await agent._process_message(msg3)
+    assert r3 is not None
+    assert "still processing earlier messages" in r3.content
+
+    release_first.set()
+    await t1
+    r2 = await t2
+    assert r2 and r2.content == "ok:second"

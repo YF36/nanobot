@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from nanobot.cron.service import CronService
 
 logger = get_logger(__name__)
+_FOLLOWUP_QUEUE_MAX_SIZE = 16
 
 
 @dataclass
@@ -441,6 +442,21 @@ class AgentLoop:
         if lock.locked():
             future: asyncio.Future[OutboundMessage | None] = asyncio.get_running_loop().create_future()
             queue = self._followup_queues.setdefault(followup_key, deque())
+            if len(queue) >= _FOLLOWUP_QUEUE_MAX_SIZE:
+                logger.warning(
+                    "followup_queue_full",
+                    session_key=followup_key,
+                    queue_size=len(queue),
+                    queue_max=_FOLLOWUP_QUEUE_MAX_SIZE,
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                )
+                return OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content="I'm still processing earlier messages in this conversation. Please wait a moment and retry.",
+                    metadata=msg.metadata or {},
+                )
             queue.append(_QueuedFollowup(msg=msg, session_key=session_key, on_progress=on_progress, future=future))
             logger.debug(
                 "followup_enqueued",
