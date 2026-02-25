@@ -91,3 +91,50 @@ def test_save_logs_periodic_summary(monkeypatch, tmp_path: Path) -> None:
     assert summary["interval_ops"] == 2
     assert summary["interval_writes"] == 1
     assert summary["interval_skips"] == 1
+
+
+def test_list_sessions_uses_metadata_cache_and_invalidates_on_change(monkeypatch, tmp_path: Path) -> None:
+    manager = SessionManager(Path(tmp_path))
+    session = manager.get_or_create("cli:test")
+    session.add_message("user", "hello")
+    manager.save(session)
+
+    reads: list[str] = []
+    original = manager._read_session_list_metadata
+
+    def _counting_read(path: Path):
+        reads.append(path.name)
+        return original(path)
+
+    monkeypatch.setattr(manager, "_read_session_list_metadata", _counting_read)
+
+    first = manager.list_sessions()
+    second = manager.list_sessions()
+    assert len(first) == 1 and len(second) == 1
+    assert reads.count("cli_test.jsonl") == 1
+
+    session.add_message("assistant", "world")
+    manager.save(session)
+    third = manager.list_sessions()
+    assert len(third) == 1
+    assert reads.count("cli_test.jsonl") == 2
+
+
+def test_list_sessions_ignores_bad_files_with_debug_log(monkeypatch, tmp_path: Path) -> None:
+    manager = SessionManager(Path(tmp_path))
+    bad = manager.sessions_dir / "broken.jsonl"
+    bad.write_text("{not-json}\n", encoding="utf-8")
+
+    debug_calls: list[tuple[str, dict]] = []
+    original_debug = session_manager_module.logger.debug
+
+    def _capture_debug(event, **kwargs):
+        debug_calls.append((event, kwargs))
+        return original_debug(event, **kwargs)
+
+    monkeypatch.setattr(session_manager_module.logger, "debug", _capture_debug)
+
+    assert manager.list_sessions() == []
+    failures = [kwargs for event, kwargs in debug_calls if event == "list_sessions_read_failed"]
+    assert len(failures) == 1
+    assert failures[0]["path"].endswith("broken.jsonl")

@@ -77,6 +77,7 @@ class SessionManager:
         self.legacy_sessions_dir = Path.home() / ".nanobot" / "sessions"
         self._cache: dict[str, Session] = {}
         self._persisted_signatures: dict[str, str] = {}
+        self._list_session_cache: dict[str, tuple[int, int, dict[str, Any] | None]] = {}
         self._save_writes = 0
         self._save_skips = 0
         self._save_summary_every = 50
@@ -295,6 +296,24 @@ class SessionManager:
         """Remove a session from the in-memory cache."""
         self._cache.pop(key, None)
         self._persisted_signatures.pop(key, None)
+
+    @staticmethod
+    def _read_session_list_metadata(path: Path) -> dict[str, Any] | None:
+        """Read listable session metadata from the first JSONL line."""
+        with open(path, encoding="utf-8") as f:
+            first_line = f.readline().strip()
+            if not first_line:
+                return None
+            data = json.loads(first_line)
+            if data.get("_type") != "metadata":
+                return None
+            key = data.get("key") or path.stem.replace("_", ":", 1)
+            return {
+                "key": key,
+                "created_at": data.get("created_at"),
+                "updated_at": data.get("updated_at"),
+                "path": str(path),
+            }
     
     def list_sessions(self) -> list[dict[str, Any]]:
         """
@@ -303,24 +322,29 @@ class SessionManager:
         Returns:
             List of session info dicts.
         """
-        sessions = []
-        
+        sessions: list[dict[str, Any]] = []
+        seen_paths: set[str] = set()
+
         for path in self.sessions_dir.glob("*.jsonl"):
+            cache_key = str(path)
+            seen_paths.add(cache_key)
             try:
-                # Read just the metadata line
-                with open(path, encoding="utf-8") as f:
-                    first_line = f.readline().strip()
-                    if first_line:
-                        data = json.loads(first_line)
-                        if data.get("_type") == "metadata":
-                            key = data.get("key") or path.stem.replace("_", ":", 1)
-                            sessions.append({
-                                "key": key,
-                                "created_at": data.get("created_at"),
-                                "updated_at": data.get("updated_at"),
-                                "path": str(path)
-                            })
-            except Exception:
+                stat = path.stat()
+                fingerprint = (stat.st_mtime_ns, stat.st_size)
+                cached = self._list_session_cache.get(cache_key)
+                if cached and cached[:2] == fingerprint:
+                    meta = cached[2]
+                else:
+                    meta = self._read_session_list_metadata(path)
+                    self._list_session_cache[cache_key] = (fingerprint[0], fingerprint[1], meta)
+                if meta is not None:
+                    sessions.append(meta)
+            except Exception as e:
+                logger.debug("list_sessions_read_failed", path=str(path), error=str(e))
                 continue
-        
+
+        stale = [p for p in self._list_session_cache if p not in seen_paths]
+        for cache_key in stale:
+            self._list_session_cache.pop(cache_key, None)
+
         return sorted(sessions, key=lambda x: x.get("updated_at", ""), reverse=True)
