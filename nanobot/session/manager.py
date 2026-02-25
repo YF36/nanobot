@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import time
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -75,6 +76,8 @@ class SessionManager:
         self.legacy_sessions_dir = Path.home() / ".nanobot" / "sessions"
         self._cache: dict[str, Session] = {}
         self._persisted_signatures: dict[str, str] = {}
+        self._save_writes = 0
+        self._save_skips = 0
     
     def _get_session_path(self, key: str) -> Path:
         """Get the file path for a session."""
@@ -200,21 +203,39 @@ class SessionManager:
     def save(self, session: Session) -> None:
         """Save a session to disk."""
         path = self._get_session_path(session.key)
+        started = time.perf_counter()
         signature = self._persist_signature(session)
         if path.exists() and self._persisted_signatures.get(session.key) == signature:
+            self._save_skips += 1
+            elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
             logger.debug(
-                "Skipping unchanged session save",
+                "session_save_skipped",
                 session_key=session.key,
                 message_count=len(session.messages),
                 last_consolidated=session.last_consolidated,
+                elapsed_ms=elapsed_ms,
+                save_writes=self._save_writes,
+                save_skips=self._save_skips,
             )
             self._cache[session.key] = session
             return
 
         self._write_session_file(path, session)
+        self._save_writes += 1
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
 
         self._cache[session.key] = session
         self._persisted_signatures[session.key] = signature
+        logger.debug(
+            "session_save_written",
+            session_key=session.key,
+            message_count=len(session.messages),
+            last_consolidated=session.last_consolidated,
+            elapsed_ms=elapsed_ms,
+            file_bytes=path.stat().st_size if path.exists() else None,
+            save_writes=self._save_writes,
+            save_skips=self._save_skips,
+        )
     
     def invalidate(self, key: str) -> None:
         """Remove a session from the in-memory cache."""
