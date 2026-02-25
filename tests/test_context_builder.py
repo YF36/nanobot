@@ -237,3 +237,61 @@ def test_build_messages_omits_runtime_tool_catalog_when_no_tools(tmp_path) -> No
     else:
         joined = str(content)
     assert "## Runtime Tool Catalog" not in joined
+
+
+def test_build_messages_groups_runtime_tool_catalog_by_capability(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    tool_defs = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read file.",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "exec",
+                "description": "Run shell command.",
+                "parameters": {"type": "object", "properties": {"command": {"type": "string"}}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "message",
+                "description": "Send message to chat.",
+                "parameters": {"type": "object", "properties": {"content": {"type": "string"}}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "spawn",
+                "description": "Spawn subagent.",
+                "parameters": {"type": "object", "properties": {"task": {"type": "string"}}},
+            },
+        },
+    ]
+
+    messages = builder.build_messages(history=[], current_message="hi", tool_definitions=tool_defs)
+    content = messages[0]["content"]
+    if isinstance(content, list):
+        joined = "\n".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    else:
+        joined = str(content)
+
+    assert "### Filesystem" in joined
+    assert "### Shell" in joined
+    assert "### Messaging" in joined
+    assert "### Subagents" in joined
+    assert "`read_file`" in joined
+    assert "`exec`" in joined
+    assert "`message`" in joined
+    assert "`spawn`" in joined

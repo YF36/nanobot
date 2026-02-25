@@ -5,6 +5,7 @@ import io
 import json
 import mimetypes
 import platform
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -472,8 +473,10 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         if not tool_definitions:
             return ""
 
-        lines: list[str] = []
+        grouped_lines: dict[str, list[str]] = defaultdict(list)
+        total_seen = 0
         max_tools = 20
+        max_per_group = 6
         for item in tool_definitions:
             if not isinstance(item, dict):
                 continue
@@ -502,23 +505,59 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             line = f"- `{name}`"
             if suffix_parts:
                 line += " — " + " | ".join(suffix_parts)
-            lines.append(line)
-            if len(lines) >= max_tools:
+            group = ContextBuilder._tool_runtime_group(name)
+            if len(grouped_lines[group]) < max_per_group and total_seen < max_tools:
+                grouped_lines[group].append(line)
+                total_seen += 1
+            if total_seen >= max_tools:
                 break
 
-        if not lines:
+        if not grouped_lines:
             return ""
-        omitted = 0
-        if isinstance(tool_definitions, list) and len(tool_definitions) > len(lines):
-            omitted = len(tool_definitions) - len(lines)
+        lines: list[str] = []
+        group_order = ["filesystem", "shell", "web", "messaging", "subagents", "memory", "other"]
+        labels = {
+            "filesystem": "Filesystem",
+            "shell": "Shell",
+            "web": "Web/Network",
+            "messaging": "Messaging",
+            "subagents": "Subagents",
+            "memory": "Memory/Knowledge",
+            "other": "Other",
+        }
+        for group in group_order:
+            group_items = grouped_lines.get(group)
+            if not group_items:
+                continue
+            lines.append(f"### {labels[group]}")
+            lines.extend(group_items)
+        omitted = max(0, len(tool_definitions) - total_seen)
         if omitted > 0:
-            lines.append(f"- ...and {omitted} more tool(s)")
+            lines.append(f"- ...and {omitted} more tool(s) (not listed in prompt summary)")
 
         return (
             "## Runtime Tool Catalog\n"
-            "Use only tools listed below; registered tools may differ from examples in static instructions.\n\n"
+            "Use only tools listed below; registered tools may differ from examples in static instructions.\n"
+            "Grouped by capability to reduce prompt noise.\n\n"
             + "\n".join(lines)
         )
+
+    @staticmethod
+    def _tool_runtime_group(name: str) -> str:
+        lower = name.lower()
+        if any(key in lower for key in ("file", "dir", "grep", "glob", "ls")):
+            return "filesystem"
+        if any(key in lower for key in ("exec", "shell", "bash", "cmd")):
+            return "shell"
+        if any(key in lower for key in ("web", "http", "url", "fetch", "search")):
+            return "web"
+        if any(key in lower for key in ("message", "send", "notify")):
+            return "messaging"
+        if any(key in lower for key in ("spawn", "subagent", "agent")):
+            return "subagents"
+        if any(key in lower for key in ("memory", "skill")):
+            return "memory"
+        return "other"
 
     # Max dimension (px) and file size (bytes) for images sent to LLM
     _IMAGE_MAX_DIM = 1024
