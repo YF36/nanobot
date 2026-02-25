@@ -425,6 +425,8 @@
 - 已落地：session 保存 observability（`session_save_written` / `session_save_skipped`，含耗时与计数）
 - 已落地：session 文件原子写（临时文件 + `replace()` + `fsync`）
 - 已落地：周期性 session save summary metrics（跳过率、区间平均耗时等）
+- 已落地：`list_sessions()` 首行 metadata 读取缓存（按 `mtime_ns + size` 失效）
+- 已落地：`list_sessions()` 坏文件读取失败 debug 日志（不再静默吞错）
 
 ### 测试与验证基线
 
@@ -434,6 +436,7 @@
 - 已落地：补充 `message` / `spawn` 工具结构化结果测试
 - 已落地：补充 `ToolRegistry` 审计 `detail_op` 在 `edit_file` / `exec` / `message` / `spawn` 的真实工具覆盖
 - 已落地：补充 `SessionManager.save()` 去重/原子写/周期汇总观测测试
+- 已落地：补充 `list_sessions()` metadata 缓存命中/失效与坏文件 debug 日志测试
 - 已验证：Phase 2 回归基线（选定 pytest 子集）`219 passed`
 
 ### 代表性提交（节选）
@@ -457,6 +460,7 @@
 - `ab43316` `feat add session save observability logging`
 - `40e47a3` `feat write session files atomically`
 - `30c4083` `feat add periodic session save summary metrics`
+- `528e84c` `perf cache session list metadata reads`
 
 ## Phase 3（能力升级）
 
