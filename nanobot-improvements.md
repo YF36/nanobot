@@ -399,6 +399,9 @@
 - 已落地：`SubagentManager` prompt/result announcement helper 拆分（可读性提升）
 - 已落地：内部事件模型（最小版）接入 `TurnRunner` / `AgentLoop` / `MessageProcessor`（内部 debug/可观测性）
 - 已落地：内部事件 payload 基础 trace 字段（`turn_id` / `sequence` / `timestamp_ms` / `source`）
+- 已落地（部分）：`steering/follow-up` 最小版
+  - 同 session `follow-up` 排队串行处理
+  - 工具执行后检测到 pending follow-up 时提前结束当前 turn（`steer v1`）
 
 ### 工具运行时与兼容层
 
@@ -463,12 +466,20 @@
 - `30c4083` `feat add periodic session save summary metrics`
 - `528e84c` `perf cache session list metadata reads`
 - `fa0fa27` `refactor unify structured tool details constants`
+- `090ef93` `feat queue follow-up messages per session`
+- `d0c3069` `feat interrupt turns for pending follow-up messages`
 
 ## Phase 3（能力升级）
 
 1. steering/follow-up 队列
 2. 自动重试 + overflow 自动 compact/重试
 3. 动态工具集与 system prompt 联动
+
+状态（截至 2026-02-25）：部分完成（1/3）
+
+- 已部分完成：`steering/follow-up`（follow-up 队列 + `steer v1` 工具后让出）
+- 未开始：自动重试 + overflow 自动 compact/重试
+- 未开始：动态工具集与 system prompt 联动
 
 ## Phase 4（更长期）
 
