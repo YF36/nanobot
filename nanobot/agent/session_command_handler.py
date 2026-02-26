@@ -76,36 +76,34 @@ class SessionCommandHandler:
     async def _handle_new(self, msg: InboundMessage, session: Session, *, force_new: bool) -> OutboundMessage:
         await self.consolidation.cancel_inflight(session.key)
 
-        try:
-            async def _archive_snapshot() -> OutboundMessage | None:
-                snapshot = session.messages[session.last_consolidated:]
-                if snapshot:
-                    temp = Session(key=session.key)
-                    temp.messages = list(snapshot)
-                    if not await self.consolidate_memory(temp, True):
-                        if force_new:
-                            logger.warning(
-                                "/new force mode: archival failed, clearing session anyway",
-                                session_key=session.key,
-                            )
-                        else:
-                            return OutboundMessage(
-                                channel=msg.channel,
-                                chat_id=msg.chat_id,
-                                content="Memory archival failed, session not cleared. Please try again.",
-                            )
-                return None
+        snapshot = list(session.messages[session.last_consolidated:])
 
-            archival_error = await self.consolidation.run_exclusive(session.key, _archive_snapshot)
-            if archival_error is not None:
-                return archival_error
-        except Exception:
-            logger.exception("/new archival failed", session_key=session.key)
-            if not force_new:
-                return OutboundMessage(
-                    channel=msg.channel,
-                    chat_id=msg.chat_id,
-                    content="Memory archival failed, session not cleared. Please try again.",
+        if snapshot:
+            temp = Session(key=session.key)
+            temp.messages = snapshot
+
+            async def _archive_snapshot_background() -> None:
+                try:
+                    ok = await self.consolidate_memory(temp, True)
+                    if not ok:
+                        logger.warning(
+                            "/new background archival failed",
+                            session_key=session.key,
+                            force_new=force_new,
+                        )
+                except Exception:
+                    logger.exception("/new background archival errored", session_key=session.key)
+
+            task = self.consolidation.start_background(session.key, _archive_snapshot_background)
+            if task is None:
+                logger.debug("/new background archival skipped (already in progress)", session_key=session.key)
+            else:
+                logger.debug(
+                    "/new background archival scheduled",
+                    session_key=session.key,
+                    deferred=True,
+                    force_new=force_new,
+                    snapshot_len=len(snapshot),
                 )
 
         session.clear()

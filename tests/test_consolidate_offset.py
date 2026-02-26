@@ -659,10 +659,10 @@ class TestConsolidationDeduplicationGuard:
         )
 
     @pytest.mark.asyncio
-    async def test_new_waits_for_inflight_consolidation_and_preserves_messages(
+    async def test_new_schedules_background_archive_after_cancelling_inflight(
         self, tmp_path: Path
     ) -> None:
-        """/new cancels in-flight consolidation and archives before clear."""
+        """/new cancels in-flight consolidation and archives snapshot in background."""
         from nanobot.agent.loop import AgentLoop
         from nanobot.bus.events import InboundMessage
         from nanobot.bus.queue import MessageBus
@@ -713,14 +713,17 @@ class TestConsolidationDeduplicationGuard:
         assert cancelled, "In-flight consolidation should have been cancelled"
         assert response is not None
         assert "new session started" in response.content.lower()
-        assert archived_count > 0, "Expected /new archival to process a non-empty snapshot"
 
         session_after = loop.sessions.get_or_create("cli:test")
         assert session_after.messages == [], "Session should be cleared after successful archival"
+        task = loop._consolidation_tasks.get("cli:test")
+        assert task is not None, "Expected background archival task to be scheduled"
+        await asyncio.gather(task, return_exceptions=True)
+        assert archived_count > 0, "Expected /new archival to process a non-empty snapshot"
 
     @pytest.mark.asyncio
-    async def test_new_does_not_clear_session_when_archive_fails(self, tmp_path: Path) -> None:
-        """/new must keep session data if archive step reports failure."""
+    async def test_new_clears_session_even_if_background_archive_fails(self, tmp_path: Path) -> None:
+        """/new now responds immediately and clears session even if background archival later fails."""
         from nanobot.agent.loop import AgentLoop
         from nanobot.bus.events import InboundMessage
         from nanobot.bus.queue import MessageBus
@@ -754,11 +757,12 @@ class TestConsolidationDeduplicationGuard:
         response = await loop._process_message(new_msg)
 
         assert response is not None
-        assert "failed" in response.content.lower()
+        assert "new session started" in response.content.lower()
         session_after = loop.sessions.get_or_create("cli:test")
-        assert len(session_after.messages) == before_count, (
-            "Session must remain intact when /new archival fails"
-        )
+        assert len(session_after.messages) == 0
+        task = loop._consolidation_tasks.get("cli:test")
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
 
     @pytest.mark.asyncio
     async def test_new_force_clears_session_when_archive_fails(self, tmp_path: Path) -> None:
@@ -858,6 +862,9 @@ class TestConsolidationDeduplicationGuard:
         assert cancelled, "In-flight consolidation should have been cancelled"
         assert response is not None
         assert "new session started" in response.content.lower()
+        task = loop._consolidation_tasks.get("cli:test")
+        assert task is not None, "Expected background archival task to be scheduled"
+        await asyncio.gather(task, return_exceptions=True)
         # Since the in-flight task was cancelled before updating last_consolidated,
         # /new archives all messages from last_consolidated (0) onwards.
         assert archived_count == expected_archived, (
@@ -904,4 +911,7 @@ class TestConsolidationDeduplicationGuard:
 
         assert response is not None
         assert "new session started" in response.content.lower()
+        task = loop._consolidation_tasks.get("cli:test")
+        assert task is not None
+        await asyncio.gather(task, return_exceptions=True)
         assert session.key not in loop._consolidation_locks

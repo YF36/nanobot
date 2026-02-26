@@ -381,6 +381,9 @@ class TestNewCancelsConsolidation:
 
         assert consolidation_cancelled.is_set(), "Consolidation task was not cancelled"
         assert response is not None
+        bg_task = loop._consolidation_tasks.get("cli:test")
+        assert bg_task is not None, "Expected /new to schedule background archival task"
+        await asyncio.gather(bg_task, return_exceptions=True)
         assert "cli:test" not in loop._consolidation_tasks
 
     @pytest.mark.asyncio

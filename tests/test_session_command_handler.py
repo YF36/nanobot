@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -52,3 +53,38 @@ async def test_stop_reports_cancelled_count() -> None:
     assert out is not None
     assert out.content == "⏹ Stopped 2 task(s)."
 
+
+@pytest.mark.asyncio
+async def test_new_schedules_background_archive_and_returns_immediately() -> None:
+    sessions = MagicMock()
+    consolidation = ConsolidationCoordinator()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow_consolidate(_session: Session, archive_all: bool) -> bool:
+        assert archive_all is True
+        started.set()
+        await release.wait()
+        return True
+
+    handler = SessionCommandHandler(
+        sessions=sessions,
+        consolidation=consolidation,
+        consolidate_memory=_slow_consolidate,
+    )
+    session = Session(key="cli:c1")
+    session.add_message("user", "hello")
+    session.add_message("assistant", "hi")
+
+    out = await handler.handle(_msg("/new"), session)
+
+    assert out is not None
+    assert "new session started" in out.content.lower()
+    assert session.messages == []
+    sessions.save.assert_called_once()
+    sessions.invalidate.assert_called_once_with("cli:c1")
+    assert "cli:c1" in consolidation.tasks
+
+    await started.wait()
+    release.set()
+    await asyncio.gather(*consolidation.tasks.values(), return_exceptions=True)
