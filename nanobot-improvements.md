@@ -335,6 +335,8 @@
 
 ## G2. 记忆系统可引入 Daily Files 作为短期→中期过渡层（中优先级，设计建议）
 
+（补充参考：`ai-agent-memory` 的 `Q1/Q2/Q3`、TTL、L0/L1/L2` 思路；本节已按 nanobot 当前阶段做取舍融合。）
+
 结合 `openclaw` / `pi-mono` 一类实践，建议在 `memory/` 目录下引入按天的记忆文件（例如 `memory/2026-02-25.md`），作为 `MEMORY.md` 与 `HISTORY.md` 之间的过渡层。
 
 问题诊断（当前 `MEMORY.md` 污染）：
@@ -419,37 +421,79 @@ M1 状态（截至 2026-02-26）：已落地（含 M1.x 观测增强）
 
 建议下一步：先观察几天清洗日志命中情况，再决定是否推进 `M2`（daily memory files）。
 
+### 融合方案（参考 ai-agent-memory 的可借鉴机制）
+
+在保持 nanobot 当前 `M1 / M2 / M3` 主线不变的前提下，可吸收 `ai-agent-memory` 的三个关键思想，但按阶段引入，避免一次性扩大范围：
+
+- **先融规则，不先加层数**：先把 `Q1 / Q2 / Q3` 判断框架用于约束写入去向（长期记忆 vs daily file vs 丢弃）。
+- **再融分层写入**：先落地 daily files（`memory/YYYY-MM-DD.md`）作为短期→中期缓冲层。
+- **最后再融自动治理/检索层**：TTL、`.abstract`、`insights/lessons` 等作为中后期能力。
+
+可借鉴点（建议时机）：
+
+- `Q1/Q2/Q3`（立即可用，适合并入 M1/M2 写入规则）
+  - `Q1`: 不看会做错事 → 长期记忆（`MEMORY.md`）
+  - `Q2`: 将来可能需要查 → daily file / 后续归档（先不进 `MEMORY.md`）
+  - `Q3`: 两者都不是 → 仅短期上下文或丢弃
+- `P0/P1/P2 + TTL`（稍后引入，建议在 M2 稳定后）
+  - nanobot 当前 `MEMORY.md` 尚未条目化，不宜立即上自动 TTL 清理
+  - 建议等 `MEMORY.md` 条目格式趋稳后再引入 janitor 类脚本
+- `L0/L1/L2`（中长期目标，不建议现在直接做）
+  - `L2`（daily files）可作为 M2 直接落地
+  - `L0`（`.abstract`）与 `L1`（`insights/lessons`）建议放到 M3 之后再评估
+
+这样可以保留 nanobot 的极简路线，同时避免把“记忆污染问题”过早升级为“复杂知识系统建设”问题。
+
 ### M2（中风险）：引入 daily memory files（`memory/YYYY-MM-DD.md`）
 
 目标：为近期主题与事件提供稳定落点，避免继续挤入 `MEMORY.md`。
 
-实施建议：
+建议分两步实施（先小后大）：
 
-- consolidation 输出分流：长期事实 -> `MEMORY.md`；近期摘要/事件 -> daily file；长期归档 -> `HISTORY.md`。
-- daily file 使用固定模板（Topics / Decisions / Tool Activity / Open Questions）。
-- 仅写摘要，不写原始对话全文。
+#### M2-min（推荐先做，低风险）
+
+- 仅新增 daily file 写入，不改变现有读取与 prompt 注入策略。
+- consolidation 成功后在保留 `HISTORY.md` 写入行为不变的前提下，额外把 `history_entry` 追加到当天 `memory/YYYY-MM-DD.md`。
+- daily file 先使用简单结构（如 `# YYYY-MM-DD` + `## Entries`），先验证“分层写入”是否稳定。
+
+#### M2-full（在 M2-min 稳定后）
+
+- 按 `Q1 / Q2 / Q3` 明确输出去向：
+  - `Q1`（长期稳定且跨会话有价值）→ `MEMORY.md`
+  - `Q2`（将来可能要查）→ daily file（后续可归档）
+  - `Q3`（短期/噪声）→ 不入长期存储（可仅留 session/history）
+- daily file 升级为固定模板（Topics / Decisions / Tool Activity / Open Questions）。
+- 仍然只写摘要，不写原始对话全文。
 
 M2 验收标准：
 
-- 当天会自动生成 daily file。
-- `MEMORY.md` 与 daily file 的写入路由符合准入规则。
+- 当天会自动生成 daily file，且同日多次 consolidation 追加到同一文件。
+- `HISTORY.md` 现有行为保持兼容（无回归）。
+- `MEMORY.md` 与 daily file 的写入路由符合准入规则（可用抽样/测试验证）。
 - daily file 不包含大段逐轮原始对话复制。
 
-### M3（策略层）：按需读取 daily files + 保留/归档策略
+### M3（策略层）：按需读取 daily files + 保留/归档策略（并为 TTL / L0/L1/L2 做准备）
 
-目标：让 daily files 提升近期回忆能力，但不增加常驻 prompt 噪声。
+目标：让 daily files 提升近期回忆能力，但不增加常驻 prompt 噪声，并为后续 TTL、`.abstract`、`insights/lessons` 留好接口。
 
 实施建议：
 
 - daily file 默认不注入 system prompt，只在需要回顾近期上下文时按需读取。
 - 设置保留窗口（如最近 7~30 天），更旧 daily files 归档/压缩进 `HISTORY.md`。
 - 为临时系统状态增加过期/降权策略。
+- （可选，后段）引入 `P0/P1/P2` 标记与 TTL janitor：
+  - 前提：`MEMORY.md` 条目格式已稳定、误删风险可控
+- （可选，中长期）引入 `L0/L1/L2` 分层读取：
+  - `L2`: daily files（本阶段已有）
+  - `L1`: insights / lessons（LLM 反思提炼或结构化教训）
+  - `L0`: `.abstract` 目录摘要（优先读，降低 token）
 
 M3 验收标准：
 
 - 默认 prompt token 开销无明显上升。
 - 近期问题回顾场景下可准确检索到 daily file 摘要。
 - 归档后关键信息不丢失（抽样验证）。
+- 若引入 TTL：过期清理可回放、可审计（备份/归档留痕）。
 
 ## H. `SessionManager.save()` 每次全量重写 JSONL（中优先级）
 
