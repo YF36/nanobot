@@ -57,6 +57,8 @@ async def test_spawn_tool_returns_structured_result_on_accept() -> None:
     assert result.details["origin_chat_id"] == "chat1"
     assert result.details["label"] == "x"
     assert result.details["task_len"] == len("do something")
+    _, kwargs = manager.spawn.await_args
+    assert kwargs["session_key"] == "cli:chat1"
 
 
 @pytest.mark.asyncio

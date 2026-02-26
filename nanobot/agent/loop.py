@@ -135,6 +135,7 @@ class AgentLoop:
             sessions=self.sessions,
             consolidation=self._consolidation,
             consolidate_memory=self._consolidate_memory_for_command,
+            cancel_session_tasks=self.subagents.cancel_by_session,
         )
         self._message_processor = MessageProcessor(
             sessions=self.sessions,

@@ -101,3 +101,42 @@ class TestSubagentTimeout:
 
         assert cancelled.is_set(), "Subagent was not cancelled after timeout"
         assert manager.get_running_count() == 0
+
+
+class TestCancelBySession:
+    @pytest.mark.asyncio
+    async def test_cancel_by_session_cancels_only_matching_tasks(self, tmp_path: Path) -> None:
+        manager = _make_manager(tmp_path)
+        cancelled_a = asyncio.Event()
+        cancelled_b = asyncio.Event()
+
+        async def _wait(flag: asyncio.Event) -> None:
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                flag.set()
+                raise
+
+        task_a = asyncio.create_task(_wait(cancelled_a))
+        task_b = asyncio.create_task(_wait(cancelled_b))
+        manager._running_tasks["a"] = task_a
+        manager._running_tasks["b"] = task_b
+        manager._session_tasks["s1"] = {"a"}
+        manager._session_tasks["s2"] = {"b"}
+
+        await asyncio.sleep(0)
+        cancelled = await manager.cancel_by_session("s1")
+        await asyncio.sleep(0)
+
+        assert cancelled == 1
+        assert cancelled_a.is_set() is True
+        assert cancelled_b.is_set() is False
+        assert task_b.cancelled() is False
+
+        task_b.cancel()
+        await asyncio.gather(task_b, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_cancel_by_session_returns_zero_when_missing(self, tmp_path: Path) -> None:
+        manager = _make_manager(tmp_path)
+        assert await manager.cancel_by_session("missing") == 0

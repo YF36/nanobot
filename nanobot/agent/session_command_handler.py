@@ -25,10 +25,12 @@ class SessionCommandHandler:
         sessions: "SessionManager",
         consolidation: ConsolidationCoordinator,
         consolidate_memory: Callable[[Session, bool], Awaitable[bool]],
+        cancel_session_tasks: Callable[[str], Awaitable[int]] | None = None,
     ) -> None:
         self.sessions = sessions
         self.consolidation = consolidation
         self.consolidate_memory = consolidate_memory
+        self.cancel_session_tasks = cancel_session_tasks
 
     async def handle(self, msg: InboundMessage, session: Session) -> OutboundMessage | None:
         """Return command response if handled, else None."""
@@ -47,11 +49,29 @@ class SessionCommandHandler:
                     "🐈 nanobot commands:\n"
                     "/new — Archive and start a new conversation\n"
                     "/new! — Force new conversation (clear even if archival fails)\n"
+                    "/stop — Stop running background tasks for this conversation\n"
                     "/help — Show available commands"
                 ),
             )
 
+        if cmd == "/stop":
+            return await self._handle_stop(msg, session)
+
         return None
+
+    async def _handle_stop(self, msg: InboundMessage, session: Session) -> OutboundMessage:
+        try:
+            cancelled = 0
+            if self.cancel_session_tasks is not None:
+                cancelled = await self.cancel_session_tasks(session.key)
+            if cancelled > 0:
+                content = f"⏹ Stopped {cancelled} task(s)."
+            else:
+                content = "No active task to stop."
+        except Exception:
+            logger.exception("/stop failed", session_key=session.key)
+            content = "Failed to stop active tasks. Please try again."
+        return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content=content)
 
     async def _handle_new(self, msg: InboundMessage, session: Session, *, force_new: bool) -> OutboundMessage:
         await self.consolidation.cancel_inflight(session.key)

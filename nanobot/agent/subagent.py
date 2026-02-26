@@ -180,6 +180,7 @@ class SubagentManager:
         self.subagent_timeout = subagent_timeout
         self.subagent_max_iterations = subagent_max_iterations
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
+        self._session_tasks: dict[str, set[str]] = {}  # session_key -> subagent task ids
         self._result_announcer = _SubagentResultAnnouncer(bus)
     
     async def spawn(
@@ -188,6 +189,7 @@ class SubagentManager:
         label: str | None = None,
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
+        session_key: str | None = None,
     ) -> str:
         """
         Spawn a subagent to execute a task in the background.
@@ -223,11 +225,19 @@ class SubagentManager:
             )
         )
         self._running_tasks[task_id] = bg_task
+        if session_key:
+            self._session_tasks.setdefault(session_key, set()).add(task_id)
 
-        # Cleanup when done
-        bg_task.add_done_callback(lambda _: self._running_tasks.pop(task_id, None))
+        def _cleanup(_: asyncio.Task[Any]) -> None:
+            self._running_tasks.pop(task_id, None)
+            if session_key and (ids := self._session_tasks.get(session_key)) is not None:
+                ids.discard(task_id)
+                if not ids:
+                    self._session_tasks.pop(session_key, None)
 
-        logger.info("Spawned subagent", task_id=task_id, label=display_label)
+        bg_task.add_done_callback(_cleanup)
+
+        logger.info("Spawned subagent", task_id=task_id, label=display_label, session_key=session_key)
         return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
     
     async def _run_subagent(
@@ -306,6 +316,20 @@ class SubagentManager:
             status=status,
         )
     
+    async def cancel_by_session(self, session_key: str) -> int:
+        """Cancel all running subagents for a session. Returns count cancelled."""
+        task_ids = list(self._session_tasks.get(session_key, set()))
+        tasks = [
+            self._running_tasks[tid]
+            for tid in task_ids
+            if tid in self._running_tasks and not self._running_tasks[tid].done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return len(tasks)
+
     def _build_subagent_prompt(self, task: str) -> str:
         """Build a focused system prompt for the subagent."""
         return _SubagentPromptBuilder.build(self.workspace, task)
