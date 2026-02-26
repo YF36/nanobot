@@ -335,7 +335,7 @@
 
 ## G2. 记忆系统可引入 Daily Files 作为短期→中期过渡层（中优先级，设计建议）
 
-（补充参考：`ai-agent-memory` 的 `Q1/Q2/Q3`、TTL、L0/L1/L2` 思路；本节已按 nanobot 当前阶段做取舍融合。）
+（补充参考：`ai-agent-memory` 的 `Q1/Q2/Q3`、TTL、`L0/L1/L2` 思路；本节已按 nanobot 当前阶段做取舍融合。）
 
 结合 `openclaw` / `pi-mono` 一类实践，建议在 `memory/` 目录下引入按天的记忆文件（例如 `memory/2026-02-25.md`），作为 `MEMORY.md` 与 `HISTORY.md` 之间的过渡层。
 
