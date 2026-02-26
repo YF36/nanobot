@@ -8,6 +8,20 @@ from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.session.manager import Session
 
 
+def test_append_daily_history_entry_creates_and_appends_same_day_file(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+
+    path1 = mm.append_daily_history_entry("[2026-02-25 10:00] First summary.")
+    path2 = mm.append_daily_history_entry("[2026-02-25 11:00] Second summary.")
+
+    assert path1 == path2
+    assert path1.name == "2026-02-25.md"
+    content = path1.read_text(encoding="utf-8")
+    assert content.startswith("# 2026-02-25\n\n## Entries\n\n")
+    assert "- [2026-02-25 10:00] First summary." in content
+    assert "- [2026-02-25 11:00] Second summary." in content
+
+
 def test_consolidation_system_prompt_restricts_memory_update_to_long_term_facts() -> None:
     prompt = MemoryStore._consolidation_system_prompt()
     assert "long-term stable facts only" in prompt
@@ -121,3 +135,6 @@ async def test_consolidate_sanitizes_memory_update_before_write(tmp_path: Path) 
     assert "今天讨论的主题" not in written_memory
     history_text = mm.history_file.read_text(encoding="utf-8")
     assert "Discussed anime topics" in history_text
+    daily_text = (mm.memory_dir / "2026-02-25.md").read_text(encoding="utf-8")
+    assert "## Entries" in daily_text
+    assert "Discussed anime topics and preferences" in daily_text

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -74,6 +75,7 @@ class MemoryStore:
     )
     _MEMORY_SANITIZE_LOG_SAMPLE_LIMIT = 3
     _MEMORY_SANITIZE_LOG_SAMPLE_CHARS = 120
+    _HISTORY_ENTRY_DATE_RE = re.compile(r"^\[(20\d{2}-\d{2}-\d{2})(?:\s+\d{2}:\d{2})?\]")
 
     def __init__(self, workspace: Path):
         self.memory_dir = ensure_dir(workspace / "memory")
@@ -91,6 +93,24 @@ class MemoryStore:
     def append_history(self, entry: str) -> None:
         with open(self.history_file, "a", encoding="utf-8") as f:
             f.write(entry.rstrip() + "\n\n")
+
+    @classmethod
+    def _history_entry_date(cls, entry: str) -> str:
+        if m := cls._HISTORY_ENTRY_DATE_RE.match(entry.strip()):
+            return m.group(1)
+        return datetime.now().strftime("%Y-%m-%d")
+
+    def _daily_memory_file(self, date_str: str) -> Path:
+        return self.memory_dir / f"{date_str}.md"
+
+    def append_daily_history_entry(self, entry: str) -> Path:
+        date_str = self._history_entry_date(entry)
+        daily_file = self._daily_memory_file(date_str)
+        if not daily_file.exists():
+            daily_file.write_text(f"# {date_str}\n\n## Entries\n\n", encoding="utf-8")
+        with open(daily_file, "a", encoding="utf-8") as f:
+            f.write(f"- {entry.rstrip()}\n")
+        return daily_file
 
     def get_memory_context(self) -> str:
         long_term = self.read_long_term()
@@ -421,6 +441,7 @@ class MemoryStore:
                         if not isinstance(entry, str):
                             entry = json.dumps(entry, ensure_ascii=False)
                         self.append_history(entry)
+                        self.append_daily_history_entry(entry)
                     if update := args.get("memory_update"):
                         if not isinstance(update, str):
                             update = json.dumps(update, ensure_ascii=False)
