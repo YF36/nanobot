@@ -482,6 +482,15 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已实施（step2，兼容版）：`consolidate()` 优先写入结构化 daily sections；结构非法或缺失时回退到启发式分栏。
 - 保持兼容：`history_entry` / `memory_update` 仍为必填主路径，旧模型输出不受影响。
 
+当前策略决策（阶段性，2026-02-26）：
+
+- 暂时保持 `M2-full step2` 兼容版现状（结构化 `daily_sections` + 启发式 fallback）。
+- 暂不强化 consolidation prompt（仍保持“可选提供 `daily_sections`”）。
+- 先收集一段时间真实数据，重点观察：
+  - `structured_daily_ok` 命中率
+  - `fallback_reason` 分布（`missing` / `empty` / `invalid_type:*` / `invalid_item:*`）
+- 后续再决定是否升级为“优先提供 `daily_sections`”或进一步收紧 schema/提示词。
+
 M2 验收标准：
 
 - 当天会自动生成 daily file，且同日多次 consolidation 追加到同一文件。
