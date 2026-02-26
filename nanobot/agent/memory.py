@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -52,6 +53,25 @@ class MemoryStore:
     _CONSOLIDATION_SOFT_INPUT_TOKENS = 24_000
     _CONSOLIDATION_TOOLCALL_RETRIES = 1
     _MEMORY_TRUNCATION_NOTICE = "\n\n[... long-term memory truncated for consolidation ...]\n\n"
+    _MEMORY_SECTION_REJECT_PATTERNS = (
+        re.compile(r"(今天|今日|近期).*(讨论|主题)"),
+        re.compile(r"today.*(discussion|topics?)", re.IGNORECASE),
+        re.compile(r"recent.*(discussion|topics?)", re.IGNORECASE),
+        re.compile(r"\b20\d{2}-\d{2}-\d{2}\b"),
+    )
+    _MEMORY_TRANSIENT_STATUS_SECTION_PATTERNS = (
+        re.compile(r"(system|technical).*(issues?|status)", re.IGNORECASE),
+        re.compile(r"(api|service).*(issues?|status|errors?)", re.IGNORECASE),
+        re.compile(r"(系统|技术).*(问题|状态)"),
+        re.compile(r"(接口|服务).*(问题|状态|报错)"),
+    )
+    _MEMORY_TRANSIENT_STATUS_LINE_PATTERNS = (
+        re.compile(r"\b20\d{2}-\d{2}-\d{2}\b"),
+        re.compile(r"\b(today|yesterday|recently|currently|temporary|temporarily)\b", re.IGNORECASE),
+        re.compile(r"\b(error|failed|failure|timeout|timed out|unavailable)\b", re.IGNORECASE),
+        re.compile(r"\b(4\d{2}|5\d{2})\b"),
+        re.compile(r"(报错|错误|失败|超时|不可用|临时)"),
+    )
 
     def __init__(self, workspace: Path):
         self.memory_dir = ensure_dir(workspace / "memory")
@@ -111,7 +131,13 @@ class MemoryStore:
 
     @staticmethod
     def _consolidation_system_prompt(strict_tool_call: bool = False) -> str:
-        base = "You are a memory consolidation agent. Call the save_memory tool with your consolidation of the conversation."
+        base = (
+            "You are a memory consolidation agent. Call the save_memory tool with your consolidation of the conversation. "
+            "Treat MEMORY.md as long-term stable facts only (user preferences, durable project context, stable environment constraints). "
+            "Do NOT copy recent discussion topics, knowledge-answer content, long summaries, tables, or tool outputs into memory_update; "
+            "those belong in history_entry only. Temporary system/API error statuses, one-off incidents, and dated operational notes "
+            "should usually stay out of memory_update (or be reduced to a durable configuration fact only)."
+        )
         if not strict_tool_call:
             return base
         return (
@@ -119,6 +145,84 @@ class MemoryStore:
             + " Do not reply with plain text. You MUST call save_memory exactly once "
               "with both history_entry and memory_update."
         )
+
+    @classmethod
+    def _sanitize_memory_update_detailed(
+        cls,
+        update: str,
+        current_memory: str,
+    ) -> tuple[str, dict[str, object]]:
+        """Remove obviously short-lived/topic-dump content and return classification stats."""
+        if not update.strip():
+            return update, {
+                "removed_sections": [],
+                "removed_recent_topic_sections": [],
+                "removed_transient_status_sections": [],
+                "removed_transient_status_line_count": 0,
+            }
+
+        lines = update.splitlines()
+        kept: list[str] = []
+        removed_headings: list[str] = []
+        removed_recent_sections: list[str] = []
+        removed_transient_status_sections: list[str] = []
+        removed_transient_status_line_count = 0
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if line.startswith("## "):
+                heading = line[3:].strip()
+                if any(p.search(heading) for p in cls._MEMORY_SECTION_REJECT_PATTERNS):
+                    removed_headings.append(heading)
+                    removed_recent_sections.append(heading)
+                    i += 1
+                    while i < len(lines) and not lines[i].startswith("## "):
+                        i += 1
+                    continue
+                if any(p.search(heading) for p in cls._MEMORY_TRANSIENT_STATUS_SECTION_PATTERNS):
+                    section_lines = [line]
+                    removed_lines_in_section = 0
+                    i += 1
+                    while i < len(lines) and not lines[i].startswith("## "):
+                        candidate = lines[i]
+                        stripped = candidate.strip()
+                        if stripped and any(p.search(candidate) for p in cls._MEMORY_TRANSIENT_STATUS_LINE_PATTERNS):
+                            removed_lines_in_section += 1
+                            removed_transient_status_line_count += 1
+                            i += 1
+                            continue
+                        section_lines.append(candidate)
+                        i += 1
+                    if any(s.strip() for s in section_lines[1:]):
+                        kept.extend(section_lines)
+                    else:
+                        removed_heading = f"{heading} (transient status only)"
+                        removed_headings.append(removed_heading)
+                        removed_transient_status_sections.append(heading)
+                    if removed_lines_in_section:
+                        removed_transient_status_sections.append(heading)
+                    continue
+            kept.append(line)
+            i += 1
+
+        sanitized = "\n".join(kept).strip()
+        if not sanitized:
+            sanitized = current_memory
+        else:
+            sanitized = sanitized + ("\n" if update.endswith("\n") else "")
+        details = {
+            "removed_sections": removed_headings,
+            "removed_recent_topic_sections": removed_recent_sections,
+            "removed_transient_status_sections": sorted(set(removed_transient_status_sections)),
+            "removed_transient_status_line_count": removed_transient_status_line_count,
+        }
+        return sanitized, details
+
+    @classmethod
+    def _sanitize_memory_update(cls, update: str, current_memory: str) -> tuple[str, list[str]]:
+        """Backward-compatible wrapper returning removed section headings only."""
+        sanitized, details = cls._sanitize_memory_update_detailed(update, current_memory)
+        return sanitized, list(details["removed_sections"])
 
     def _fit_chunk_by_soft_budget(
         self,
@@ -301,6 +405,15 @@ class MemoryStore:
                     if update := args.get("memory_update"):
                         if not isinstance(update, str):
                             update = json.dumps(update, ensure_ascii=False)
+                        update, sanitize_details = self._sanitize_memory_update_detailed(update, current_memory)
+                        if sanitize_details["removed_sections"] or sanitize_details["removed_transient_status_line_count"]:
+                            logger.warning(
+                                "Memory consolidation sanitized long-term memory update",
+                                removed_sections=sanitize_details["removed_sections"],
+                                removed_recent_topic_sections=sanitize_details["removed_recent_topic_sections"],
+                                removed_transient_status_sections=sanitize_details["removed_transient_status_sections"],
+                                removed_transient_status_line_count=sanitize_details["removed_transient_status_line_count"],
+                            )
                         if memory_truncated:
                             logger.warning(
                                 "Skipping memory_update write because long-term memory context was truncated",
