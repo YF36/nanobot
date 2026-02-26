@@ -72,6 +72,8 @@ class MemoryStore:
         re.compile(r"\b(4\d{2}|5\d{2})\b"),
         re.compile(r"(报错|错误|失败|超时|不可用|临时)"),
     )
+    _MEMORY_SANITIZE_LOG_SAMPLE_LIMIT = 3
+    _MEMORY_SANITIZE_LOG_SAMPLE_CHARS = 120
 
     def __init__(self, workspace: Path):
         self.memory_dir = ensure_dir(workspace / "memory")
@@ -147,6 +149,13 @@ class MemoryStore:
         )
 
     @classmethod
+    def _truncate_log_sample(cls, text: str) -> str:
+        text = " ".join(text.split())
+        if len(text) <= cls._MEMORY_SANITIZE_LOG_SAMPLE_CHARS:
+            return text
+        return text[: cls._MEMORY_SANITIZE_LOG_SAMPLE_CHARS - 3].rstrip() + "..."
+
+    @classmethod
     def _sanitize_memory_update_detailed(
         cls,
         update: str,
@@ -159,6 +168,8 @@ class MemoryStore:
                 "removed_recent_topic_sections": [],
                 "removed_transient_status_sections": [],
                 "removed_transient_status_line_count": 0,
+                "recent_topic_section_samples": [],
+                "transient_status_line_samples": [],
             }
 
         lines = update.splitlines()
@@ -167,6 +178,8 @@ class MemoryStore:
         removed_recent_sections: list[str] = []
         removed_transient_status_sections: list[str] = []
         removed_transient_status_line_count = 0
+        recent_topic_section_samples: list[str] = []
+        transient_status_line_samples: list[str] = []
         i = 0
         while i < len(lines):
             line = lines[i]
@@ -175,6 +188,8 @@ class MemoryStore:
                 if any(p.search(heading) for p in cls._MEMORY_SECTION_REJECT_PATTERNS):
                     removed_headings.append(heading)
                     removed_recent_sections.append(heading)
+                    if len(recent_topic_section_samples) < cls._MEMORY_SANITIZE_LOG_SAMPLE_LIMIT:
+                        recent_topic_section_samples.append(cls._truncate_log_sample(heading))
                     i += 1
                     while i < len(lines) and not lines[i].startswith("## "):
                         i += 1
@@ -189,6 +204,8 @@ class MemoryStore:
                         if stripped and any(p.search(candidate) for p in cls._MEMORY_TRANSIENT_STATUS_LINE_PATTERNS):
                             removed_lines_in_section += 1
                             removed_transient_status_line_count += 1
+                            if len(transient_status_line_samples) < cls._MEMORY_SANITIZE_LOG_SAMPLE_LIMIT:
+                                transient_status_line_samples.append(cls._truncate_log_sample(candidate))
                             i += 1
                             continue
                         section_lines.append(candidate)
@@ -215,6 +232,8 @@ class MemoryStore:
             "removed_recent_topic_sections": removed_recent_sections,
             "removed_transient_status_sections": sorted(set(removed_transient_status_sections)),
             "removed_transient_status_line_count": removed_transient_status_line_count,
+            "recent_topic_section_samples": recent_topic_section_samples,
+            "transient_status_line_samples": transient_status_line_samples,
         }
         return sanitized, details
 
@@ -413,6 +432,8 @@ class MemoryStore:
                                 removed_recent_topic_sections=sanitize_details["removed_recent_topic_sections"],
                                 removed_transient_status_sections=sanitize_details["removed_transient_status_sections"],
                                 removed_transient_status_line_count=sanitize_details["removed_transient_status_line_count"],
+                                recent_topic_section_samples=sanitize_details["recent_topic_section_samples"],
+                                transient_status_line_samples=sanitize_details["transient_status_line_samples"],
                             )
                         if memory_truncated:
                             logger.warning(

@@ -74,6 +74,10 @@ def test_sanitize_memory_update_detailed_reports_reason_categories() -> None:
     assert "今天讨论的主题" in details["removed_recent_topic_sections"][0]
     assert details["removed_transient_status_line_count"] == 1
     assert "System Technical Issues" in details["removed_transient_status_sections"]
+    assert details["recent_topic_section_samples"]
+    assert "今天讨论的主题" in details["recent_topic_section_samples"][0]
+    assert details["transient_status_line_samples"]
+    assert "service timeout error" in details["transient_status_line_samples"][0]
 
 
 @pytest.mark.asyncio
