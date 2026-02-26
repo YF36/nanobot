@@ -76,6 +76,12 @@ class MemoryStore:
     _MEMORY_SANITIZE_LOG_SAMPLE_LIMIT = 3
     _MEMORY_SANITIZE_LOG_SAMPLE_CHARS = 120
     _HISTORY_ENTRY_DATE_RE = re.compile(r"^\[(20\d{2}-\d{2}-\d{2})(?:\s+\d{2}:\d{2})?\]")
+    _DAILY_MEMORY_SECTIONS = (
+        "Topics",
+        "Decisions",
+        "Tool Activity",
+        "Open Questions",
+    )
 
     def __init__(self, workspace: Path):
         self.memory_dir = ensure_dir(workspace / "memory")
@@ -103,13 +109,58 @@ class MemoryStore:
     def _daily_memory_file(self, date_str: str) -> Path:
         return self.memory_dir / f"{date_str}.md"
 
+    @classmethod
+    def _daily_memory_template(cls, date_str: str) -> str:
+        sections = "".join(f"## {name}\n\n" for name in cls._DAILY_MEMORY_SECTIONS)
+        return f"# {date_str}\n\n{sections}"
+
+    @staticmethod
+    def _history_entry_body(entry: str) -> str:
+        text = entry.strip()
+        if text.startswith("[") and "]" in text:
+            return text.split("]", 1)[1].strip()
+        return text
+
+    @classmethod
+    def _daily_section_for_history_entry(cls, entry: str) -> str:
+        body = cls._history_entry_body(entry).lower()
+        if any(k in body for k in ("decid", "decision", "选择", "决定", "方案")):
+            return "Decisions"
+        if any(k in body for k in ("open item", "follow-up", "follow up", "todo", "next step", "待办", "后续", "未完成")):
+            return "Open Questions"
+        if any(k in body for k in ("tool", "command", "exec", "edited", "modified", "created", "read_file", "write_file", "edit_file", "bash")):
+            return "Tool Activity"
+        return "Topics"
+
+    @staticmethod
+    def _append_bullet_to_daily_section(daily_file: Path, section: str, bullet: str) -> None:
+        text = daily_file.read_text(encoding="utf-8")
+        target = f"## {section}"
+        idx = text.find(target)
+        if idx == -1:
+            target = "## Entries"
+            idx = text.find(target)
+        if idx == -1:
+            with open(daily_file, "a", encoding="utf-8") as f:
+                f.write(f"\n## Entries\n\n- {bullet}\n")
+            return
+        insert_at = text.find("\n## ", idx + len(target))
+        if insert_at == -1:
+            insert_at = len(text)
+        prefix = text[:insert_at]
+        suffix = text[insert_at:]
+        if not prefix.endswith("\n"):
+            prefix += "\n"
+        new_text = prefix + f"- {bullet}\n" + suffix
+        daily_file.write_text(new_text, encoding="utf-8")
+
     def append_daily_history_entry(self, entry: str) -> Path:
         date_str = self._history_entry_date(entry)
         daily_file = self._daily_memory_file(date_str)
         if not daily_file.exists():
-            daily_file.write_text(f"# {date_str}\n\n## Entries\n\n", encoding="utf-8")
-        with open(daily_file, "a", encoding="utf-8") as f:
-            f.write(f"- {entry.rstrip()}\n")
+            daily_file.write_text(self._daily_memory_template(date_str), encoding="utf-8")
+        section = self._daily_section_for_history_entry(entry)
+        self._append_bullet_to_daily_section(daily_file, section, entry.rstrip())
         return daily_file
 
     def get_memory_context(self) -> str:

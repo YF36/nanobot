@@ -8,7 +8,7 @@ from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.session.manager import Session
 
 
-def test_append_daily_history_entry_creates_and_appends_same_day_file(tmp_path: Path) -> None:
+def test_append_daily_history_entry_creates_template_and_appends_topics(tmp_path: Path) -> None:
     mm = MemoryStore(workspace=tmp_path)
 
     path1 = mm.append_daily_history_entry("[2026-02-25 10:00] First summary.")
@@ -17,9 +17,39 @@ def test_append_daily_history_entry_creates_and_appends_same_day_file(tmp_path: 
     assert path1 == path2
     assert path1.name == "2026-02-25.md"
     content = path1.read_text(encoding="utf-8")
-    assert content.startswith("# 2026-02-25\n\n## Entries\n\n")
+    assert content.startswith("# 2026-02-25\n\n")
+    assert "## Topics" in content
+    assert "## Decisions" in content
+    assert "## Tool Activity" in content
+    assert "## Open Questions" in content
     assert "- [2026-02-25 10:00] First summary." in content
     assert "- [2026-02-25 11:00] Second summary." in content
+
+
+def test_append_daily_history_entry_routes_to_sections_by_simple_heuristics(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+
+    path = mm.append_daily_history_entry("[2026-02-25 10:00] Decision: use M2-min first for safety.")
+    mm.append_daily_history_entry("[2026-02-25 10:05] Ran exec command to inspect memory files.")
+
+    content = path.read_text(encoding="utf-8")
+    decisions_idx = content.index("## Decisions")
+    tools_idx = content.index("## Tool Activity")
+    assert "Decision: use M2-min first" in content[decisions_idx:tools_idx]
+    open_idx = content.index("## Open Questions")
+    assert "Ran exec command" in content[tools_idx:open_idx]
+
+
+def test_append_daily_history_entry_keeps_legacy_entries_file_compatible(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    legacy = mm.memory_dir / "2026-02-25.md"
+    legacy.write_text("# 2026-02-25\n\n## Entries\n\n", encoding="utf-8")
+
+    mm.append_daily_history_entry("[2026-02-25 10:00] Legacy append path works.")
+
+    content = legacy.read_text(encoding="utf-8")
+    assert "## Entries" in content
+    assert "Legacy append path works." in content
 
 
 def test_consolidation_system_prompt_restricts_memory_update_to_long_term_facts() -> None:
@@ -136,5 +166,5 @@ async def test_consolidate_sanitizes_memory_update_before_write(tmp_path: Path) 
     history_text = mm.history_file.read_text(encoding="utf-8")
     assert "Discussed anime topics" in history_text
     daily_text = (mm.memory_dir / "2026-02-25.md").read_text(encoding="utf-8")
-    assert "## Entries" in daily_text
+    assert "## Topics" in daily_text
     assert "Discussed anime topics and preferences" in daily_text
