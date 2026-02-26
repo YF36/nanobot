@@ -157,10 +157,20 @@ class MemoryStore:
     def append_daily_history_entry(self, entry: str) -> Path:
         date_str = self._history_entry_date(entry)
         daily_file = self._daily_memory_file(date_str)
+        created = False
         if not daily_file.exists():
             daily_file.write_text(self._daily_memory_template(date_str), encoding="utf-8")
+            created = True
         section = self._daily_section_for_history_entry(entry)
         self._append_bullet_to_daily_section(daily_file, section, entry.rstrip())
+        logger.debug(
+            "Memory daily entry appended",
+            date=date_str,
+            section=section,
+            created=created,
+            file=str(daily_file),
+            sample=self._truncate_log_sample(self._history_entry_body(entry)),
+        )
         return daily_file
 
     def get_memory_context(self) -> str:
