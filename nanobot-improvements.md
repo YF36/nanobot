@@ -546,7 +546,7 @@ M3 验收标准：
 
 这也方便做 channel-specific 命令。
 
-## J. `/new` 命令的记忆压缩应考虑“响应优先、后台收尾”（中优先级，未实施）
+## J. `/new` 命令的记忆压缩应考虑“响应优先、后台收尾”（中优先级，已落地最小版）
 
 现象（用户体验问题）：
 
@@ -557,7 +557,24 @@ M3 验收标准：
 - `/new` 的核心语义是“切换到新 session”，不是“等待旧 session 压缩完成”。
 - 因此适合把“旧 session 的 consolidation”从 `/new` 同步路径中移出，改为后台收尾（最终一致）。
 
-建议方案（最小版，先不改外部命令语义）：
+已落地（最小版，`81b0e57`）：
+
+1. `/new` 先取消同 session 的 in-flight consolidation（保留原保护）
+2. 立即清空/切换 session 并回复 `New session started.`
+3. 将旧 session 的 snapshot archival（`archive_all=True`）交给 `ConsolidationCoordinator.start_background(...)`
+4. 后台归档失败只记录日志，不阻塞 `/new` 响应
+
+观测增强（已落地）：
+
+- `/new background archival scheduled`（含 `reason="session_reset"`、`snapshot_len`）
+- `/new background archival done`（含 `elapsed_ms`、`success=true`）
+- `/new background archival failed/errored`（含 `elapsed_ms`）
+
+说明（语义变化）：
+
+- `/new` 不再同步等待归档成功，因此“归档失败不清 session”的旧语义已调整为“响应优先 + 最终一致后台收尾”。
+
+原建议方案（设计思路，已实现最小版）：
 
 1. `/new` 同步完成：
    - 创建/切换新 session
@@ -568,7 +585,7 @@ M3 验收标准：
 3. 后台任务失败：
    - 仅记录 warning/debug，不影响新 session 可用性
 
-设计注意点（实施时）：
+后续可增强（未实施）：
 
 - 旧 session 与后续消息可能并发，需继续依赖 `ConsolidationCoordinator` 的 session 级排他/任务管理。
 - 不建议把 `/new` 的全部逻辑异步化；仅异步化“慢收尾”（consolidation + 可选二次保存）。
