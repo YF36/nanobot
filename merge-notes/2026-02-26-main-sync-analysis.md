@@ -32,6 +32,10 @@
   - 已在 `SessionCommandHandler` 接入 `/stop`（停止当前会话后台 subagent）
   - 未实现 upstream 的 task-based dispatch 全量 `/stop`（与当前 `AgentLoop` 架构差异较大）
 - P2-5 `ExecTool path_append` 配置支持（`ExecToolConfig` / tool factory / shell 执行 env PATH 扩展）
+- P2-6 `ContextBuilder` 稳定 system prompt / runtime context 下沉（最小版）：
+  - `channel/chat_id` 从 system prompt 移出
+  - 以独立 `Untrusted Runtime Context` 用户消息注入
+  - 纳入 token budget 计算
 - P1-4（部分）Feishu `post` 富文本图片提取与下载：
   - 已移植 `_extract_post_content()`（文本 + `image_key` 提取）
   - 已在 `msg_type == "post"` 路径下载嵌入图片并转入 `media`
@@ -43,6 +47,7 @@
 - `e5a476b` `fix merge memory args parsing and session history alignment`
 - `7840125` `feat add session-scoped subagent stop command`
 - `7b5a334` `feat support exec path_append configuration`
+- `3e9f4a1` `refactor move session runtime metadata out of system prompt`
 
 ## 文件交集热区（冲突风险高）
 
@@ -231,7 +236,7 @@ upstream 价值：
 
 ---
 
-### 6. `ContextBuilder` 稳定系统 prompt + runtime context 下沉（理念值得吸收）
+### 6. `ContextBuilder` 稳定系统 prompt + runtime context 下沉（已部分落地）
 
 相关 upstream 提交（同一主题链）：
 
@@ -251,13 +256,17 @@ upstream 价值：
 - **理念高度契合**，尤其我们已经在 `ContextBuilder` 里做了 runtime tool catalog 与 metadata 剥离。
 - 但冲突会很高，因为我们对 `context.py` 改动很大（tool catalog、`_tool_details`、structured result metadata）。
 
-建议动作：
+当前状态（本分支）：
 
-- 优先吸收 upstream 的测试意图（`test_context_prompt_cache.py`）
-- 在我们 `ContextBuilder` 上做等价实现/验证：
-  - system prompt 避免含分钟级时间抖动
-  - runtime metadata 作为单独消息注入（如果我们尚未等价处理）
-- 注意与我们新增的 `Runtime Tool Catalog` 共存，避免再次增加 prompt 抖动
+- 已完成最小版落地：
+  - 将 `channel/chat_id` 从 system prompt 中下沉到独立 `Untrusted Runtime Context` 消息
+  - 增加测试验证不同 session 下 system message 保持一致
+- 与我们现有 `Runtime Tool Catalog` 共存（仍在 system prompt 的 dynamic 部分）
+
+后续建议动作：
+
+- 继续吸收 upstream `tests/test_context_prompt_cache.py` 的其余测试意图（按需映射）
+- 如后续继续优化 prompt cache 命中率，再评估是否进一步稳定 `Current Time` 粒度或拆分 dynamic sections
 
 ---
 
