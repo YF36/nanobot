@@ -311,6 +311,7 @@ class ExecToolConfig(Base):
     timeout: int = 60
     deny_patterns: list[str] | None = None  # None = use built-in defaults
     allow_patterns: list[str] = Field(default_factory=list)
+    path_append: str = ""  # Extra PATH entries appended for subprocess execution
     audit_executions: bool = True  # Log all executed commands to audit log
 
 

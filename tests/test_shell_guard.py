@@ -1,5 +1,7 @@
 """Tests for ExecTool shell command safety guards."""
 
+import os
+
 import pytest
 
 from nanobot.agent.tools.base import ToolExecutionResult
@@ -170,6 +172,18 @@ class TestAuditLogging:
         monkeypatch.setattr(tool, "_audit_blocked", lambda cmd, reason: calls.append((cmd, reason)))
         tool._guard_command("ls -la", "/tmp")
         assert len(calls) == 0
+
+
+class TestPathAppend:
+    def test_build_subprocess_env_none_when_unset(self) -> None:
+        tool = ExecTool(working_dir="/tmp")
+        assert tool._build_subprocess_env() is None
+
+    def test_build_subprocess_env_appends_path(self) -> None:
+        tool = ExecTool(working_dir="/tmp", path_append="/opt/custom/bin")
+        env = tool._build_subprocess_env()
+        assert env is not None
+        assert env["PATH"].endswith(f"{os.pathsep}/opt/custom/bin") or env["PATH"] == "/opt/custom/bin"
 
 
 # ── Execute integration ───────────────────────────────────────────

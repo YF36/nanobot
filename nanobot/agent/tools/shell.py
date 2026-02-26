@@ -52,12 +52,14 @@ class ShellExecutor:
         cwd: str,
         timeout: int,
         formatter: ShellOutputFormatter,
+        env: dict[str, str] | None = None,
     ) -> ToolExecutionResult:
         process = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
+            env=env,
         )
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
@@ -219,6 +221,7 @@ class ExecTool(Tool):
         working_dir: str | None = None,
         deny_patterns: list[str] | None = None,
         allow_patterns: list[str] | None = None,
+        path_append: str = "",
         restrict_to_workspace: bool = False,
         audit_executions: bool = True,
     ):
@@ -226,6 +229,7 @@ class ExecTool(Tool):
         self.working_dir = working_dir
         self.deny_patterns = deny_patterns if deny_patterns is not None else list(self.DEFAULT_DENY_PATTERNS)
         self.allow_patterns = allow_patterns or []
+        self.path_append = path_append
         self.restrict_to_workspace = restrict_to_workspace
         self.audit_executions = audit_executions
         self._formatter = ShellOutputFormatter()
@@ -275,7 +279,13 @@ class ExecTool(Tool):
             audit_log.info("shell_command_executed", command=command, working_dir=cwd)
 
         try:
-            return await self._executor.run(command, cwd=cwd, timeout=self.timeout, formatter=self._formatter)
+            return await self._executor.run(
+                command,
+                cwd=cwd,
+                timeout=self.timeout,
+                formatter=self._formatter,
+                env=self._build_subprocess_env(),
+            )
         except Exception as e:
             return ToolExecutionResult(
                 text=f"Error executing command: {str(e)}",
@@ -312,3 +322,16 @@ class ExecTool(Tool):
             restrict_to_workspace=self.restrict_to_workspace,
             audit_blocked=self._audit_blocked,
         )
+
+    def _build_subprocess_env(self) -> dict[str, str] | None:
+        """Return subprocess env, extending PATH if configured."""
+        if not self.path_append:
+            return None
+        env = dict(os.environ)
+        current_path = env.get("PATH", "")
+        env["PATH"] = (
+            f"{current_path}{os.pathsep}{self.path_append}"
+            if current_path
+            else self.path_append
+        )
+        return env

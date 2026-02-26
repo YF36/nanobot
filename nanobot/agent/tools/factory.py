@@ -45,6 +45,7 @@ def create_standard_tool_registry(
             timeout=exec_config.timeout,
             deny_patterns=exec_config.deny_patterns,
             allow_patterns=exec_config.allow_patterns,
+            path_append=exec_config.path_append,
             restrict_to_workspace=restrict_to_workspace,
             audit_executions=exec_config.audit_executions,
         )
@@ -60,4 +61,3 @@ def create_standard_tool_registry(
         registry.register(CronTool(cron_service))
 
     return registry
-
