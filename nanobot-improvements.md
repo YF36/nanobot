@@ -473,12 +473,14 @@ M2-min 状态（截至 2026-02-26）：已落地
 - daily file 升级为固定模板（Topics / Decisions / Tool Activity / Open Questions）。
 - 仍然只写摘要，不写原始对话全文。
 
-M2-full 状态（截至 2026-02-26）：部分落地（step1）
+M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 
 - 已实施（step1）：daily file 从 `## Entries` 升级为固定模板（`Topics / Decisions / Tool Activity / Open Questions`）。
 - 已实施（step1）：基于 `history_entry` 的轻量启发式分栏路由（兼容旧 `## Entries` 文件）。
 - 已实施（step1）：daily 分栏路由 debug 日志（含 section 与短样例）用于观察命中质量。
-- 尚未实施（step2）：让 consolidation LLM 返回结构化 `daily_sections`（替代/增强启发式路由）。
+- 已实施（step2，兼容版）：`save_memory` 工具 schema 支持可选 `daily_sections`（`topics/decisions/tool_activity/open_questions`）。
+- 已实施（step2，兼容版）：`consolidate()` 优先写入结构化 daily sections；结构非法或缺失时回退到启发式分栏。
+- 保持兼容：`history_entry` / `memory_update` 仍为必填主路径，旧模型输出不受影响。
 
 M2 验收标准：
 
