@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from nanobot.logging import get_logger
@@ -83,16 +84,41 @@ class SessionCommandHandler:
             temp.messages = snapshot
 
             async def _archive_snapshot_background() -> None:
+                started = time.perf_counter()
                 try:
                     ok = await self.consolidate_memory(temp, True)
+                    elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
                     if not ok:
                         logger.warning(
                             "/new background archival failed",
                             session_key=session.key,
                             force_new=force_new,
+                            reason="session_reset",
+                            deferred=True,
+                            elapsed_ms=elapsed_ms,
+                            snapshot_len=len(snapshot),
+                        )
+                    else:
+                        logger.debug(
+                            "/new background archival done",
+                            session_key=session.key,
+                            force_new=force_new,
+                            reason="session_reset",
+                            deferred=True,
+                            success=True,
+                            elapsed_ms=elapsed_ms,
+                            snapshot_len=len(snapshot),
                         )
                 except Exception:
-                    logger.exception("/new background archival errored", session_key=session.key)
+                    logger.exception(
+                        "/new background archival errored",
+                        session_key=session.key,
+                        force_new=force_new,
+                        reason="session_reset",
+                        deferred=True,
+                        elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+                        snapshot_len=len(snapshot),
+                    )
 
             task = self.consolidation.start_background(session.key, _archive_snapshot_background)
             if task is None:
@@ -102,6 +128,7 @@ class SessionCommandHandler:
                     "/new background archival scheduled",
                     session_key=session.key,
                     deferred=True,
+                    reason="session_reset",
                     force_new=force_new,
                     snapshot_len=len(snapshot),
                 )
