@@ -20,6 +20,23 @@
 - 我们分支已深度重构 `AgentLoop / MessageProcessor / TurnRunner / SubagentManager / ContextBuilder / ToolRegistry / ExecTool / MemoryStore`，与 upstream 改动高度重叠。
 - 多数关键更新应采用“按 commit 思路手工移植”而不是直接 `cherry-pick`。
 
+## 已落地进度（本分支）
+
+截至当前分支进度，以下建议项已完成落地（手工移植）：
+
+- P1-1 `MemoryStore.consolidate()` 工具参数类型健壮性（含 JSON 字符串 `arguments` 解析）
+- P1-2 `Session.get_history()` 使用 `last_consolidated` 游标并对齐到 user turn
+- P1-3（部分）`/stop` + subagent 按 session 取消：
+  - 已实现 `SubagentManager.cancel_by_session(session_key)`
+  - 已实现 `SpawnTool` 透传 `session_key`
+  - 已在 `SessionCommandHandler` 接入 `/stop`（停止当前会话后台 subagent）
+  - 未实现 upstream 的 task-based dispatch 全量 `/stop`（与当前 `AgentLoop` 架构差异较大）
+
+代表性落地提交：
+
+- `e5a476b` `fix merge memory args parsing and session history alignment`
+- `7840125` `feat add session-scoped subagent stop command`
+
 ## 文件交集热区（冲突风险高）
 
 upstream 变更文件与我们分支已改文件的交集很多，重点冲突热区：
@@ -104,7 +121,7 @@ upstream 解决的问题：
 
 ---
 
-### 3. `/stop` 命令 + subagent 按 session 取消（高价值，但需按我们架构重写）
+### 3. `/stop` 命令 + subagent 按 session 取消（已部分落地，后续可增强）
 
 相关 upstream 提交（一组）：
 
@@ -128,14 +145,18 @@ upstream 提供的价值：
   - 我们已有 `follow-up` + `steer` 机制
   - 直接 cherry-pick 会和现有消息编排冲突
 
-建议动作：
+当前状态（本分支）：
+
+- 已完成 `/stop` 的低冲突版本：可停止当前 session 的后台 subagent 任务
+- 尚未实现 upstream 的 task-based dispatch / 当前主 turn 取消语义
+
+后续建议动作：
 
 - 不直接 cherry-pick `loop.py`
-- **优先吸收 upstream 的行为设计与测试思路**：
-  - `SubagentManager.cancel_by_session(session_key)`（如果我们尚未等价覆盖）
-  - `/stop` 的用户反馈语义（No active task / Stopped N task(s)）
-  - `tests/test_task_cancel.py` 中的关键场景
-- 在我们 `SessionCommandHandler` / `MessageProcessor` 架构中实现 `/stop`
+- 若要继续增强 `/stop`，建议与我们现有 `follow-up/steer` 机制统一设计：
+  - 明确 `/stop` 是否仅取消后台任务，还是也应终止当前 turn
+  - 优先复用现有 `SessionCommandHandler` / `MessageProcessor` / `TurnRunner` 接口扩展
+- 吸收 upstream `tests/test_task_cancel.py` 的剩余场景（映射到我们架构）
 
 说明：
 
