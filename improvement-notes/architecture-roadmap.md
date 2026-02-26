@@ -555,6 +555,85 @@
 2. 会话结构升级（entry-based / 分支）
 3. 远程执行后端（SSH/容器）通过 tools operations 接口接入
 
+## 企业级架构文档借鉴点（融合到 nanobot 路线图）
+
+参考文档：`/Users/fanpucheng/proj/智能体平台技术架构设计.md`
+
+这份文档对 nanobot 的价值不在于“照搬企业平台架构”，而在于提供了几个可缩小落地的抽象：`Filter Chain`、`StateStorage`、事件/观测契约、`FailoverPolicy`。下面按 nanobot 当前阶段的可落地程度分层。
+
+### A. 适合近期吸收（高优先级）
+
+1. `Filter Chain` 最小版（内部 pre/post filters）
+- 借鉴点：`Filter -> FilterResult(action=continue/reject/short_circuit)` 的执行模型（文档 `4.4`）。
+- 适配 nanobot 的最小版目标：
+  - 先只做内部链路，不做插件化公开 API。
+  - 先支持 `pre`（输入侧）和 `post`（输出侧）两类过滤器。
+  - 用于承载未来的输入审计、RAG 注入、输出审计/脱敏等能力，减少逻辑继续堆在 `MessageProcessor` / `ContextBuilder` / `AgentLoop`。
+- 与现有进展关系：
+  - 已有事件模型、`MessageProcessor` 拆分、runtime metadata 下沉（`Untrusted Runtime Context`）后，切入点已经比较成熟。
+
+2. `StateStorage` 接口化（文件实现适配器）
+- 借鉴点：可插拔状态存储接口（文档 `4.7`, `5.5`）。
+- 适配 nanobot 的最小版目标：
+  - 先抽接口，不替换现有文件持久化。
+  - 以当前 `SessionManager` 为默认文件实现（类似 `FileSessionStorage`）。
+  - 为后续 Redis/PostgreSQL 留接口边界，而不是现在直接引入数据库。
+- 与现有进展关系：
+  - `SessionManager.save()` 已完成一轮优化（去重、原子写、summary metrics、`list_sessions` 缓存），现在做接口抽象的风险较低。
+
+3. 事件/观测契约继续收口（OTEL 风格字段命名，先不强上 OTEL）
+- 借鉴点：文档 `4.5` 的事件流模型 + `4.8` 的分层埋点思路。
+- 适配 nanobot 的最小版目标：
+  - 在现有 `turn_events` 基础上统一字段命名规范（如 latency/tokens/cost/error 分类）。
+  - 保持 JSON 日志与内部事件模型对齐，先形成“类 OTEL”字段风格。
+  - 暂不引入完整 OTEL SDK/Collector。
+- 与现有进展关系：
+  - 已有 `namespace/version/kind`、capabilities manifest、`/health?debug=events`，只差继续规范消费侧字段。
+
+4. `FailoverPolicy` 结构化（承接 Phase 3-2）
+- 借鉴点：模型失败重试/降级策略对象（文档 `4.6.3`）。
+- 适配 nanobot 的最小版目标：
+  - 将当前 `TurnRunner` 内的重试与 overflow compact fallback 规则逐步抽为策略对象。
+  - 先不做多模型自动降级，只做“策略结构化 + 配置化边界”。
+- 与现有进展关系：
+  - Phase 3-2 已完成：重试、分类、指标、overflow fallback，已经具备抽策略的基础。
+
+### B. 中期可做（按需推进）
+
+1. 插件/Hook 生命周期（先内部后公开）
+- 借鉴点：文档 `4.9` 的插件生命周期与 Hook 事件。
+- 建议方式：
+  - 先做内部 Hook/扩展点，稳定后再考虑对外插件 API。
+  - 避免在内核边界尚未稳定时过早暴露公共接口。
+
+2. 工具流式更新（`tool_execution_update`）
+- 借鉴点：文档 `4.5.1` / `4.5.2` 的工具更新事件与 `onUpdate`。
+- 建议方式：
+  - 等确实需要流式 shell/web/tool 进度时再做。
+  - 先让事件模型支持该类型，再逐步接入工具执行器。
+
+### C. 暂缓（平台化过重，不适合当前 nanobot 主线）
+
+1. LLM 意图路由（平台级语义路由）
+- 文档 `4.3` 的价值主要在多 Agent 企业平台。
+- 对当前 nanobot（个人助手/单实例）会增加额外延迟与配置复杂度，短期性价比不高。
+
+2. 多租户、认证鉴权、预算/计费体系
+- 文档 `6.*` 与 `4.6.4` 更偏平台化治理能力。
+- 可作为未来平台化版本参考，不建议进入当前主线。
+
+3. 完整 OTEL 基础设施（Collector/Jaeger/Tempo）
+- 方向正确，但当前先把事件与日志契约收口，比直接上完整 OTEL 更务实。
+
+### 建议落地顺序（结合当前路线图）
+
+1. `Filter Chain` 最小版（内部）
+2. `StateStorage` 接口化（文件实现适配）
+3. 事件/观测字段规范化（承接现有 turn events）
+4. `FailoverPolicy` 结构化（承接 Phase 3-2）
+
+这样可以在不进入“企业平台化重构”的前提下，吸收这份架构文档里最有价值的抽象。
+
 ## 额外说明：nanobot 当前做得好的地方（建议保留）
 
 - 文件系统工具的路径安全和 symlink 防护做得扎实（`nanobot/nanobot/agent/tools/filesystem.py:15`, `nanobot/nanobot/agent/tools/filesystem.py:34`, `nanobot/nanobot/agent/tools/filesystem.py:67`）。

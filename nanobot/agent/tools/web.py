@@ -167,6 +167,8 @@ class WebSearchTool(Tool):
                     query=query,
                     count=n,
                     attempt=attempt,
+                    attempt_index=attempt,
+                    max_attempts=attempts,
                     timeout_s=self.timeout_s,
                 )
                 async with httpx.AsyncClient(timeout=self.timeout_s) as client:
@@ -200,7 +202,9 @@ class WebSearchTool(Tool):
                         provider="brave",
                         query=query,
                         attempt=attempt,
+                        attempt_index=attempt,
                         max_attempts=attempts,
+                        error_kind=type(e).__name__,
                         error_type=type(e).__name__,
                         error=str(e),
                     )
@@ -212,8 +216,10 @@ class WebSearchTool(Tool):
                     provider="brave",
                     query=query,
                     attempt=attempt,
+                    attempt_index=attempt,
                     max_attempts=attempts,
                     retryable=retryable,
+                    error_kind=type(e).__name__,
                     error_type=type(e).__name__,
                     error=str(e),
                 )

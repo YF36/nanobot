@@ -223,7 +223,9 @@ class TurnRunner:
                 logger.warning(
                     "llm_chat_retry",
                     attempt=attempt,
+                    attempt_index=attempt,
                     delay_s=delay,
+                    error_kind=type(e).__name__,
                     error_type=type(e).__name__,
                     reason="exception",
                     retryable=True,
@@ -243,6 +245,8 @@ class TurnRunner:
                 logger.debug(
                     "llm_finish_reason_error_classified",
                     attempt=attempt,
+                    attempt_index=attempt,
+                    error_kind=error_finish_class,
                     error_finish_class=error_finish_class,
                 )
                 if error_finish_class == "overflow" and overflow_compactions < _CONTEXT_OVERFLOW_EXTRA_COMPACTIONS:
@@ -254,7 +258,9 @@ class TurnRunner:
                         logger.warning(
                             "llm_context_overflow_retry_after_compaction",
                             attempt=attempt,
+                            attempt_index=attempt,
                             compaction_retry=overflow_compactions,
+                            retry_count=overflow_compactions,
                             messages_before=len(local_messages),
                             messages_after=len(guarded_messages),
                         )
@@ -266,8 +272,10 @@ class TurnRunner:
                     logger.warning(
                         "llm_chat_retry",
                         attempt=attempt,
+                        attempt_index=attempt,
                         delay_s=delay,
                         reason="finish_reason_error",
+                        error_kind=error_finish_class,
                         error_finish_class=error_finish_class,
                     )
                     await asyncio.sleep(delay)
@@ -276,6 +284,8 @@ class TurnRunner:
                     logger.warning(
                         "llm_chat_no_retry",
                         attempt=attempt,
+                        attempt_index=attempt,
+                        error_kind=error_finish_class,
                         reason="fatal_finish_reason_error",
                     )
 

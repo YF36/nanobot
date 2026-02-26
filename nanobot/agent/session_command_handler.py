@@ -102,6 +102,9 @@ class SessionCommandHandler:
                             force_new=force_new,
                             reason="session_reset",
                             deferred=True,
+                            success=False,
+                            outcome="failed",
+                            latency_ms=elapsed_ms,
                             elapsed_ms=elapsed_ms,
                             snapshot_len=len(snapshot),
                         )
@@ -114,6 +117,8 @@ class SessionCommandHandler:
                             reason="session_reset",
                             deferred=True,
                             success=True,
+                            outcome="ok",
+                            latency_ms=elapsed_ms,
                             elapsed_ms=elapsed_ms,
                             snapshot_len=len(snapshot),
                         )
@@ -126,6 +131,9 @@ class SessionCommandHandler:
                         force_new=force_new,
                         reason="session_reset",
                         deferred=True,
+                        success=False,
+                        outcome="error",
+                        latency_ms=elapsed_ms,
                         elapsed_ms=elapsed_ms,
                         snapshot_len=len(snapshot),
                     )
@@ -169,10 +177,18 @@ class SessionCommandHandler:
 
         logger.debug(
             "/new background archival summary",
+            total_count=self._new_bg_archive_count,
             total=self._new_bg_archive_count,
+            success_count=self._new_bg_archive_ok,
             ok=self._new_bg_archive_ok,
+            failure_count=self._new_bg_archive_failed,
             failed=self._new_bg_archive_failed,
+            error_count=self._new_bg_archive_errored,
             errored=self._new_bg_archive_errored,
+            avg_latency_ms=round(
+                self._new_bg_archive_elapsed_ms_total / self._new_bg_archive_count,
+                2,
+            ),
             avg_elapsed_ms=round(
                 self._new_bg_archive_elapsed_ms_total / self._new_bg_archive_count,
                 2,
