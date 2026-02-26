@@ -32,6 +32,12 @@ class SessionCommandHandler:
         self.consolidation = consolidation
         self.consolidate_memory = consolidate_memory
         self.cancel_session_tasks = cancel_session_tasks
+        self._new_bg_archive_summary_every = 10
+        self._new_bg_archive_count = 0
+        self._new_bg_archive_ok = 0
+        self._new_bg_archive_failed = 0
+        self._new_bg_archive_errored = 0
+        self._new_bg_archive_elapsed_ms_total = 0.0
 
     async def handle(self, msg: InboundMessage, session: Session) -> OutboundMessage | None:
         """Return command response if handled, else None."""
@@ -89,6 +95,7 @@ class SessionCommandHandler:
                     ok = await self.consolidate_memory(temp, True)
                     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
                     if not ok:
+                        self._record_new_archive_outcome("failed", elapsed_ms)
                         logger.warning(
                             "/new background archival failed",
                             session_key=session.key,
@@ -99,6 +106,7 @@ class SessionCommandHandler:
                             snapshot_len=len(snapshot),
                         )
                     else:
+                        self._record_new_archive_outcome("ok", elapsed_ms)
                         logger.debug(
                             "/new background archival done",
                             session_key=session.key,
@@ -110,13 +118,15 @@ class SessionCommandHandler:
                             snapshot_len=len(snapshot),
                         )
                 except Exception:
+                    elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+                    self._record_new_archive_outcome("errored", elapsed_ms)
                     logger.exception(
                         "/new background archival errored",
                         session_key=session.key,
                         force_new=force_new,
                         reason="session_reset",
                         deferred=True,
-                        elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+                        elapsed_ms=elapsed_ms,
                         snapshot_len=len(snapshot),
                     )
 
@@ -143,3 +153,28 @@ class SessionCommandHandler:
                 content="New session started (forced). Memory archival may have failed.",
             )
         return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content="New session started.")
+
+    def _record_new_archive_outcome(self, outcome: str, elapsed_ms: float) -> None:
+        self._new_bg_archive_count += 1
+        self._new_bg_archive_elapsed_ms_total += elapsed_ms
+        if outcome == "ok":
+            self._new_bg_archive_ok += 1
+        elif outcome == "failed":
+            self._new_bg_archive_failed += 1
+        else:
+            self._new_bg_archive_errored += 1
+
+        if self._new_bg_archive_count % self._new_bg_archive_summary_every != 0:
+            return
+
+        logger.debug(
+            "/new background archival summary",
+            total=self._new_bg_archive_count,
+            ok=self._new_bg_archive_ok,
+            failed=self._new_bg_archive_failed,
+            errored=self._new_bg_archive_errored,
+            avg_elapsed_ms=round(
+                self._new_bg_archive_elapsed_ms_total / self._new_bg_archive_count,
+                2,
+            ),
+        )
