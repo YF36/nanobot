@@ -241,6 +241,47 @@ def test_build_messages_omits_runtime_tool_catalog_when_no_tools(tmp_path) -> No
     assert "## Runtime Tool Catalog" not in joined
 
 
+def test_build_messages_moves_session_metadata_out_of_system_prompt(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    builder.build_system_prompt_parts = lambda skill_names=None: ("STATIC", "DYNAMIC")  # type: ignore[method-assign]
+
+    messages = builder.build_messages(
+        history=[],
+        current_message="hi",
+        channel="feishu",
+        chat_id="chat123",
+    )
+
+    system_msg = messages[0]
+    runtime_msg = messages[-2]
+    assert system_msg["role"] == "system"
+    assert runtime_msg["role"] == "user"
+    system_text = system_msg["content"]
+    if isinstance(system_text, list):
+        system_joined = "\n".join(
+            block.get("text", "")
+            for block in system_text
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    else:
+        system_joined = str(system_text)
+    assert "Channel:" not in system_joined
+    assert "Chat ID:" not in system_joined
+    assert "[Untrusted Runtime Context]" in runtime_msg["content"]
+    assert "Channel: feishu" in runtime_msg["content"]
+    assert "Chat ID: chat123" in runtime_msg["content"]
+
+
+def test_system_prompt_stable_across_session_ids_when_runtime_context_enabled(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    builder.build_system_prompt_parts = lambda skill_names=None: ("STATIC", "DYNAMIC")  # type: ignore[method-assign]
+
+    msgs_a = builder.build_messages(history=[], current_message="hi", channel="feishu", chat_id="a")
+    msgs_b = builder.build_messages(history=[], current_message="hi", channel="feishu", chat_id="b")
+
+    assert msgs_a[0] == msgs_b[0]
+
+
 def test_build_messages_groups_runtime_tool_catalog_by_capability(tmp_path) -> None:
     builder = _builder(tmp_path)
     tool_defs = [
