@@ -1,5 +1,6 @@
 """Centralized structured logging configuration using structlog."""
 
+import json
 import logging
 import re
 import sys
@@ -68,7 +69,7 @@ def setup_logging(json_output: bool = True, level: str = "INFO") -> None:
     ]
 
     if json_output:
-        renderer = structlog.processors.JSONRenderer()
+        renderer = structlog.processors.JSONRenderer(serializer=lambda obj, **kw: json.dumps(obj, ensure_ascii=False, **kw))
     else:
         renderer = structlog.dev.ConsoleRenderer()
 
