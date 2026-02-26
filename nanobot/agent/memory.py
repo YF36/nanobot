@@ -171,32 +171,46 @@ class MemoryStore:
         daily_file.write_text(new_text, encoding="utf-8")
 
     @classmethod
-    def _normalize_daily_sections(cls, value: object) -> dict[str, list[str]] | None:
+    def _normalize_daily_sections_detailed(cls, value: object) -> tuple[dict[str, list[str]] | None, str]:
+        if value is None:
+            return None, "missing"
         if not isinstance(value, dict):
-            return None
+            return None, "not_object"
         normalized: dict[str, list[str]] = {}
         for key in cls._DAILY_SECTIONS_SCHEMA_MAP:
             raw = value.get(key)
             if raw is None:
                 continue
             if not isinstance(raw, list):
-                return None
+                return None, f"invalid_type:{key}"
             items: list[str] = []
             for item in raw:
                 if not isinstance(item, str):
-                    return None
+                    return None, f"invalid_item:{key}"
                 text = item.strip()
                 if text:
                     items.append(text)
             if items:
                 normalized[key] = items
-        return normalized
+        if not normalized:
+            return None, "empty"
+        return normalized, "ok"
 
-    def append_daily_sections(self, date_str: str, sections: object) -> tuple[Path, bool]:
+    @classmethod
+    def _normalize_daily_sections(cls, value: object) -> dict[str, list[str]] | None:
+        normalized, reason = cls._normalize_daily_sections_detailed(value)
+        return normalized if reason == "ok" else None
+
+    def append_daily_sections_detailed(self, date_str: str, sections: object) -> tuple[Path, bool, dict[str, object]]:
         daily_file = self._daily_memory_file(date_str)
-        normalized = self._normalize_daily_sections(sections)
-        if normalized is None or not normalized:
-            return daily_file, False
+        normalized, reason = self._normalize_daily_sections_detailed(sections)
+        if normalized is None:
+            return daily_file, False, {
+                "reason": reason,
+                "keys": [],
+                "bullet_count": 0,
+                "created": False,
+            }
         created = False
         if not daily_file.exists():
             daily_file.write_text(self._daily_memory_template(date_str), encoding="utf-8")
@@ -206,15 +220,25 @@ class MemoryStore:
             for bullet in normalized.get(schema_key, []):
                 self._append_bullet_to_daily_section(daily_file, section_name, bullet)
                 wrote += 1
+        details = {
+            "reason": "ok",
+            "keys": sorted(normalized.keys()),
+            "bullet_count": wrote,
+            "created": created,
+        }
         logger.debug(
             "Memory daily structured sections appended",
             date=date_str,
             created=created,
             file=str(daily_file),
-            keys=sorted(normalized.keys()),
+            keys=details["keys"],
             bullet_count=wrote,
         )
-        return daily_file, True
+        return daily_file, True, details
+
+    def append_daily_sections(self, date_str: str, sections: object) -> tuple[Path, bool]:
+        daily_file, ok, _ = self.append_daily_sections_detailed(date_str, sections)
+        return daily_file, ok
 
     def append_daily_history_entry(self, entry: str) -> Path:
         date_str = self._history_entry_date(entry)
@@ -566,9 +590,22 @@ class MemoryStore:
                             entry = json.dumps(entry, ensure_ascii=False)
                         self.append_history(entry)
                         date_str = self._history_entry_date(entry)
-                        _, structured_daily_ok = self.append_daily_sections(date_str, args.get("daily_sections"))
+                        raw_daily_sections = args.get("daily_sections")
+                        _, structured_daily_ok, structured_daily_details = self.append_daily_sections_detailed(
+                            date_str,
+                            raw_daily_sections,
+                        )
                         if not structured_daily_ok:
                             self.append_daily_history_entry(entry)
+                        logger.debug(
+                            "Memory daily routing decision",
+                            date=date_str,
+                            structured_daily_ok=structured_daily_ok,
+                            fallback_used=(not structured_daily_ok),
+                            fallback_reason=structured_daily_details["reason"],
+                            structured_keys=structured_daily_details["keys"],
+                            structured_bullet_count=structured_daily_details["bullet_count"],
+                        )
                     if update := args.get("memory_update"):
                         if not isinstance(update, str):
                             update = json.dumps(update, ensure_ascii=False)

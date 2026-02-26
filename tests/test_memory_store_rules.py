@@ -52,6 +52,39 @@ def test_append_daily_history_entry_keeps_legacy_entries_file_compatible(tmp_pat
     assert "Legacy append path works." in content
 
 
+def test_normalize_daily_sections_detailed_reports_quality_reasons() -> None:
+    normalized, reason = MemoryStore._normalize_daily_sections_detailed(None)
+    assert normalized is None and reason == "missing"
+
+    normalized, reason = MemoryStore._normalize_daily_sections_detailed({"topics": []})
+    assert normalized is None and reason == "empty"
+
+    normalized, reason = MemoryStore._normalize_daily_sections_detailed({"topics": "bad"})
+    assert normalized is None and reason == "invalid_type:topics"
+
+    normalized, reason = MemoryStore._normalize_daily_sections_detailed({"topics": ["  A  ", ""]})
+    assert reason == "ok"
+    assert normalized == {"topics": ["A"]}
+
+
+def test_append_daily_sections_detailed_returns_observability_details(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+
+    path, ok, details = mm.append_daily_sections_detailed("2026-02-25", {"topics": ["hello"]})
+
+    assert ok is True
+    assert path.name == "2026-02-25.md"
+    assert details["reason"] == "ok"
+    assert details["keys"] == ["topics"]
+    assert details["bullet_count"] == 1
+    assert details["created"] is True
+
+    _, ok2, details2 = mm.append_daily_sections_detailed("2026-02-25", {"topics": "bad"})
+    assert ok2 is False
+    assert details2["reason"] == "invalid_type:topics"
+    assert details2["bullet_count"] == 0
+
+
 def test_append_daily_sections_writes_structured_bullets(tmp_path: Path) -> None:
     mm = MemoryStore(workspace=tmp_path)
 
