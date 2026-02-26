@@ -569,6 +569,7 @@ M3 验收标准：
 - `/new background archival scheduled`（含 `reason="session_reset"`、`snapshot_len`）
 - `/new background archival done`（含 `elapsed_ms`、`success=true`）
 - `/new background archival failed/errored`（含 `elapsed_ms`）
+- `/new background archival summary`（每 10 次汇总一次：`total/ok/failed/errored/avg_elapsed_ms`）
 
 说明（语义变化）：
 
@@ -590,6 +591,7 @@ M3 验收标准：
 - 旧 session 与后续消息可能并发，需继续依赖 `ConsolidationCoordinator` 的 session 级排他/任务管理。
 - 不建议把 `/new` 的全部逻辑异步化；仅异步化“慢收尾”（consolidation + 可选二次保存）。
 - 可选增强：先同步快速保存旧 session，再后台做压缩（两阶段收尾）。
+- 建议先观察一段时间 `/new background archival summary` 的成功率与平均耗时，再决定是否推进“两阶段收尾”。
 
 ## 我建议的落地顺序（ROI 排序）
 
