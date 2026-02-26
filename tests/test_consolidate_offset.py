@@ -121,6 +121,29 @@ class TestSessionImmutableHistory:
         assert len(history) == 5
         assert history[0]["content"] == "msg0"
 
+    def test_get_history_uses_unconsolidated_cursor_and_aligns_to_user_turn(self) -> None:
+        session = Session(key="test:cursor_align")
+        # 0-3 already consolidated
+        session.add_message("user", "old-u0")
+        session.add_message("assistant", "old-a0")
+        session.add_message("user", "old-u1")
+        session.add_message("assistant", "old-a1")
+        # unconsolidated starts here with an orphaned assistant/tool pair if sliced too tightly
+        session.add_message("assistant", "plan")
+        session.messages[-1]["tool_calls"] = [{"id": "t1", "function": {"name": "x", "arguments": "{}"}, "type": "function"}]
+        session.add_message("tool", "tool-result", tool_call_id="t1", name="x")
+        session.add_message("user", "real-user")
+        session.add_message("assistant", "real-answer")
+        session.last_consolidated = 4
+
+        history = session.get_history(max_messages=3)
+
+        # Should slice unconsolidated tail then drop leading non-user orphan blocks
+        assert [m["role"] for m in history] == ["user", "assistant"]
+        assert history[0]["content"] == "real-user"
+        assert history[1]["content"] == "real-answer"
+
+
     def test_get_history_stable_for_same_session(self) -> None:
         """Test that get_history returns same content for same max_messages."""
         session = create_session_with_messages("test:stable", 20)

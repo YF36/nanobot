@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -187,6 +188,42 @@ def test_sanitize_memory_update_detailed_reports_reason_categories() -> None:
     assert "今天讨论的主题" in details["recent_topic_section_samples"][0]
     assert details["transient_status_line_samples"]
     assert "service timeout error" in details["transient_status_line_samples"][0]
+
+
+@pytest.mark.asyncio
+async def test_consolidate_accepts_json_string_tool_arguments(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    mm.write_long_term("# Long-term Memory\n")
+
+    session = Session(key="test:json_args")
+    for i in range(60):
+        session.add_message("user", f"msg{i}")
+
+    provider = MagicMock()
+
+    async def _fake_chat(**kwargs):
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="t1",
+                    name="save_memory",
+                    arguments=json.dumps({
+                        "history_entry": "[2026-02-25 10:00] Discussed JSON string tool args.",
+                        "memory_update": "# Long-term Memory\n",
+                        "daily_sections": {"topics": ["JSON args path works"]},
+                    }),
+                )
+            ],
+        )
+
+    provider.chat = _fake_chat
+    result = await mm.consolidate(session=session, provider=provider, model="test", memory_window=50)
+
+    assert result is True
+    assert "Discussed JSON string tool args" in mm.history_file.read_text(encoding="utf-8")
+    daily_text = (mm.memory_dir / "2026-02-25.md").read_text(encoding="utf-8")
+    assert "JSON args path works" in daily_text
 
 
 @pytest.mark.asyncio
