@@ -158,6 +158,9 @@ class SubagentManager:
         temperature: float = 0.7,
         max_tokens: int = 4096,
         brave_api_key: str | None = None,
+        web_search_max_results: int = 5,
+        web_search_timeout_s: float = 15.0,
+        web_search_max_retries: int = 1,
         exec_config: "ExecToolConfig | None" = None,
         filesystem_config: "FilesystemToolConfig | None" = None,
         restrict_to_workspace: bool = False,
@@ -173,6 +176,9 @@ class SubagentManager:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.brave_api_key = brave_api_key
+        self.web_search_max_results = web_search_max_results
+        self.web_search_timeout_s = web_search_timeout_s
+        self.web_search_max_retries = web_search_max_retries
         self.exec_config = exec_config or ExecToolConfig()
         self.filesystem_config = filesystem_config or FilesystemToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
@@ -255,6 +261,9 @@ class SubagentManager:
             tools = create_standard_tool_registry(
                 workspace=self.workspace,
                 brave_api_key=self.brave_api_key,
+                web_search_max_results=self.web_search_max_results,
+                web_search_timeout_s=self.web_search_timeout_s,
+                web_search_max_retries=self.web_search_max_retries,
                 exec_config=self.exec_config,
                 filesystem_config=self.filesystem_config,
                 restrict_to_workspace=self.restrict_to_workspace,

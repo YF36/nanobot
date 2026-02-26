@@ -297,6 +297,8 @@ class WebSearchConfig(Base):
 
     api_key: str = ""  # Brave Search API key
     max_results: int = 5
+    timeout_s: float = 15.0
+    max_retries: int = 1
 
 
 class WebToolsConfig(Base):

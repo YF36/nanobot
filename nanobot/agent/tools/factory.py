@@ -23,6 +23,9 @@ def create_standard_tool_registry(
     *,
     workspace: Path,
     brave_api_key: str | None,
+    web_search_max_results: int = 5,
+    web_search_timeout_s: float = 15.0,
+    web_search_max_retries: int = 1,
     exec_config: "ExecToolConfig",
     filesystem_config: "FilesystemToolConfig",
     restrict_to_workspace: bool,
@@ -50,7 +53,14 @@ def create_standard_tool_registry(
             audit_executions=exec_config.audit_executions,
         )
     )
-    registry.register(WebSearchTool(api_key=brave_api_key))
+    registry.register(
+        WebSearchTool(
+            api_key=brave_api_key,
+            max_results=web_search_max_results,
+            timeout_s=web_search_timeout_s,
+            max_retries=web_search_max_retries,
+        )
+    )
     registry.register(WebFetchTool())
 
     if message_send_callback is not None:
