@@ -31,11 +31,18 @@
   - 已实现 `SpawnTool` 透传 `session_key`
   - 已在 `SessionCommandHandler` 接入 `/stop`（停止当前会话后台 subagent）
   - 未实现 upstream 的 task-based dispatch 全量 `/stop`（与当前 `AgentLoop` 架构差异较大）
+- P2-5 `ExecTool path_append` 配置支持（`ExecToolConfig` / tool factory / shell 执行 env PATH 扩展）
+- P1-4（部分）Feishu `post` 富文本图片提取与下载：
+  - 已移植 `_extract_post_content()`（文本 + `image_key` 提取）
+  - 已在 `msg_type == "post"` 路径下载嵌入图片并转入 `media`
+  - 已补纯函数测试（post 文本/图片键提取）
+  - 未补完整渠道集成测试（当前环境/依赖成本较高）
 
 代表性落地提交：
 
 - `e5a476b` `fix merge memory args parsing and session history alignment`
 - `7840125` `feat add session-scoped subagent stop command`
+- `7b5a334` `feat support exec path_append configuration`
 
 ## 文件交集热区（冲突风险高）
 
@@ -164,7 +171,7 @@ upstream 提供的价值：
 
 ---
 
-### 4. Feishu 富文本 post 图片提取与下载（按需高优先级）
+### 4. Feishu 富文本 post 图片提取与下载（已部分落地）
 
 相关 upstream 提交：
 
@@ -184,10 +191,16 @@ upstream 价值：
 
 - 中等（我们分支也改过渠道层），但可局部手工移植。
 
-建议动作：
+当前状态（本分支）：
 
-- 手工移植 `_extract_post_content()` 与 `msg_type == "post"` 分支逻辑
-- 增补/吸收 upstream 对应测试（如有）
+- 已手工移植 `_extract_post_content()` 与 `msg_type == "post"` 图片下载分支
+- 已增加纯函数测试覆盖 `post` 文本 + `image_key` 提取
+- 尚未补渠道端到端测试（依赖 Feishu SDK 与消息事件模拟）
+
+后续建议动作：
+
+- 如你近期 Feishu 使用频繁，建议补一条消息处理级测试（mock `_download_and_save_media` + `_handle_message`）
+- 吸收 upstream 若后续还有 `post`/富文本兼容修复时，优先对照 `_extract_post_content()` 差异
 
 ---
 
