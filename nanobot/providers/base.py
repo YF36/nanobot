@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, AsyncIterator
 
 
 @dataclass
@@ -103,6 +103,24 @@ class LLMProvider(ABC):
             LLMResponse with content and/or tool calls.
         """
         pass
+
+    async def stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Optional streaming chat interface.
+
+        Implementations may yield provider-agnostic events such as:
+        - {"type": "text_delta", "delta": "..."}
+        - {"type": "done", "response": LLMResponse(...)}
+
+        Providers that do not support streaming should leave this unimplemented.
+        """
+        raise NotImplementedError
     
     @abstractmethod
     def get_default_model(self) -> str:

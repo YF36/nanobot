@@ -78,6 +78,55 @@ class OpenAICodexProvider(LLMProvider):
                 finish_reason="error",
             )
 
+    async def stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        model = model or self.default_model
+        system_prompt, input_items = _convert_messages(messages)
+
+        token = await asyncio.to_thread(get_codex_token)
+        headers = _build_headers(token.account_id, token.access)
+
+        body: dict[str, Any] = {
+            "model": _strip_model_prefix(model),
+            "store": False,
+            "stream": True,
+            "instructions": system_prompt,
+            "input": input_items,
+            "text": {"verbosity": "medium"},
+            "include": ["reasoning.encrypted_content"],
+            "prompt_cache_key": _prompt_cache_key(messages),
+            "tool_choice": "auto",
+            "parallel_tool_calls": True,
+        }
+        if tools:
+            body["tools"] = _convert_tools(tools)
+
+        url = DEFAULT_CODEX_URL
+        try:
+            try:
+                async for event in _request_codex_stream(url, headers, body, verify=True, timeout=self.timeout):
+                    yield event
+            except Exception as e:
+                if "CERTIFICATE_VERIFY_FAILED" not in str(e):
+                    raise
+                logger.warning("SSL certificate verification failed for Codex API; retrying stream with verify=False")
+                async for event in _request_codex_stream(url, headers, body, verify=False, timeout=self.timeout):
+                    yield event
+        except Exception as e:
+            yield {
+                "type": "done",
+                "response": LLMResponse(
+                    content=f"Error calling Codex: {str(e)}",
+                    finish_reason="error",
+                ),
+            }
+
     def get_default_model(self) -> str:
         return self.default_model
 
@@ -113,6 +162,22 @@ async def _request_codex(
                 text = await response.aread()
                 raise RuntimeError(_friendly_error(response.status_code, text.decode("utf-8", "ignore")))
             return await _consume_sse(response)
+
+
+async def _request_codex_stream(
+    url: str,
+    headers: dict[str, str],
+    body: dict[str, Any],
+    verify: bool,
+    timeout: float = 120.0,
+) -> AsyncGenerator[dict[str, Any], None]:
+    async with httpx.AsyncClient(timeout=timeout, verify=verify) as client:
+        async with client.stream("POST", url, headers=headers, json=body) as response:
+            if response.status_code != 200:
+                text = await response.aread()
+                raise RuntimeError(_friendly_error(response.status_code, text.decode("utf-8", "ignore")))
+            async for event in _stream_sse_events(response):
+                yield event
 
 
 def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -318,6 +383,74 @@ async def _consume_sse(response: httpx.Response) -> tuple[str, list[ToolCallRequ
             raise RuntimeError("Codex response failed")
 
     return content, tool_calls, finish_reason
+
+
+async def _stream_sse_events(response: httpx.Response) -> AsyncGenerator[dict[str, Any], None]:
+    """Yield provider-agnostic streaming events while building the final response."""
+    content = ""
+    tool_calls: list[ToolCallRequest] = []
+    tool_call_buffers: dict[str, dict[str, Any]] = {}
+    finish_reason = "stop"
+
+    async for event in _iter_sse(response):
+        event_type = event.get("type")
+        if event_type == "response.output_item.added":
+            item = event.get("item") or {}
+            if item.get("type") == "function_call":
+                call_id = item.get("call_id")
+                if not call_id:
+                    continue
+                tool_call_buffers[call_id] = {
+                    "id": item.get("id") or "fc_0",
+                    "name": item.get("name"),
+                    "arguments": item.get("arguments") or "",
+                }
+        elif event_type == "response.output_text.delta":
+            delta = event.get("delta") or ""
+            if delta:
+                content += delta
+                yield {"type": "text_delta", "delta": delta}
+        elif event_type == "response.function_call_arguments.delta":
+            call_id = event.get("call_id")
+            if call_id and call_id in tool_call_buffers:
+                tool_call_buffers[call_id]["arguments"] += event.get("delta") or ""
+        elif event_type == "response.function_call_arguments.done":
+            call_id = event.get("call_id")
+            if call_id and call_id in tool_call_buffers:
+                tool_call_buffers[call_id]["arguments"] = event.get("arguments") or ""
+        elif event_type == "response.output_item.done":
+            item = event.get("item") or {}
+            if item.get("type") == "function_call":
+                call_id = item.get("call_id")
+                if not call_id:
+                    continue
+                buf = tool_call_buffers.get(call_id) or {}
+                args_raw = buf.get("arguments") or item.get("arguments") or "{}"
+                try:
+                    args = json.loads(args_raw)
+                except Exception:
+                    args = {"raw": args_raw}
+                tool_calls.append(
+                    ToolCallRequest(
+                        id=f"{call_id}|{buf.get('id') or item.get('id') or 'fc_0'}",
+                        name=buf.get("name") or item.get("name"),
+                        arguments=args,
+                    )
+                )
+        elif event_type == "response.completed":
+            status = (event.get("response") or {}).get("status")
+            finish_reason = _map_finish_reason(status)
+        elif event_type in {"error", "response.failed"}:
+            raise RuntimeError("Codex response failed")
+
+    yield {
+        "type": "done",
+        "response": LLMResponse(
+            content=content,
+            tool_calls=tool_calls,
+            finish_reason=finish_reason,
+        ),
+    }
 
 
 _FINISH_REASON_MAP = {"completed": "stop", "incomplete": "length", "failed": "error", "cancelled": "error"}

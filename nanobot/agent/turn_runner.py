@@ -26,6 +26,8 @@ logger = get_logger(__name__)
 _CHAT_RETRY_MAX_ATTEMPTS = 2
 _CHAT_RETRY_BASE_DELAY_S = 0.2
 _CONTEXT_OVERFLOW_EXTRA_COMPACTIONS = 1
+_STREAM_PROGRESS_FLUSH_INTERVAL_S = 0.15
+_STREAM_PROGRESS_FLUSH_CHARS = 80
 
 
 def _session_tool_details(details: dict[str, Any]) -> dict[str, Any]:
@@ -178,12 +180,83 @@ class TurnRunner:
         compacted = messages[:drop_index] + messages[drop_index + 1 :]
         return compacted, max(system_count, current_turn_start - 1)
 
+    async def _provider_chat_once(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        on_progress: Callable[..., Awaitable[None]] | None = None,
+    ) -> tuple[Any, bool]:
+        """Call the provider once, optionally using its streaming interface."""
+        stream_method = getattr(self.provider, "stream_chat", None)
+        if on_progress is None or not callable(stream_method):
+            response = await self.provider.chat(
+                messages=messages,
+                tools=self.tools.get_definitions(),
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+            )
+            return response, False
+
+        progress_buf: list[str] = []
+        last_flush = time.monotonic()
+        streamed_progress = False
+        final_response = None
+
+        async def _flush_progress(*, force: bool = False) -> None:
+            nonlocal last_flush, streamed_progress
+            if not progress_buf:
+                return
+            now = time.monotonic()
+            total_chars = sum(len(x) for x in progress_buf)
+            if not force and (now - last_flush) < _STREAM_PROGRESS_FLUSH_INTERVAL_S and total_chars < _STREAM_PROGRESS_FLUSH_CHARS:
+                return
+            chunk = "".join(progress_buf)
+            progress_buf.clear()
+            last_flush = now
+            if chunk:
+                streamed_progress = True
+                await on_progress(chunk)
+
+        try:
+            async for event in stream_method(
+                messages=messages,
+                tools=self.tools.get_definitions(),
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+            ):
+                event_type = event.get("type")
+                if event_type == "text_delta":
+                    delta = event.get("delta")
+                    if isinstance(delta, str) and delta:
+                        progress_buf.append(delta)
+                        await _flush_progress(force=False)
+                elif event_type == "done":
+                    final_response = event.get("response")
+                elif event_type == "error":
+                    raise RuntimeError(str(event.get("error") or "stream_chat error"))
+            await _flush_progress(force=True)
+            if final_response is None:
+                raise RuntimeError("stream_chat ended without final response")
+            return final_response, streamed_progress
+        except NotImplementedError:
+            response = await self.provider.chat(
+                messages=messages,
+                tools=self.tools.get_definitions(),
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+            )
+            return response, False
+
     async def _chat_with_retries(
         self,
         *,
         messages: list[dict[str, Any]],
         current_turn_start: int,
-    ) -> tuple[Any, list[dict[str, Any]], int, dict[str, int]]:
+        on_progress: Callable[..., Awaitable[None]] | None = None,
+    ) -> tuple[Any, list[dict[str, Any]], int, dict[str, int], bool]:
         """Call provider.chat with bounded retries and one overflow compaction retry path."""
         attempt = 0
         overflow_compactions = 0
@@ -194,17 +267,16 @@ class TurnRunner:
         error_finish_fatal_count = 0
         local_messages = messages
         local_turn_start = current_turn_start
+        streamed_progress_sent = False
 
         while True:
             attempt += 1
             try:
-                response = await self.provider.chat(
+                response, streamed_progress = await self._provider_chat_once(
                     messages=local_messages,
-                    tools=self.tools.get_definitions(),
-                    model=self.model,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
+                    on_progress=on_progress,
                 )
+                streamed_progress_sent = streamed_progress_sent or streamed_progress
             except Exception as e:
                 retryable_exception = _should_retry_chat_exception(e)
                 if attempt >= _CHAT_RETRY_MAX_ATTEMPTS:
@@ -297,7 +369,7 @@ class TurnRunner:
                 "llm_error_finish_overflow_count": error_finish_overflow_count,
                 "llm_error_finish_retryable_count": error_finish_retryable_count,
                 "llm_error_finish_fatal_count": error_finish_fatal_count,
-            }
+            }, streamed_progress_sent
 
     async def run(
         self,
@@ -356,9 +428,10 @@ class TurnRunner:
             iteration += 1
             messages, current_turn_start = self.guard_loop_messages(messages, current_turn_start)
 
-            response, messages, current_turn_start, chat_retry_stats = await self._chat_with_retries(
+            response, messages, current_turn_start, chat_retry_stats, streamed_progress_sent = await self._chat_with_retries(
                 messages=messages,
                 current_turn_start=current_turn_start,
+                on_progress=on_progress,
             )
             for key, value in chat_retry_stats.items():
                 retry_stats[key] = retry_stats.get(key, 0) + int(value)
@@ -366,7 +439,7 @@ class TurnRunner:
             if response.has_tool_calls:
                 if on_progress:
                     clean = self.strip_think(response.content)
-                    if clean:
+                    if clean and not streamed_progress_sent:
                         await on_progress(clean)
                     await on_progress(self.tool_hint(response.tool_calls), tool_hint=True)
 

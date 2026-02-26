@@ -177,6 +177,37 @@ class _RetryableErrorFinishThenSuccessProvider:
         )
 
 
+class _StreamingProvider:
+    def __init__(self):
+        self.chat_calls = 0
+        self.stream_calls = 0
+
+    async def chat(self, **kwargs):
+        self.chat_calls += 1
+        return SimpleNamespace(
+            has_tool_calls=False,
+            content="fallback",
+            tool_calls=[],
+            reasoning_content=None,
+            finish_reason="stop",
+        )
+
+    async def stream_chat(self, **kwargs):
+        self.stream_calls += 1
+        yield {"type": "text_delta", "delta": "Hello "}
+        yield {"type": "text_delta", "delta": "stream"}
+        yield {
+            "type": "done",
+            "response": SimpleNamespace(
+                has_tool_calls=False,
+                content="Hello stream",
+                tool_calls=[],
+                reasoning_content=None,
+                finish_reason="stop",
+            ),
+        }
+
+
 @pytest.mark.asyncio
 async def test_turn_runner_emits_minimal_events_and_keeps_progress() -> None:
     runner = TurnRunner(
@@ -446,3 +477,38 @@ async def test_turn_runner_retries_retryable_finish_reason_error() -> None:
     assert events[-1]["llm_error_finish_retryable_count"] == 1
     assert events[-1].get("llm_error_finish_fatal_count", 0) == 0
     assert events[-1].get("llm_error_finish_overflow_count", 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_turn_runner_streams_text_deltas_via_progress() -> None:
+    provider = _StreamingProvider()
+    runner = TurnRunner(
+        provider=provider,
+        tools=_FakeTools(),
+        context_builder=_FakeContext(),
+        model="test",
+        temperature=0.0,
+        max_tokens=256,
+        max_iterations=2,
+        guard_loop_messages=lambda m, i: (m, i),
+        strip_think=lambda s: s,
+        tool_hint=lambda calls: f"Using {len(calls)} tool(s)",
+    )
+
+    progress: list[tuple[str, bool]] = []
+
+    async def _on_progress(content: str, *, tool_hint: bool = False) -> None:
+        progress.append((content, tool_hint))
+
+    final_content, tools_used, messages = await runner.run(
+        [{"role": "user", "content": "hello"}],
+        on_progress=_on_progress,
+    )
+
+    assert provider.stream_calls == 1
+    assert provider.chat_calls == 0
+    assert final_content == "Hello stream"
+    assert tools_used == []
+    assert messages[-1]["content"] == "Hello stream"
+    assert progress
+    assert "".join(chunk for chunk, is_hint in progress if not is_hint) == "Hello stream"
