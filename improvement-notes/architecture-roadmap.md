@@ -9,6 +9,8 @@
 - `pi-mono/packages/coding-agent/src/core/tools/*`（重点 `read` / `edit` / `bash`）
 - `nanobot/nanobot/agent/*`、`nanobot/nanobot/agent/tools/*`、`nanobot/nanobot/session/manager.py`
 
+**注意**: 本次对比的pi-mono代码的git版本是 380236a003ec7f0e69f54463b0f00b3118d78f3c,后续pi-mono可能会继续更新
+
 结论（先说重点）：
 
 1. `nanobot` 当前实现已经有不少实用能力（多渠道总线、MCP、子代理、记忆归档、安全守卫），但核心循环与工具层边界偏“粘”，后续扩展成本会快速升高。
@@ -633,6 +635,98 @@
 4. `FailoverPolicy` 结构化（承接 Phase 3-2）
 
 这样可以在不进入“企业平台化重构”的前提下，吸收这份架构文档里最有价值的抽象。
+
+## 新主题建议：Workflow Enforcement（门禁 + 输出契约）
+
+参考启发：`/Users/fanpucheng/proj/memory2.md`
+
+这类方案解决的核心问题不是“记忆容量不足”，而是“Agent 忘规则 / 不遵循流程”。对 nanobot 的意义在于：把规则从 `AGENTS.md` / Skill 文档中的“建议”，前移到执行路径和回复校验路径中，形成更稳定的约束。
+
+### 与记忆系统的边界（重要）
+
+- `memory`（`MEMORY.md` / daily / `HISTORY.md`）负责：
+  - 长期偏好、背景、经验、事实摘要的保存与检索
+- `workflow enforcement` 负责：
+  - 执行前门禁（能不能做）
+  - 回复前契约校验（是否按要求汇报）
+
+结论：
+
+- 不应期待更好的 memory 设计自动解决“流程遵循”问题。
+- 这是一条独立于 `M1/M2/M3` 的执行控制主线，和 memory 路线互补。
+
+### 机制一：门禁（Gate）拦执行
+
+核心思想：
+
+- 将高风险或关键流程的规则前置为“必须通过”的检查。
+- 不依赖 LLM 记住规则；通过不了就不执行。
+
+适合 nanobot 的优先场景：
+
+1. `exec`（shell）工具
+- 高风险命令执行前进行策略检查（例如是否需要只读 profile、是否允许网络）。
+- 可与未来 `sandbox-roadmap.md` 中的 profile / policy 结合。
+
+2. 核心文件修改（`edit_file` / `write_file`）
+- 对特定路径（配置、密钥相关、部署脚本）增加额外确认/审计门禁。
+
+3. 外发消息/发布类操作（`message` 工具）
+- 在真正发送前检查是否满足发布 checklist 或人工确认条件（按场景）。
+
+4. 后台无人值守任务（heartbeat / cron）
+- 这类任务缺少人工实时盯防，更适合强制门禁或更严格 profile。
+
+落地建议（nanobot 风格）：
+
+- 先做内部 policy/gate 抽象，不急着用 shell 脚本散落实现。
+- 将 gate 设计成可组合检查（通过/拒绝/要求确认），后续可挂到 Filter Chain 或工具执行前钩子上。
+
+### 机制二：强制输出契约（Output Contract）拦回复
+
+核心思想：
+
+- 不是只要求“做了检查”，而是要求回复中必须包含指定结构化块/审计块。
+- 没有满足格式要求，则视为任务未完成或触发重试/补充说明。
+
+适合 nanobot 的场景：
+
+1. 代码修改任务
+- 要求回复包含：
+  - 修改内容摘要
+  - 风险/回归点
+  - 测试执行情况（是否跑、结果）
+
+2. 安全敏感任务
+- 要求包含“安全自检”块（如密钥、路径、外发审计）。
+
+3. 决策类任务
+- 要求包含“方案选择 / 权衡 / 未决问题”块，避免只给结论不交代依据。
+
+落地建议（渐进式）：
+
+- 先从系统提示/任务模板中引导输出格式（软约束）。
+- 再对特定命令或工具结果引入回复校验（硬约束或半硬约束）。
+- 与 `ToolExecutionResult.details`、turn events、日志观测联动，便于判断是否“形式满足但内容空洞”。
+
+### 与现有路线图的结合点（可执行）
+
+1. 与 `Filter Chain` 最小版结合（高契合）
+- `pre`：执行前门禁（Gate）
+- `post`：回复契约校验（Output Contract）
+
+2. 与 `sandbox-roadmap.md` 结合
+- 门禁决定是否允许执行、是否升级沙箱 profile。
+- 沙箱负责隔离环境；门禁负责流程合规。
+
+3. 与观测字段规范化结合
+- 记录 `gate_result`, `gate_reason`, `contract_passed`, `contract_missing_sections` 等字段。
+- 先做日志，不急着做指标系统。
+
+### 建议优先级（当前）
+
+- 中高优先级，但建议在 `Filter Chain` 最小版启动时一起落地。
+- 不建议在没有统一执行/回复拦截点前，先零散增加大量特判规则。
 
 ## 额外说明：nanobot 当前做得好的地方（建议保留）
 
