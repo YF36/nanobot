@@ -52,11 +52,43 @@ def test_append_daily_history_entry_keeps_legacy_entries_file_compatible(tmp_pat
     assert "Legacy append path works." in content
 
 
+def test_append_daily_sections_writes_structured_bullets(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+
+    path, ok = mm.append_daily_sections(
+        "2026-02-25",
+        {
+            "topics": ["讨论了 memory 分层"],
+            "decisions": ["先做 M2-min 再做 M2-full"],
+            "tool_activity": ["运行 pytest 验证"],
+            "open_questions": ["是否引入 TTL"],
+        },
+    )
+
+    assert ok is True
+    content = path.read_text(encoding="utf-8")
+    assert "- 讨论了 memory 分层" in content
+    assert "- 先做 M2-min 再做 M2-full" in content
+    assert "- 运行 pytest 验证" in content
+    assert "- 是否引入 TTL" in content
+
+
 def test_consolidation_system_prompt_restricts_memory_update_to_long_term_facts() -> None:
     prompt = MemoryStore._consolidation_system_prompt()
     assert "long-term stable facts only" in prompt
     assert "Do NOT copy recent discussion topics" in prompt
     assert "history_entry only" in prompt
+
+
+def test_save_memory_tool_schema_supports_optional_daily_sections() -> None:
+    tool = MemoryStore.__dict__.get("_SAVE_MEMORY_TOOL") if False else None
+    # Access module-level schema through imported module object
+    from nanobot.agent import memory as memory_module
+
+    props = memory_module._SAVE_MEMORY_TOOL[0]["function"]["parameters"]["properties"]
+    assert "daily_sections" in props
+    daily_props = props["daily_sections"]["properties"]
+    assert set(daily_props) == {"topics", "decisions", "tool_activity", "open_questions"}
 
 
 def test_consolidation_system_prompt_discourages_transient_system_status() -> None:
@@ -122,6 +154,83 @@ def test_sanitize_memory_update_detailed_reports_reason_categories() -> None:
     assert "今天讨论的主题" in details["recent_topic_section_samples"][0]
     assert details["transient_status_line_samples"]
     assert "service timeout error" in details["transient_status_line_samples"][0]
+
+
+@pytest.mark.asyncio
+async def test_consolidate_prefers_structured_daily_sections_when_present(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    mm.write_long_term("# Long-term Memory\n")
+
+    session = Session(key="test:daily_sections_ok")
+    for i in range(60):
+        session.add_message("user", f"msg{i}")
+
+    provider = MagicMock()
+
+    async def _fake_chat(**kwargs):
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="t1",
+                    name="save_memory",
+                    arguments={
+                        "history_entry": "[2026-02-25 10:00] Discussed memory migration plan.",
+                        "memory_update": "# Long-term Memory\n",
+                        "daily_sections": {
+                            "decisions": ["Use structured daily sections first."],
+                            "open_questions": ["When to add TTL janitor?"],
+                        },
+                    },
+                )
+            ],
+        )
+
+    provider.chat = _fake_chat
+    result = await mm.consolidate(session=session, provider=provider, model="test", memory_window=50)
+
+    assert result is True
+    daily_text = (mm.memory_dir / "2026-02-25.md").read_text(encoding="utf-8")
+    assert "Use structured daily sections first." in daily_text
+    assert "When to add TTL janitor?" in daily_text
+    assert "Discussed memory migration plan." not in daily_text
+
+
+@pytest.mark.asyncio
+async def test_consolidate_falls_back_when_daily_sections_invalid(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    mm.write_long_term("# Long-term Memory\n")
+
+    session = Session(key="test:daily_sections_bad")
+    for i in range(60):
+        session.add_message("user", f"msg{i}")
+
+    provider = MagicMock()
+
+    async def _fake_chat(**kwargs):
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="t1",
+                    name="save_memory",
+                    arguments={
+                        "history_entry": "[2026-02-25 10:00] Ran exec command to inspect memory files.",
+                        "memory_update": "# Long-term Memory\n",
+                        "daily_sections": {
+                            "tool_activity": "not-a-list",
+                        },
+                    },
+                )
+            ],
+        )
+
+    provider.chat = _fake_chat
+    result = await mm.consolidate(session=session, provider=provider, model="test", memory_window=50)
+
+    assert result is True
+    daily_text = (mm.memory_dir / "2026-02-25.md").read_text(encoding="utf-8")
+    assert "Ran exec command to inspect memory files." in daily_text
 
 
 @pytest.mark.asyncio

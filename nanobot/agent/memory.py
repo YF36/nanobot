@@ -38,6 +38,16 @@ _SAVE_MEMORY_TOOL = [
                         "description": "Full updated long-term memory as markdown. Include all existing "
                         "facts plus new ones. Return unchanged if nothing new.",
                     },
+                    "daily_sections": {
+                        "type": "object",
+                        "description": "Optional structured daily memory bullets for daily log sections.",
+                        "properties": {
+                            "topics": {"type": "array", "items": {"type": "string"}},
+                            "decisions": {"type": "array", "items": {"type": "string"}},
+                            "tool_activity": {"type": "array", "items": {"type": "string"}},
+                            "open_questions": {"type": "array", "items": {"type": "string"}},
+                        },
+                    },
                 },
                 "required": ["history_entry", "memory_update"],
             },
@@ -82,6 +92,12 @@ class MemoryStore:
         "Tool Activity",
         "Open Questions",
     )
+    _DAILY_SECTIONS_SCHEMA_MAP = {
+        "topics": "Topics",
+        "decisions": "Decisions",
+        "tool_activity": "Tool Activity",
+        "open_questions": "Open Questions",
+    }
 
     def __init__(self, workspace: Path):
         self.memory_dir = ensure_dir(workspace / "memory")
@@ -154,6 +170,52 @@ class MemoryStore:
         new_text = prefix + f"- {bullet}\n" + suffix
         daily_file.write_text(new_text, encoding="utf-8")
 
+    @classmethod
+    def _normalize_daily_sections(cls, value: object) -> dict[str, list[str]] | None:
+        if not isinstance(value, dict):
+            return None
+        normalized: dict[str, list[str]] = {}
+        for key in cls._DAILY_SECTIONS_SCHEMA_MAP:
+            raw = value.get(key)
+            if raw is None:
+                continue
+            if not isinstance(raw, list):
+                return None
+            items: list[str] = []
+            for item in raw:
+                if not isinstance(item, str):
+                    return None
+                text = item.strip()
+                if text:
+                    items.append(text)
+            if items:
+                normalized[key] = items
+        return normalized
+
+    def append_daily_sections(self, date_str: str, sections: object) -> tuple[Path, bool]:
+        daily_file = self._daily_memory_file(date_str)
+        normalized = self._normalize_daily_sections(sections)
+        if normalized is None or not normalized:
+            return daily_file, False
+        created = False
+        if not daily_file.exists():
+            daily_file.write_text(self._daily_memory_template(date_str), encoding="utf-8")
+            created = True
+        wrote = 0
+        for schema_key, section_name in self._DAILY_SECTIONS_SCHEMA_MAP.items():
+            for bullet in normalized.get(schema_key, []):
+                self._append_bullet_to_daily_section(daily_file, section_name, bullet)
+                wrote += 1
+        logger.debug(
+            "Memory daily structured sections appended",
+            date=date_str,
+            created=created,
+            file=str(daily_file),
+            keys=sorted(normalized.keys()),
+            bullet_count=wrote,
+        )
+        return daily_file, True
+
     def append_daily_history_entry(self, entry: str) -> Path:
         date_str = self._history_entry_date(entry)
         daily_file = self._daily_memory_file(date_str)
@@ -219,7 +281,8 @@ class MemoryStore:
             "Treat MEMORY.md as long-term stable facts only (user preferences, durable project context, stable environment constraints). "
             "Do NOT copy recent discussion topics, knowledge-answer content, long summaries, tables, or tool outputs into memory_update; "
             "those belong in history_entry only. Temporary system/API error statuses, one-off incidents, and dated operational notes "
-            "should usually stay out of memory_update (or be reduced to a durable configuration fact only)."
+            "should usually stay out of memory_update (or be reduced to a durable configuration fact only). "
+            "Optionally include daily_sections with concise bullets for Topics/Decisions/Tool Activity/Open Questions."
         )
         if not strict_tool_call:
             return base
@@ -502,7 +565,10 @@ class MemoryStore:
                         if not isinstance(entry, str):
                             entry = json.dumps(entry, ensure_ascii=False)
                         self.append_history(entry)
-                        self.append_daily_history_entry(entry)
+                        date_str = self._history_entry_date(entry)
+                        _, structured_daily_ok = self.append_daily_sections(date_str, args.get("daily_sections"))
+                        if not structured_daily_ok:
+                            self.append_daily_history_entry(entry)
                     if update := args.get("memory_update"):
                         if not isinstance(update, str):
                             update = json.dumps(update, ensure_ascii=False)
