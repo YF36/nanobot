@@ -456,6 +456,14 @@ M1 状态（截至 2026-02-26）：已落地（含 M1.x 观测增强）
 - consolidation 成功后在保留 `HISTORY.md` 写入行为不变的前提下，额外把 `history_entry` 追加到当天 `memory/YYYY-MM-DD.md`。
 - daily file 先使用简单结构（如 `# YYYY-MM-DD` + `## Entries`），先验证“分层写入”是否稳定。
 
+M2-min 状态（截至 2026-02-26）：已落地
+
+- 已实施：`consolidate()` 在写入 `HISTORY.md` 的同时，追加写入 `memory/YYYY-MM-DD.md`。
+- 已实施：daily file 首次创建写入简易模板（`# YYYY-MM-DD` + `## Entries`）。
+- 保持不变：不读取 daily file、不注入 prompt（仅新增写入层）。
+- 已新增测试：`append_daily_history_entry()` 生成/追加行为；`consolidate()` 路径同步写入 daily file。
+- 回归验证：`tests/test_memory_store_rules.py` + `tests/test_consolidation_race.py` 通过。
+
 #### M2-full（在 M2-min 稳定后）
 
 - 按 `Q1 / Q2 / Q3` 明确输出去向：
