@@ -328,6 +328,12 @@ class AgentLoop:
             guard_loop_messages=self._guard_loop_messages,
             strip_think=self._strip_think,
             tool_hint=self._tool_hint,
+            stream_enabled=(
+                bool(getattr(channels_config, "stream_enabled", False))
+                or bool(getattr(channels_config, "progress_edit_streaming_enabled", False))
+                if channels_config
+                else False
+            ),
             stream_progress_flush_interval_s=(
                 max(10, int(getattr(channels_config, "progress_flush_interval_ms", 150))) / 1000.0
                 if channels_config

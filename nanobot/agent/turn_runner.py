@@ -155,6 +155,7 @@ class TurnRunner:
         guard_loop_messages: Callable[[list[dict[str, Any]], int], tuple[list[dict[str, Any]], int]],
         strip_think: Callable[[str | None], str | None],
         tool_hint: Callable[[list[Any]], str],
+        stream_enabled: bool = True,
         stream_progress_flush_interval_s: float = _DEFAULT_STREAM_PROGRESS_FLUSH_INTERVAL_S,
         stream_progress_flush_chars: int = _DEFAULT_STREAM_PROGRESS_FLUSH_CHARS,
     ) -> None:
@@ -168,6 +169,7 @@ class TurnRunner:
         self.guard_loop_messages = guard_loop_messages
         self.strip_think = strip_think
         self.tool_hint = tool_hint
+        self.stream_enabled = bool(stream_enabled)
         self.stream_progress_flush_interval_s = max(0.01, float(stream_progress_flush_interval_s))
         self.stream_progress_flush_chars = max(1, int(stream_progress_flush_chars))
 
@@ -195,7 +197,7 @@ class TurnRunner:
     ) -> tuple[Any, bool]:
         """Call the provider once, optionally using its streaming interface."""
         stream_method = getattr(self.provider, "stream_chat", None)
-        if on_progress is None or not callable(stream_method):
+        if (not self.stream_enabled) or on_progress is None or not callable(stream_method):
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),

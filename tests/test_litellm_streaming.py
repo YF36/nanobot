@@ -113,3 +113,35 @@ async def test_stream_chat_passes_request_extras_to_litellm() -> None:
     assert captured_kwargs["stream_options"] == {"include_usage": True}
     assert events[-1]["type"] == "done"
     assert events[-1]["response"].content == "ok"
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_applies_default_zhipu_stream_extras() -> None:
+    provider = LiteLLMProvider(
+        api_key="fake-key",
+        default_model="glm-4.7",
+    )
+
+    captured_kwargs = {}
+
+    async def fake_acompletion(**kwargs):
+        captured_kwargs.update(kwargs)
+        return _FakeStream([
+            SimpleNamespace(
+                choices=[SimpleNamespace(
+                    delta=SimpleNamespace(content="ok"),
+                    finish_reason="stop",
+                )],
+                usage=None,
+            )
+        ])
+
+    with patch("nanobot.providers.litellm_provider.acompletion", side_effect=fake_acompletion):
+        _ = [event async for event in provider.stream_chat(
+            messages=[{"role": "user", "content": "hi"}],
+            model="glm-4.7",
+        )]
+
+    assert captured_kwargs["stream"] is True
+    assert captured_kwargs["stream_options"] == {"include_usage": True}
+    assert captured_kwargs["extra_body"] == {"tool_stream": True}

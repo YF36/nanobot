@@ -216,18 +216,24 @@ class ChannelManager:
                     self.bus.consume_outbound(),
                     timeout=1.0
                 )
+
+                stream_enabled = bool(getattr(self.config.channels, "stream_enabled", False))
+                effective_send_progress = bool(self.config.channels.send_progress or stream_enabled)
+                effective_progress_edit_streaming = bool(
+                    self.config.channels.progress_edit_streaming_enabled or stream_enabled
+                )
                 
                 if msg.metadata.get("_progress"):
                     if msg.metadata.get("_tool_hint") and not self.config.channels.send_tool_hints:
                         continue
-                    if not msg.metadata.get("_tool_hint") and not self.config.channels.send_progress:
+                    if not msg.metadata.get("_tool_hint") and not effective_send_progress:
                         continue
                 
                 channel = self.channels.get(msg.channel)
                 if channel:
                     try:
                         progress_edit_enabled = bool(
-                            getattr(self.config.channels, "progress_edit_streaming_enabled", False)
+                            effective_progress_edit_streaming
                             and getattr(channel, "supports_progress_message_editing", False)
                         )
                         outbound = msg

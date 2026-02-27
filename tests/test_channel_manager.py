@@ -95,3 +95,32 @@ async def test_dispatch_outbound_tags_progress_for_edit_streaming_when_supported
     assert fake.sent[0].metadata.get("_progress_edit") is True
     assert fake.sent[1].metadata.get("_progress_finalize_edit") is True
     assert all(m.content != "stream done" for m in fake.sent)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_outbound_stream_enabled_enables_progress_and_edit_path() -> None:
+    config = Config()
+    config.channels.stream_enabled = True
+    config.channels.send_progress = False
+    config.channels.progress_edit_streaming_enabled = False
+    bus = MessageBus()
+    manager = ChannelManager(config, bus)
+
+    fake = _FakeEditableChannel(config.channels, bus)
+    manager.channels = {"cli": fake}
+
+    task = asyncio.create_task(manager._dispatch_outbound())
+    try:
+        await bus.publish_outbound(OutboundMessage(
+            channel="cli",
+            chat_id="chat_1",
+            content="chunk 1",
+            metadata={"_progress": True, "message_id": "mid_1"},
+        ))
+        await asyncio.sleep(0.05)
+    finally:
+        task.cancel()
+        await task
+
+    assert len(fake.sent) == 1
+    assert fake.sent[0].metadata.get("_progress_edit") is True

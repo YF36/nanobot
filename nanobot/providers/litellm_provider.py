@@ -260,6 +260,23 @@ class LiteLLMProvider(LLMProvider):
                 if pattern in model_lower:
                     kwargs.update(overrides)
                     return
+
+    def _apply_request_extras(self, *, model: str, kwargs: dict[str, Any], streaming: bool) -> None:
+        extras: dict[str, Any] = dict(self.request_extras or {})
+
+        # Built-in defaults so users don't need provider-specific streaming knobs.
+        if streaming:
+            spec = find_by_model(model)
+            if spec and spec.name == "zhipu":
+                extras.setdefault("stream_options", {"include_usage": True})
+                extra_body = extras.get("extra_body")
+                if not isinstance(extra_body, dict):
+                    extra_body = {}
+                extra_body.setdefault("tool_stream", True)
+                extras["extra_body"] = extra_body
+
+        for key, value in extras.items():
+            kwargs.setdefault(key, value)
     
     @staticmethod
     def _sanitize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -471,8 +488,7 @@ class LiteLLMProvider(LLMProvider):
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
-        for key, value in self.request_extras.items():
-            kwargs.setdefault(key, value)
+        self._apply_request_extras(model=model, kwargs=kwargs, streaming=False)
 
         # Inject Langfuse trace metadata
         langfuse_metadata = self._build_langfuse_metadata()
@@ -568,8 +584,7 @@ class LiteLLMProvider(LLMProvider):
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
-        for key, value in self.request_extras.items():
-            kwargs.setdefault(key, value)
+        self._apply_request_extras(model=model, kwargs=kwargs, streaming=True)
         langfuse_metadata = self._build_langfuse_metadata()
         if langfuse_metadata:
             kwargs["metadata"] = langfuse_metadata
