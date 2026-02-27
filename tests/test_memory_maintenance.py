@@ -181,6 +181,9 @@ def test_summarize_memory_update_guard_metrics_counts_reasons(tmp_path: Path) ->
     assert summary.reason_counts["heading_retention_too_low"] == 1
     assert summary.by_session["s1"] == 2
     assert summary.by_session["s2"] == 1
+    text = render_memory_update_guard_metrics_markdown(summary)
+    assert "## Suggested Fixes" in text
+    assert "incremental edits" in text
 
 
 def test_render_memory_update_guard_metrics_markdown_handles_missing_file(tmp_path: Path) -> None:
