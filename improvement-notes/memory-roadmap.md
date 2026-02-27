@@ -199,6 +199,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已增强：`guard-metrics-summary` 增加平均长度指标（`avg_current_memory_chars` / `avg_returned_memory_chars`），便于判断是否存在系统性过长输出。
 - 已增强：`guard-metrics-summary` 增加 `Priority Focus`（按 reason 频次排序的优先处理项），快速定位当前主导写入问题。
 - 已增强：`guard-metrics-summary` 增加 `dominant_reason` 摘要字段，便于快速识别当前主导拒写类型。
+- 已增强：`memory-audit --guard-metrics-summary` 支持 `--guard-reason-filter`，可聚焦单类拒写原因做定向排查。
 - 已增强：当 `candidate_too_long` 高发或平均 returned 长度显著偏高时，`guard-metrics-summary` 给出收敛建议（压缩 consolidator 输出目标）。
 - 已增强：dashboard 同步展示 guard 平均长度指标，并在 returned 显著高于 current 时提示收敛 `memory_update` 输出规模。
 - 已增强：dashboard 对 `unstructured_candidate` / `date_line_overflow` 高发场景给出专项建议（结构化输出、时间线信息回流 daily/history）。
