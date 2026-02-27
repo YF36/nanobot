@@ -222,6 +222,8 @@ def test_summarize_memory_update_sanitize_metrics_counts(tmp_path: Path) -> None
     text = render_memory_update_sanitize_metrics_markdown(summary)
     assert "Memory Update Sanitize Metrics Summary" in text
     assert "removed_recent_topic_sections(total)" in text
+    assert "## Suggested Fixes" in text
+    assert "Recent-topic sanitize hits are non-zero" in text
 
 
 def test_render_memory_update_sanitize_metrics_markdown_handles_missing_file(tmp_path: Path) -> None:
@@ -230,6 +232,18 @@ def test_render_memory_update_sanitize_metrics_markdown_handles_missing_file(tmp
     summary = summarize_memory_update_sanitize_metrics(memory_dir)
     text = render_memory_update_sanitize_metrics_markdown(summary)
     assert "Metrics file: not found" in text
+
+
+def test_render_memory_update_sanitize_metrics_markdown_reports_no_adjustment_needed(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(
+        memory_dir / "memory-update-sanitize-metrics.jsonl",
+        '{"session_key":"s1","removed_recent_topic_section_count":0,"removed_transient_status_line_count":0}\n',
+    )
+    summary = summarize_memory_update_sanitize_metrics(memory_dir)
+    text = render_memory_update_sanitize_metrics_markdown(summary)
+    assert "No sanitize-specific prompt adjustment needed" in text
 
 
 def test_summarize_memory_conflict_metrics_counts_keys(tmp_path: Path) -> None:

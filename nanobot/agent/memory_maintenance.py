@@ -1158,6 +1158,21 @@ def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitize
             "## Sessions (Top)",
         ]
     )
+    lines.extend(["", "## Suggested Fixes"])
+    if summary.total_recent_topic_sections_removed > 0:
+        lines.append(
+            "- Recent-topic sanitize hits are non-zero: tighten consolidation instruction to keep ephemeral topics in `history_entry`/daily only."
+        )
+    if summary.total_transient_status_lines_removed > 0:
+        lines.append(
+            "- Transient-status sanitize hits are non-zero: avoid copying dated error/status lines into `memory_update`; keep durable constraints only."
+        )
+    if (
+        summary.total_recent_topic_sections_removed == 0
+        and summary.total_transient_status_lines_removed == 0
+    ):
+        lines.append("- No sanitize-specific prompt adjustment needed based on current metrics.")
+    lines.extend(["", "## Sessions (Top)"])
     if not summary.by_session:
         lines.append("- none")
     else:
