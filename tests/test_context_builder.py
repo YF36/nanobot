@@ -275,6 +275,37 @@ def test_build_messages_does_not_include_recent_daily_memory_on_normal_query(tmp
     assert "Recent Daily Memory (On-Demand)" not in system_text
 
 
+def test_build_messages_recent_recall_excludes_tool_activity_by_default(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    today = datetime.now().strftime("%Y-%m-%d")
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(exist_ok=True)
+    (memory_dir / f"{today}.md").write_text(
+        f"# {today}\n\n## Topics\n\n- discussed roadmap\n\n## Tool Activity\n\n- run pytest\n",
+        encoding="utf-8",
+    )
+
+    messages = builder.build_messages(history=[], current_message="我们之前聊过什么？")
+    system_text = _system_joined_text(messages[0]["content"])
+    assert "discussed roadmap" in system_text
+    assert "run pytest" not in system_text
+
+
+def test_build_messages_recent_recall_can_include_tool_activity_when_asked(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    today = datetime.now().strftime("%Y-%m-%d")
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(exist_ok=True)
+    (memory_dir / f"{today}.md").write_text(
+        f"# {today}\n\n## Topics\n\n- discussed roadmap\n\n## Tool Activity\n\n- run pytest\n",
+        encoding="utf-8",
+    )
+
+    messages = builder.build_messages(history=[], current_message="我们之前跑了哪些命令？")
+    system_text = _system_joined_text(messages[0]["content"])
+    assert "run pytest" in system_text
+
+
 def test_build_messages_moves_session_metadata_out_of_system_prompt(tmp_path) -> None:
     builder = _builder(tmp_path)
     builder.build_system_prompt_parts = lambda skill_names=None: ("STATIC", "DYNAMIC")  # type: ignore[method-assign]

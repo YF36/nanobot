@@ -179,14 +179,27 @@ def test_append_daily_sections_deduplicates_exact_bullets(tmp_path: Path) -> Non
 def test_get_recent_daily_context_returns_recent_bullets_only(tmp_path: Path) -> None:
     mm = MemoryStore(workspace=tmp_path)
     today = datetime.now().strftime("%Y-%m-%d")
-    mm.append_daily_sections(today, {"topics": ["recent topic"], "decisions": ["recent decision"]})
+    mm.append_daily_sections(
+        today,
+        {"topics": ["recent topic"], "decisions": ["recent decision"], "tool_activity": ["run pytest"]},
+    )
     old = mm.memory_dir / "2020-01-01.md"
     old.write_text("# 2020-01-01\n\n## Topics\n\n- old topic\n", encoding="utf-8")
 
     context = mm.get_recent_daily_context(days=1, max_bullets=5, max_chars=500)
     assert "recent topic" in context
     assert "recent decision" in context
+    assert "run pytest" not in context
     assert "old topic" not in context
+
+
+def test_get_recent_daily_context_can_include_tool_activity(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    today = datetime.now().strftime("%Y-%m-%d")
+    mm.append_daily_sections(today, {"tool_activity": ["run pytest"]})
+
+    context = mm.get_recent_daily_context(days=1, max_bullets=5, max_chars=500, include_tool_activity=True)
+    assert "run pytest" in context
 
 
 def test_consolidation_system_prompt_restricts_memory_update_to_long_term_facts() -> None:

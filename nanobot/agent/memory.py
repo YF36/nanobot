@@ -89,6 +89,7 @@ class MemoryStore:
     _MEMORY_UPDATE_MIN_HEADING_RETAIN_RATIO = 0.5
     _HISTORY_ENTRY_DATE_RE = re.compile(r"^\[(20\d{2}-\d{2}-\d{2})(?:\s+\d{2}:\d{2})?\]")
     _DAILY_FILE_DATE_RE = re.compile(r"^(20\d{2}-\d{2}-\d{2})\.md$")
+    _RECENT_DAILY_DEFAULT_SECTIONS = frozenset({"Topics", "Decisions", "Open Questions", "Entries"})
     _DAILY_MEMORY_SECTIONS = (
         "Topics",
         "Decisions",
@@ -372,11 +373,15 @@ class MemoryStore:
         days: int = 7,
         max_bullets: int = 12,
         max_chars: int = 1200,
+        include_tool_activity: bool = False,
     ) -> str:
         """Return a compact recent-daily snippet for recall-style queries."""
         window_days = max(1, days)
         bullet_budget = max(1, max_bullets)
         char_budget = max(200, max_chars)
+        allowed_sections = set(self._RECENT_DAILY_DEFAULT_SECTIONS)
+        if include_tool_activity:
+            allowed_sections.add("Tool Activity")
         cutoff = datetime.now().date() - timedelta(days=window_days - 1)
 
         dated_files: list[tuple[str, Path]] = []
@@ -397,8 +402,14 @@ class MemoryStore:
         total_chars = 0
         for date_str, path in dated_files:
             text = path.read_text(encoding="utf-8")
+            current_section = ""
             for raw in text.splitlines():
+                if raw.startswith("## "):
+                    current_section = raw[3:].strip()
+                    continue
                 if not raw.startswith("- "):
+                    continue
+                if current_section and current_section not in allowed_sections:
                     continue
                 bullet = raw[2:].strip()
                 if not bullet:

@@ -444,10 +444,12 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         # System prompt — split into static (cacheable) and dynamic parts
         static_prompt, dynamic_prompt = self.build_system_prompt_parts(skill_names)
         if self._should_include_recent_daily_memory(current_message):
+            include_tool_activity = self._should_include_recent_tool_activity(current_message)
             recent_daily = self.memory.get_recent_daily_context(
                 days=self._RECENT_DAILY_RECALL_DAYS,
                 max_bullets=self._RECENT_DAILY_RECALL_MAX_BULLETS,
                 max_chars=self._RECENT_DAILY_RECALL_MAX_CHARS,
+                include_tool_activity=include_tool_activity,
             )
             if recent_daily:
                 dynamic_prompt = "\n\n---\n\n".join(
@@ -529,6 +531,24 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             "what did we",
             "history",
             "last time",
+        )
+        return any(k in text for k in keywords)
+
+    @staticmethod
+    def _should_include_recent_tool_activity(current_message: str) -> bool:
+        text = (current_message or "").strip().lower()
+        if not text:
+            return False
+        keywords = (
+            "tool",
+            "tools",
+            "command",
+            "commands",
+            "exec",
+            "操作",
+            "命令",
+            "工具调用",
+            "跑了什么",
         )
         return any(k in text for k in keywords)
 
