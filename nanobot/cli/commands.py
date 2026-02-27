@@ -472,6 +472,29 @@ def memory_audit(
             console.print(f"[green]✓[/green] Wrote apply drop preview: {out}")
 
     if apply:
+        auto_preview = summarize_cleanup_drop_preview(
+            target_dir,
+            daily_recent_days=(apply_recent_days if apply_recent_days > 0 else None),
+            drop_tool_activity_older_than_days=(
+                drop_tool_activity_older_than_days if drop_tool_activity_older_than_days > 0 else None
+            ),
+            drop_non_decision_older_than_days=(
+                drop_non_decision_older_than_days if drop_non_decision_older_than_days > 0 else None
+            ),
+        )
+        if auto_preview.drop_tool_activity_candidates > 0 or auto_preview.drop_non_decision_candidates > 0:
+            console.print(
+                "[yellow]Pre-apply drop preview:[/yellow] "
+                f"risk={auto_preview.risk_level}, "
+                f"tool={auto_preview.drop_tool_activity_candidates}, "
+                f"non_decision={auto_preview.drop_non_decision_candidates}, "
+                f"scope_daily_files={auto_preview.scoped_daily_files}"
+            )
+            if auto_preview.risk_level == "high":
+                console.print(
+                    "[yellow]Hint:[/yellow] High risk preview; consider running with "
+                    "`--apply-recent-days` first for a staged rollout."
+                )
         before = run_memory_audit(target_dir)
         result = apply_conservative_cleanup(
             target_dir,
