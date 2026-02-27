@@ -1,6 +1,7 @@
 """CLI commands for nanobot."""
 
 import asyncio
+import json
 import os
 import signal
 from pathlib import Path
@@ -228,6 +229,36 @@ def _create_workspace_templates(workspace: Path):
         console.print("  [dim]Created memory/HISTORY.md[/dim]")
 
     (workspace / "skills").mkdir(exist_ok=True)
+
+
+@app.command("memory-audit")
+def memory_audit(
+    memory_dir: str = typer.Option("", help="Memory directory path; defaults to <workspace>/memory from config"),
+    report_out: str = typer.Option("", help="Optional markdown report output path"),
+    plan_out: str = typer.Option("", help="Optional cleanup plan JSON output path (dry-run actions only)"),
+):
+    """Run read-only memory quality audit and generate optional dry-run cleanup plan."""
+    from nanobot.config.loader import load_config
+    from nanobot.agent.memory_maintenance import build_cleanup_plan, render_audit_markdown, run_memory_audit
+
+    config = load_config()
+    target_dir = Path(memory_dir).expanduser() if memory_dir else (config.workspace_path / "memory")
+    audit = run_memory_audit(target_dir)
+    report = render_audit_markdown(audit)
+    console.print(Markdown(report))
+
+    if report_out:
+        out = Path(report_out).expanduser()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(report, encoding="utf-8")
+        console.print(f"[green]✓[/green] Wrote report: {out}")
+
+    if plan_out:
+        out = Path(plan_out).expanduser()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        plan = build_cleanup_plan(target_dir)
+        out.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"[green]✓[/green] Wrote dry-run cleanup plan: {out}")
 
 
 def _make_provider(config: Config):

@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-02-27T11:41:00",
+  "memory_dir": "/Users/fanpucheng/.nanobot/workspace/memory",
+  "safe_dry_run_only": true,
+  "actions": [
+    {
+      "type": "history_trim_long_entries",
+      "count": 3,
+      "target_max_chars": 600
+    },
+    {
+      "type": "daily_trim_long_bullets",
+      "count": 4,
+      "target_max_chars": 240
+    },
+    {
+      "type": "daily_deduplicate_exact_bullets",
+      "count": 5
+    }
+  ]
+}
