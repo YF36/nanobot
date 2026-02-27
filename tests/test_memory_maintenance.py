@@ -369,6 +369,23 @@ def test_summarize_cleanup_drop_preview_reports_high_risk(tmp_path: Path) -> Non
     )
     assert summary.drop_non_decision_candidates == 55
     assert summary.risk_level == "high"
+    text = render_cleanup_drop_preview_markdown(summary)
+    assert "--apply-drop-preview --apply-recent-days 7" in text
+
+
+def test_render_cleanup_drop_preview_markdown_medium_risk_recommendation(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    old_day = (datetime.now() - timedelta(days=40)).strftime("%Y-%m-%d")
+    bullets = "\n".join([f"- item {i}" for i in range(25)])
+    _write(memory_dir / f"{old_day}.md", f"# {old_day}\n\n## Topics\n\n{bullets}\n")
+    summary = summarize_cleanup_drop_preview(
+        memory_dir,
+        drop_non_decision_older_than_days=30,
+    )
+    assert summary.risk_level == "medium"
+    text = render_cleanup_drop_preview_markdown(summary)
+    assert "--apply --apply-recent-days 7" in text
 
 
 def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path) -> None:
