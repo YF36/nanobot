@@ -5,6 +5,7 @@ import json
 import os
 import re
 import threading
+import time
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
@@ -277,6 +278,7 @@ class FeishuChannel(BaseChannel):
         self._ws_thread: threading.Thread | None = None
         self._processed_message_ids: OrderedDict[str, None] = OrderedDict()  # Ordered dedup cache
         self._progress_message_ids: OrderedDict[tuple[str, str], str] = OrderedDict()
+        self._progress_patch_state: dict[tuple[str, str], tuple[float, int]] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
     
     async def start(self) -> None:
@@ -688,7 +690,46 @@ class FeishuChannel(BaseChannel):
         self._progress_message_ids[key] = message_id
         self._progress_message_ids.move_to_end(key, last=True)
         while len(self._progress_message_ids) > self._MAX_PROGRESS_TRACKED_MESSAGES:
-            self._progress_message_ids.popitem(last=False)
+            old_key, _ = self._progress_message_ids.popitem(last=False)
+            self._progress_patch_state.pop(old_key, None)
+
+    def _should_patch_progress_card(self, key: tuple[str, str], content: str, *, force: bool = False) -> bool:
+        if force:
+            return True
+        interval_ms = max(0, int(getattr(self.config, "feishu_progress_patch_interval_ms", 500)))
+        min_chars = max(1, int(getattr(self.config, "feishu_progress_patch_min_chars", 120)))
+        now = time.monotonic()
+        last_at, last_len = self._progress_patch_state.get(key, (0.0, 0))
+        if (now - last_at) < (interval_ms / 1000.0) and (len(content) - last_len) < min_chars:
+            return False
+        return True
+
+    def _mark_progress_card_patched(self, key: tuple[str, str], content: str) -> None:
+        self._progress_patch_state[key] = (time.monotonic(), len(content))
+
+    @staticmethod
+    def _build_streaming_card_content(content: str, *, final: bool) -> str:
+        elements: list[dict[str, Any]] = [
+            {
+                "tag": "markdown",
+                "content": content,
+            },
+        ]
+        if not final:
+            elements.append({
+                "tag": "note",
+                "elements": [
+                    {"tag": "plain_text", "content": "正在生成，请稍等..."},
+                ],
+            })
+        card = {
+            "config": {
+                "wide_screen_mode": True,
+                "update_multi": True,
+            },
+            "elements": elements,
+        }
+        return json.dumps(card, ensure_ascii=False)
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Feishu, including media (images/files) if present."""
@@ -724,16 +765,33 @@ class FeishuChannel(BaseChannel):
                         )
 
             if msg.content and msg.content.strip():
-                card = {"config": {"wide_screen_mode": True}, "elements": self._build_card_elements(msg.content)}
-                card_content = json.dumps(card, ensure_ascii=False)
+                is_stream_progress = bool(msg.metadata.get("_progress_edit"))
+                is_stream_finalize = bool(msg.metadata.get("_progress_finalize_edit"))
+                if is_stream_progress or is_stream_finalize:
+                    card_content = self._build_streaming_card_content(
+                        msg.content,
+                        final=is_stream_finalize,
+                    )
+                else:
+                    card = {
+                        "config": {
+                            "wide_screen_mode": True,
+                            "update_multi": True,
+                        },
+                        "elements": self._build_card_elements(msg.content),
+                    }
+                    card_content = json.dumps(card, ensure_ascii=False)
 
                 if msg.metadata.get("_progress_edit") and progress_key:
                     if progress_msg_id:
+                        if not self._should_patch_progress_card(progress_key, msg.content, force=False):
+                            return
                         ok = await loop.run_in_executor(
                             None, self._update_message_sync,
                             progress_msg_id, "interactive", card_content,
                         )
                         if ok:
+                            self._mark_progress_card_patched(progress_key, msg.content)
                             return
                     sent_message_id = await loop.run_in_executor(
                         None, self._send_message_sync,
@@ -741,6 +799,7 @@ class FeishuChannel(BaseChannel):
                     )
                     if sent_message_id:
                         self._remember_progress_message_id(progress_key, sent_message_id)
+                        self._mark_progress_card_patched(progress_key, msg.content)
                         return
                     logger.warning("Progress card send failed, falling back to plain text")
                     sent_message_id = await loop.run_in_executor(
@@ -749,6 +808,7 @@ class FeishuChannel(BaseChannel):
                     )
                     if sent_message_id:
                         self._remember_progress_message_id(progress_key, sent_message_id)
+                        self._mark_progress_card_patched(progress_key, msg.content)
                     return
 
                 if msg.metadata.get("_progress_finalize_edit") and progress_key:
@@ -769,6 +829,7 @@ class FeishuChannel(BaseChannel):
                                     receive_id_type, msg.chat_id, "text", json.dumps({"text": msg.content}, ensure_ascii=False),
                                 )
                         self._progress_message_ids.pop(progress_key, None)
+                        self._progress_patch_state.pop(progress_key, None)
                         return
                     # No in-flight progress message: keep legacy behavior and send normally.
 
