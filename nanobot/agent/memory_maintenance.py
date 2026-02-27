@@ -1556,6 +1556,7 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         f"- memory_update sanitize events: `{max(0, sanitize.total_rows - sanitize.parse_error_rows)}`",
         f"- sanitize removed_recent_topic_sections(total): `{sanitize.total_recent_topic_sections_removed}`",
         f"- sanitize removed_transient_status_lines(total): `{sanitize.total_transient_status_lines_removed}`",
+        f"- sanitize dominant_focus: `{sanitize.dominant_focus}`",
         f"- memory conflict events: `{max(0, conflict.total_rows - conflict.parse_error_rows)}`",
         "",
         "## Context Trace",
@@ -1604,6 +1605,10 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         lines.append("- Guard shows oversized candidate trend; tighten consolidation prompt to return concise long-term memory updates.")
     if max(0, sanitize.total_rows - sanitize.parse_error_rows) > 0:
         lines.append("- Review sanitize hits: `nanobot memory-audit --sanitize-metrics-summary`")
+    if sanitize.total_recent_topic_sections_removed >= 10:
+        lines.append("- Recent-topic sanitize volume is high; reduce transient topic sections in memory_update output.")
+    if sanitize.total_transient_status_lines_removed >= 10:
+        lines.append("- Transient-status sanitize volume is high; keep dated status/error lines in daily/history only.")
     if sanitize.total_transient_status_lines_removed >= 20:
         lines.append("- Transient-status sanitize volume is high; tighten consolidation prompt to reduce noisy memory_update output.")
     if max(0, conflict.total_rows - conflict.parse_error_rows) > 0:

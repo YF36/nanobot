@@ -539,6 +539,7 @@ def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path)
     assert "guard avg_current_memory_chars" in text
     assert "guard avg_returned_memory_chars" in text
     assert "memory_update sanitize events" in text
+    assert "sanitize dominant_focus" in text
     assert "preview risk level" in text
     assert "preview dominant driver" in text
     assert "preview top candidate files" in text
@@ -590,6 +591,21 @@ def test_render_memory_observability_dashboard_recommends_sanitize_summary(tmp_p
 
     text = render_memory_observability_dashboard(memory_dir)
     assert "Review sanitize hits: `nanobot memory-audit --sanitize-metrics-summary`" in text
+
+
+def test_render_memory_observability_dashboard_warns_on_high_recent_topic_sanitize_volume(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
+    _write(memory_dir / "HISTORY.md", "")
+    _write(memory_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n")
+    _write(
+        memory_dir / "memory-update-sanitize-metrics.jsonl",
+        '{"session_key":"s1","removed_recent_topic_section_count":12,"removed_transient_status_line_count":0}\n',
+    )
+
+    text = render_memory_observability_dashboard(memory_dir)
+    assert "Recent-topic sanitize volume is high" in text
 
 
 def test_render_memory_observability_dashboard_warns_on_oversized_guard_candidates(tmp_path: Path) -> None:
