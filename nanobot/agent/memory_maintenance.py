@@ -81,6 +81,7 @@ class DailyRoutingMetricsSummary:
     structured_ok_count: int
     fallback_count: int
     sessions_with_routing_events: int
+    by_session: dict[str, int]
     fallback_reason_counts: dict[str, int]
     by_date: dict[str, dict[str, int]]
 
@@ -733,6 +734,7 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
             structured_ok_count=0,
             fallback_count=0,
             sessions_with_routing_events=0,
+            by_session={},
             fallback_reason_counts={},
             by_date={},
         )
@@ -784,6 +786,7 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
         structured_ok_count=structured_ok_count,
         fallback_count=fallback_count,
         sessions_with_routing_events=len(session_counter),
+        by_session=dict(sorted(session_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         fallback_reason_counts=dict(sorted(fallback_reason_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         by_date=dict(sorted(by_date.items())),
     )
@@ -1034,6 +1037,14 @@ def render_daily_routing_metrics_markdown(summary: DailyRoutingMetricsSummary) -
             lines.append(
                 f"- {date}: total=`{row['total']}`, structured_ok=`{row['structured_ok']}` ({ok_pct:.1f}%), fallback=`{row['fallback']}`"
             )
+    lines.extend(["", "## Sessions (Top)"])
+    if not summary.by_session:
+        lines.append("- none")
+    else:
+        for idx, (session_key, count) in enumerate(summary.by_session.items()):
+            if idx >= 10:
+                break
+            lines.append(f"- {session_key}: `{count}`")
     lines.append("")
     return "\n".join(lines)
 
