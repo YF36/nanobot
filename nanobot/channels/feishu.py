@@ -751,13 +751,13 @@ class FeishuChannel(BaseChannel):
     def _should_patch_progress_card(self, key: tuple[str, str], content: str, *, force: bool = False) -> bool:
         if force:
             return True
-        interval_ms = max(0, int(getattr(self.config, "feishu_progress_patch_interval_ms", 500)))
-        min_chars = max(1, int(getattr(self.config, "feishu_progress_patch_min_chars", 120)))
+        interval_ms = max(0, int(getattr(self.config, "feishu_progress_patch_interval_ms", 220)))
+        min_chars = max(1, int(getattr(self.config, "feishu_progress_patch_min_chars", 12)))
         now = time.monotonic()
         last_at, last_len = self._progress_patch_state.get(key, (0.0, 0))
-        if (now - last_at) < (interval_ms / 1000.0) and (len(content) - last_len) < min_chars:
+        if (now - last_at) < (interval_ms / 1000.0):
             return False
-        return True
+        return (len(content) - last_len) >= min_chars
 
     def _mark_progress_card_patched(self, key: tuple[str, str], content: str) -> None:
         self._progress_patch_state[key] = (time.monotonic(), len(content))

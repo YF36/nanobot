@@ -196,11 +196,11 @@ class ChannelsConfig(Base):
     send_progress: bool = True    # stream agent's text progress to the channel
     send_tool_hints: bool = False  # stream tool-call hints (e.g. read_file("…"))
     progress_flush_interval_ms: int = 150  # streaming progress coalescing window
-    progress_flush_min_chars: int = 80     # flush earlier once buffered chars reach this threshold
+    progress_flush_min_chars: int = 40     # flush earlier once buffered chars reach this threshold
     progress_max_messages_per_turn: int = 40  # hard cap to avoid progress spam per turn
     progress_edit_streaming_enabled: bool = False  # if channel supports it, update one progress message instead of sending many
-    feishu_progress_patch_interval_ms: int = 500  # minimum interval between Feishu card updates for a single stream
-    feishu_progress_patch_min_chars: int = 120  # minimum newly added chars to trigger Feishu card patch
+    feishu_progress_patch_interval_ms: int = 220  # minimum interval between Feishu card updates for a single stream
+    feishu_progress_patch_min_chars: int = 12  # minimum newly added chars to trigger Feishu card patch
     progress_done_marker_enabled: bool = False  # optionally send a separator before final response
     progress_done_marker_text: str = "⎯ stream done ⎯"
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)

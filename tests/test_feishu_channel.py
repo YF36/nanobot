@@ -51,7 +51,12 @@ def test_feishu_progress_patch_throttle_decision() -> None:
 
     assert channel._should_patch_progress_card(key, "hello world", force=True) is True
     assert channel._should_patch_progress_card(key, "hello world", force=False) is False
-    assert channel._should_patch_progress_card(key, "hello" + ("x" * 300), force=False) is True
+
+    # Simulate interval elapsed; now min-char threshold decides.
+    last_at, last_len = channel._progress_patch_state[key]
+    channel._progress_patch_state[key] = (last_at - 1.0, last_len)
+    assert channel._should_patch_progress_card(key, "hello world", force=False) is False
+    assert channel._should_patch_progress_card(key, "hello" + ("x" * 30), force=False) is True
 
 
 def test_feishu_progress_state_is_cleared_on_cache_eviction() -> None:
