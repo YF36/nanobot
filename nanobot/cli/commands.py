@@ -274,6 +274,15 @@ def memory_audit(
         "",
         help="Optional cleanup stage distribution markdown output path",
     ),
+    cleanup_conversion_summary: bool = typer.Option(
+        False,
+        "--cleanup-conversion-summary",
+        help="Show cleanup conversion index summary",
+    ),
+    cleanup_conversion_out: str = typer.Option(
+        "",
+        help="Optional cleanup conversion index markdown output path",
+    ),
     archive_dry_run: bool = typer.Option(
         False,
         "--archive-dry-run",
@@ -314,6 +323,7 @@ def memory_audit(
         render_daily_archive_dry_run_markdown,
         render_cleanup_stage_metrics_markdown,
         render_cleanup_effect_markdown,
+        render_cleanup_conversion_index_markdown,
         render_context_trace_markdown,
         render_memory_conflict_metrics_markdown,
         render_daily_routing_metrics_markdown,
@@ -322,6 +332,7 @@ def memory_audit(
         run_memory_audit,
         summarize_daily_archive_dry_run,
         summarize_cleanup_stage_metrics,
+        summarize_cleanup_conversion_index,
         summarize_context_trace,
         summarize_memory_conflict_metrics,
         summarize_memory_update_guard_metrics,
@@ -402,6 +413,17 @@ def memory_audit(
             out.write_text(cleanup_stage_md, encoding="utf-8")
             console.print(f"[green]✓[/green] Wrote cleanup stage summary: {out}")
 
+    if cleanup_conversion_summary or cleanup_conversion_out:
+        cleanup_conversion = summarize_cleanup_conversion_index(target_dir)
+        cleanup_conversion_md = render_cleanup_conversion_index_markdown(cleanup_conversion)
+        if cleanup_conversion_summary:
+            console.print(Markdown(cleanup_conversion_md))
+        if cleanup_conversion_out:
+            out = Path(cleanup_conversion_out).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(cleanup_conversion_md, encoding="utf-8")
+            console.print(f"[green]✓[/green] Wrote cleanup conversion summary: {out}")
+
     if archive_dry_run or archive_out:
         dry = summarize_daily_archive_dry_run(target_dir, keep_days=archive_keep_days)
         dry_md = render_daily_archive_dry_run_markdown(dry)
@@ -432,7 +454,8 @@ def memory_audit(
                 f"history_dedup={result.history_deduplicated_entries}, "
                 f"daily_trimmed={result.daily_trimmed_bullets}, "
                 f"daily_dedup={result.daily_deduplicated_bullets}, "
-                f"daily_drop_tool={result.daily_dropped_tool_activity_bullets}"
+                f"daily_drop_tool={result.daily_dropped_tool_activity_bullets}, "
+                f"conversion_index_rows={result.conversion_index_rows}"
             )
             console.print(
                 f"[green]✓[/green] Scope: daily_files={result.scoped_daily_files}, "
@@ -465,6 +488,7 @@ def memory_observe(
     from nanobot.config.loader import load_config
     from nanobot.agent.memory_maintenance import (
         render_audit_markdown,
+        render_cleanup_conversion_index_markdown,
         render_cleanup_stage_metrics_markdown,
         render_context_trace_markdown,
         render_memory_observability_dashboard,
@@ -472,6 +496,7 @@ def memory_observe(
         render_daily_routing_metrics_markdown,
         render_memory_update_guard_metrics_markdown,
         run_memory_audit,
+        summarize_cleanup_conversion_index,
         summarize_cleanup_stage_metrics,
         summarize_context_trace,
         summarize_memory_conflict_metrics,
@@ -497,6 +522,7 @@ def memory_observe(
     conflict_md = render_memory_conflict_metrics_markdown(summarize_memory_conflict_metrics(target_dir))
     trace_md = render_context_trace_markdown(summarize_context_trace(target_dir))
     cleanup_stage_md = render_cleanup_stage_metrics_markdown(summarize_cleanup_stage_metrics(target_dir))
+    cleanup_conversion_md = render_cleanup_conversion_index_markdown(summarize_cleanup_conversion_index(target_dir))
     dashboard_md = render_memory_observability_dashboard(target_dir)
 
     audit_path = output_dir / f"{date_prefix}-audit{suffix}.md"
@@ -505,6 +531,7 @@ def memory_observe(
     conflict_path = output_dir / f"{date_prefix}-conflict-metrics-summary{suffix}.md"
     trace_path = output_dir / f"{date_prefix}-context-trace-summary{suffix}.md"
     cleanup_stage_path = output_dir / f"{date_prefix}-cleanup-stage-summary{suffix}.md"
+    cleanup_conversion_path = output_dir / f"{date_prefix}-cleanup-conversion-summary{suffix}.md"
     dashboard_path = output_dir / f"{date_prefix}-observability-dashboard{suffix}.md"
     audit_path.write_text(audit_md, encoding="utf-8")
     routing_path.write_text(routing_md, encoding="utf-8")
@@ -512,6 +539,7 @@ def memory_observe(
     conflict_path.write_text(conflict_md, encoding="utf-8")
     trace_path.write_text(trace_md, encoding="utf-8")
     cleanup_stage_path.write_text(cleanup_stage_md, encoding="utf-8")
+    cleanup_conversion_path.write_text(cleanup_conversion_md, encoding="utf-8")
     dashboard_path.write_text(dashboard_md, encoding="utf-8")
 
     console.print(f"[green]✓[/green] Wrote audit: {audit_path}")
@@ -520,6 +548,7 @@ def memory_observe(
     console.print(f"[green]✓[/green] Wrote conflict metrics: {conflict_path}")
     console.print(f"[green]✓[/green] Wrote context trace: {trace_path}")
     console.print(f"[green]✓[/green] Wrote cleanup stage summary: {cleanup_stage_path}")
+    console.print(f"[green]✓[/green] Wrote cleanup conversion summary: {cleanup_conversion_path}")
     console.print(f"[green]✓[/green] Wrote dashboard: {dashboard_path}")
 
 

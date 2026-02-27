@@ -55,6 +55,7 @@ class CleanupApplyResult:
     daily_trimmed_bullets: int
     daily_deduplicated_bullets: int
     daily_dropped_tool_activity_bullets: int
+    conversion_index_rows: int
     scoped_daily_files: int
     skipped_daily_files: int
     touched_files: list[str]
@@ -114,6 +115,15 @@ class CleanupStageMetricsSummary:
     parse_error_rows: int
     total_stage_counts: dict[str, int]
     runs_with_stage: dict[str, int]
+
+
+@dataclass
+class CleanupConversionIndexSummary:
+    index_file_exists: bool
+    total_rows: int
+    parse_error_rows: int
+    action_counts: dict[str, int]
+    source_file_counts: dict[str, int]
 
 
 def _iter_daily_files(memory_dir: Path) -> list[Path]:
@@ -252,6 +262,7 @@ def apply_conservative_cleanup(
     daily_trimmed_bullets = 0
     daily_deduplicated_bullets = 0
     daily_dropped_tool_activity_bullets = 0
+    conversion_rows: list[dict[str, object]] = []
     touched_files: list[str] = []
     drop_tool_cutoff = None
     if drop_tool_activity_older_than_days is not None:
@@ -264,13 +275,40 @@ def apply_conservative_cleanup(
         seen: set[str] = set()
         cleaned: list[str] = []
         for e in entries:
+            raw_entry = e
             trimmed, changed = _trim_text(" ".join(e.split()).strip(), 600)
             if changed:
                 history_trimmed_entries += 1
+                conversion_rows.append(
+                    {
+                        "scope": "history",
+                        "source_file": history_file.name,
+                        "action": "trim",
+                        "before": raw_entry,
+                        "after": trimmed,
+                    }
+                )
             if not trimmed:
+                conversion_rows.append(
+                    {
+                        "scope": "history",
+                        "source_file": history_file.name,
+                        "action": "drop_empty",
+                        "before": raw_entry,
+                    }
+                )
                 continue
             if trimmed in seen:
                 history_deduplicated_entries += 1
+                conversion_rows.append(
+                    {
+                        "scope": "history",
+                        "source_file": history_file.name,
+                        "action": "dedupe",
+                        "before": raw_entry,
+                        "normalized": trimmed,
+                    }
+                )
                 continue
             seen.add(trimmed)
             cleaned.append(trimmed)
@@ -303,18 +341,56 @@ def apply_conservative_cleanup(
                 and current_section == "Tool Activity"
             ):
                 daily_dropped_tool_activity_bullets += 1
+                conversion_rows.append(
+                    {
+                        "scope": "daily",
+                        "source_file": daily.name,
+                        "section": current_section or "unknown",
+                        "action": "drop_tool_activity",
+                        "before": line[2:].strip(),
+                    }
+                )
                 changed = True
                 continue
             bullet = line[2:].strip()
             trimmed, was_trimmed = _trim_text(" ".join(bullet.split()).strip(), 240)
             if was_trimmed:
                 daily_trimmed_bullets += 1
+                conversion_rows.append(
+                    {
+                        "scope": "daily",
+                        "source_file": daily.name,
+                        "section": current_section or "unknown",
+                        "action": "trim",
+                        "before": bullet,
+                        "after": trimmed,
+                    }
+                )
                 changed = True
             if not trimmed:
+                conversion_rows.append(
+                    {
+                        "scope": "daily",
+                        "source_file": daily.name,
+                        "section": current_section or "unknown",
+                        "action": "drop_empty",
+                        "before": bullet,
+                    }
+                )
                 changed = True
                 continue
             if trimmed in seen_bullets:
                 daily_deduplicated_bullets += 1
+                conversion_rows.append(
+                    {
+                        "scope": "daily",
+                        "source_file": daily.name,
+                        "section": current_section or "unknown",
+                        "action": "dedupe",
+                        "before": bullet,
+                        "normalized": trimmed,
+                    }
+                )
                 changed = True
                 continue
             seen_bullets.add(trimmed)
@@ -332,6 +408,8 @@ def apply_conservative_cleanup(
     if not touched_files and backup_dir.exists():
         backup_dir.rmdir()
 
+    conversion_index_rows = _write_cleanup_conversion_index(memory_dir, conversion_rows)
+
     result = CleanupApplyResult(
         memory_dir=memory_dir,
         backup_dir=backup_dir,
@@ -340,6 +418,7 @@ def apply_conservative_cleanup(
         daily_trimmed_bullets=daily_trimmed_bullets,
         daily_deduplicated_bullets=daily_deduplicated_bullets,
         daily_dropped_tool_activity_bullets=daily_dropped_tool_activity_bullets,
+        conversion_index_rows=conversion_index_rows,
         scoped_daily_files=len(daily_files),
         skipped_daily_files=max(0, len(all_daily_files) - len(daily_files)),
         touched_files=sorted(touched_files),
@@ -363,9 +442,23 @@ def _write_cleanup_stage_metrics(memory_dir: Path, result: CleanupApplyResult) -
             "scoped_daily_files": int(result.scoped_daily_files),
             "skipped_daily_files": int(result.skipped_daily_files),
             "stage_counts": stage_counts,
+            "conversion_index_rows": int(result.conversion_index_rows),
             "files_touched_count": int(len(result.touched_files)),
         },
     )
+
+
+def _write_cleanup_conversion_index(memory_dir: Path, rows: list[dict[str, object]]) -> int:
+    if not rows:
+        return 0
+    index_file = memory_dir / "cleanup-conversion-index.jsonl"
+    run_id = f"cleanup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    ts = datetime.now().isoformat(timespec="seconds")
+    for row in rows:
+        payload = {"run_id": run_id, "timestamp": ts}
+        payload.update(row)
+        _append_jsonl(index_file, payload)
+    return len(rows)
 
 
 def render_cleanup_effect_markdown(before: MemoryAudit, after: MemoryAudit, result: CleanupApplyResult) -> str:
@@ -383,6 +476,7 @@ def render_cleanup_effect_markdown(before: MemoryAudit, after: MemoryAudit, resu
         f"- daily_trimmed_bullets: `{result.daily_trimmed_bullets}`",
         f"- daily_deduplicated_bullets: `{result.daily_deduplicated_bullets}`",
         f"- daily_dropped_tool_activity_bullets: `{result.daily_dropped_tool_activity_bullets}`",
+        f"- conversion_index_rows: `{result.conversion_index_rows}`",
         "",
         "## Audit Delta (Before -> After)",
         f"- HISTORY long(>600): `{before.history_long_entry_count}` -> `{after.history_long_entry_count}`",
@@ -544,6 +638,83 @@ def render_cleanup_stage_metrics_markdown(summary: CleanupStageMetricsSummary) -
         for stage, runs in summary.runs_with_stage.items():
             ratio = (runs / valid * 100.0) if valid > 0 else 0.0
             lines.append(f"- {stage}: `{runs}` runs ({ratio:.1f}% of valid runs)")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def summarize_cleanup_conversion_index(memory_dir: Path) -> CleanupConversionIndexSummary:
+    index_file = memory_dir / "cleanup-conversion-index.jsonl"
+    if not index_file.exists():
+        return CleanupConversionIndexSummary(
+            index_file_exists=False,
+            total_rows=0,
+            parse_error_rows=0,
+            action_counts={},
+            source_file_counts={},
+        )
+
+    total_rows = 0
+    parse_error_rows = 0
+    action_counter: Counter[str] = Counter()
+    source_counter: Counter[str] = Counter()
+    for raw_line in index_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        total_rows += 1
+        try:
+            item = json.loads(line)
+        except Exception:
+            parse_error_rows += 1
+            continue
+        if not isinstance(item, dict):
+            parse_error_rows += 1
+            continue
+        action = str(item.get("action") or "unknown")
+        source_file = str(item.get("source_file") or "unknown")
+        action_counter[action] += 1
+        source_counter[source_file] += 1
+    return CleanupConversionIndexSummary(
+        index_file_exists=True,
+        total_rows=total_rows,
+        parse_error_rows=parse_error_rows,
+        action_counts=dict(sorted(action_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        source_file_counts=dict(sorted(source_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+    )
+
+
+def render_cleanup_conversion_index_markdown(summary: CleanupConversionIndexSummary) -> str:
+    lines = [
+        "# Cleanup Conversion Index Summary",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+    ]
+    if not summary.index_file_exists:
+        lines.extend(["- Index file: not found (`cleanup-conversion-index.jsonl`)", ""])
+        return "\n".join(lines)
+
+    valid = max(0, summary.total_rows - summary.parse_error_rows)
+    lines.extend(
+        [
+            "- Index file: found (`cleanup-conversion-index.jsonl`)",
+            "",
+            "## Overall",
+            f"- Rows: `{summary.total_rows}` (valid=`{valid}`, parse_errors=`{summary.parse_error_rows}`)",
+            "",
+            "## Actions",
+        ]
+    )
+    if not summary.action_counts:
+        lines.append("- none")
+    else:
+        for action, count in summary.action_counts.items():
+            lines.append(f"- {action}: `{count}`")
+    lines.extend(["", "## Top Source Files"])
+    if not summary.source_file_counts:
+        lines.append("- none")
+    else:
+        for source_file, count in list(summary.source_file_counts.items())[:10]:
+            lines.append(f"- {source_file}: `{count}`")
     lines.append("")
     return "\n".join(lines)
 
@@ -911,6 +1082,7 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
     conflict = summarize_memory_conflict_metrics(memory_dir)
     trace = summarize_context_trace(memory_dir)
     cleanup_stage = summarize_cleanup_stage_metrics(memory_dir)
+    cleanup_conv = summarize_cleanup_conversion_index(memory_dir)
 
     routing_valid = max(0, routing.total_rows - routing.parse_error_rows)
     routing_ok_rate = (routing.structured_ok_count / routing_valid * 100.0) if routing_valid else 0.0
@@ -946,6 +1118,13 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         (
             f"- top stage mix: "
             f"`{', '.join([f'{k}:{v}' for k, v in sorted(cleanup_stage.total_stage_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:3]]) if cleanup_stage.total_stage_counts else 'none'}`"
+        ),
+        "",
+        "## Cleanup Conversion Traceability",
+        f"- conversion rows(valid): `{max(0, cleanup_conv.total_rows - cleanup_conv.parse_error_rows)}`",
+        (
+            f"- top conversion actions: "
+            f"`{', '.join([f'{k}:{v}' for k, v in list(cleanup_conv.action_counts.items())[:3]]) if cleanup_conv.action_counts else 'none'}`"
         ),
         "",
         "## Suggested Next Actions",

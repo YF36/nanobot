@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from nanobot.agent.memory_maintenance import (
     apply_conservative_cleanup,
     build_cleanup_plan,
+    render_cleanup_conversion_index_markdown,
     render_cleanup_stage_metrics_markdown,
     render_context_trace_markdown,
     render_memory_observability_dashboard,
@@ -16,6 +17,7 @@ from nanobot.agent.memory_maintenance import (
     summarize_context_trace,
     summarize_daily_archive_dry_run,
     summarize_cleanup_stage_metrics,
+    summarize_cleanup_conversion_index,
     summarize_memory_conflict_metrics,
     summarize_memory_update_guard_metrics,
     summarize_daily_routing_metrics,
@@ -90,6 +92,7 @@ def test_apply_conservative_cleanup_trims_and_deduplicates_with_backup(tmp_path:
     assert result.daily_trimmed_bullets == 1
     assert result.daily_deduplicated_bullets == 1
     assert result.daily_dropped_tool_activity_bullets == 0
+    assert result.conversion_index_rows == 4
     assert result.scoped_daily_files == 1
     assert result.skipped_daily_files == 0
 
@@ -101,10 +104,14 @@ def test_apply_conservative_cleanup_trims_and_deduplicates_with_backup(tmp_path:
     assert result.backup_dir.exists()
     assert (result.backup_dir / "HISTORY.md").exists()
     assert (result.backup_dir / "2026-02-27.md").exists()
+    conversion_index_lines = (memory_dir / "cleanup-conversion-index.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(conversion_index_lines) == 4
+    assert '"action":"trim"' in conversion_index_lines[0] or '"action":"dedupe"' in conversion_index_lines[0]
     stage_metrics_lines = (memory_dir / "cleanup-stage-metrics.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(stage_metrics_lines) == 1
     assert '"trim":2' in stage_metrics_lines[0]
     assert '"dedupe":2' in stage_metrics_lines[0]
+    assert '"conversion_index_rows":4' in stage_metrics_lines[0]
 
 
 def test_summarize_daily_routing_metrics_counts_and_reasons(tmp_path: Path) -> None:
@@ -279,6 +286,33 @@ def test_summarize_cleanup_stage_metrics_counts_distribution(tmp_path: Path) -> 
     assert "drop_tool_activity" in text
 
 
+def test_summarize_cleanup_conversion_index_counts_actions(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(
+        memory_dir / "cleanup-conversion-index.jsonl",
+        "\n".join(
+            [
+                '{"action":"trim","source_file":"HISTORY.md"}',
+                '{"action":"dedupe","source_file":"2026-02-27.md"}',
+                '{"action":"dedupe","source_file":"2026-02-27.md"}',
+                "not-json",
+            ]
+        )
+        + "\n",
+    )
+
+    summary = summarize_cleanup_conversion_index(memory_dir)
+    assert summary.index_file_exists is True
+    assert summary.total_rows == 4
+    assert summary.parse_error_rows == 1
+    assert summary.action_counts["dedupe"] == 2
+    assert summary.source_file_counts["2026-02-27.md"] == 2
+    text = render_cleanup_conversion_index_markdown(summary)
+    assert "Cleanup Conversion Index Summary" in text
+    assert "## Actions" in text
+
+
 def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path) -> None:
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
@@ -296,6 +330,7 @@ def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path)
     assert "## Quality Snapshot" in text
     assert "## Routing" in text
     assert "## Pruning Stage Distribution" in text
+    assert "## Cleanup Conversion Traceability" in text
     assert "## Suggested Next Actions" in text
 
 
@@ -315,6 +350,7 @@ def test_apply_conservative_cleanup_scopes_recent_daily_files(tmp_path: Path) ->
     assert result.scoped_daily_files == 1
     assert result.skipped_daily_files == 1
     assert result.daily_dropped_tool_activity_bullets == 0
+    assert result.conversion_index_rows == 1
     old_content = (memory_dir / f"{old_name}.md").read_text(encoding="utf-8")
     assert old_content.count("- old") == 2
 
@@ -355,6 +391,7 @@ def test_apply_conservative_cleanup_drops_old_tool_activity_only(tmp_path: Path)
         drop_tool_activity_older_than_days=30,
     )
     assert result.daily_dropped_tool_activity_bullets == 2
+    assert result.conversion_index_rows == 2
     text = (memory_dir / f"{old_day}.md").read_text(encoding="utf-8")
     assert "keep topic" in text
     assert "keep question" in text
