@@ -1,9 +1,11 @@
 from nanobot.agent.turn_events import (
     TURN_EVENT_CAPABILITIES,
+    TURN_EVENT_KIND_MESSAGE_DELTA,
     TURN_EVENT_KIND_TOOL_END,
     TURN_EVENT_KIND_TOOL_START,
     TURN_EVENT_KIND_TURN_END,
     TURN_EVENT_KIND_TURN_START,
+    TURN_EVENT_MESSAGE_DELTA,
     TURN_EVENT_NAMESPACE,
     TURN_EVENT_SCHEMA_VERSION,
     TURN_EVENT_TOOL_END,
@@ -25,6 +27,11 @@ def test_turn_event_capabilities_manifest_matches_protocol_constants() -> None:
             "type": TURN_EVENT_TURN_START,
             "kind": TURN_EVENT_KIND_TURN_START,
             "fields": ["initial_message_count", "max_iterations"],
+        },
+        {
+            "type": TURN_EVENT_MESSAGE_DELTA,
+            "kind": TURN_EVENT_KIND_MESSAGE_DELTA,
+            "fields": ["delta", "content_len"],
         },
         {
             "type": TURN_EVENT_TOOL_START,
@@ -57,5 +64,5 @@ def test_turn_event_capabilities_returns_copy() -> None:
     caps["base_fields"].append("extra")
 
     assert len(caps["events"]) == len(TURN_EVENT_CAPABILITIES["events"]) + 1
-    assert len(TURN_EVENT_CAPABILITIES["events"]) == 4
+    assert len(TURN_EVENT_CAPABILITIES["events"]) == 5
     assert "extra" not in TURN_EVENT_CAPABILITIES["base_fields"]

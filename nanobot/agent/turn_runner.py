@@ -10,6 +10,7 @@ from typing import Any, Awaitable, Callable, cast
 
 from nanobot.logging import get_logger
 from nanobot.agent.turn_events import (
+    TURN_EVENT_MESSAGE_DELTA,
     TURN_EVENT_TOOL_END,
     TURN_EVENT_TOOL_START,
     TURN_EVENT_TURN_END,
@@ -189,6 +190,7 @@ class TurnRunner:
         *,
         messages: list[dict[str, Any]],
         on_progress: Callable[..., Awaitable[None]] | None = None,
+        on_stream_delta: Callable[[str, int], Awaitable[None]] | None = None,
     ) -> tuple[Any, bool]:
         """Call the provider once, optionally using its streaming interface."""
         stream_method = getattr(self.provider, "stream_chat", None)
@@ -206,6 +208,7 @@ class TurnRunner:
         last_flush = time.monotonic()
         streamed_progress = False
         final_response = None
+        streamed_content_len = 0
 
         async def _flush_progress(*, force: bool = False) -> None:
             nonlocal last_flush, streamed_progress
@@ -238,6 +241,9 @@ class TurnRunner:
                 if event_type == "text_delta":
                     delta = event.get("delta")
                     if isinstance(delta, str) and delta:
+                        streamed_content_len += len(delta)
+                        if on_stream_delta is not None:
+                            await on_stream_delta(delta, streamed_content_len)
                         progress_buf.append(delta)
                         await _flush_progress(force=False)
                 elif event_type == "done":
@@ -264,6 +270,7 @@ class TurnRunner:
         messages: list[dict[str, Any]],
         current_turn_start: int,
         on_progress: Callable[..., Awaitable[None]] | None = None,
+        on_stream_delta: Callable[[str, int], Awaitable[None]] | None = None,
     ) -> tuple[Any, list[dict[str, Any]], int, dict[str, int], bool]:
         """Call provider.chat with bounded retries and one overflow compaction retry path."""
         attempt = 0
@@ -283,6 +290,7 @@ class TurnRunner:
                 response, streamed_progress = await self._provider_chat_once(
                     messages=local_messages,
                     on_progress=on_progress,
+                    on_stream_delta=on_stream_delta,
                 )
                 streamed_progress_sent = streamed_progress_sent or streamed_progress
             except Exception as e:
@@ -425,6 +433,15 @@ class TurnRunner:
             })
             await on_event(event)
 
+        async def _emit_stream_delta(delta: str, content_len: int) -> None:
+            if not on_event:
+                return
+            await _emit_event({
+                "type": TURN_EVENT_MESSAGE_DELTA,
+                "delta": delta,
+                "content_len": content_len,
+            })
+
         if on_event:
             await _emit_event({
                 "type": TURN_EVENT_TURN_START,
@@ -440,6 +457,7 @@ class TurnRunner:
                 messages=messages,
                 current_turn_start=current_turn_start,
                 on_progress=on_progress,
+                on_stream_delta=_emit_stream_delta,
             )
             for key, value in chat_retry_stats.items():
                 retry_stats[key] = retry_stats.get(key, 0) + int(value)

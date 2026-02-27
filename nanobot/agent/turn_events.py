@@ -5,24 +5,28 @@ from __future__ import annotations
 from typing import Any, Awaitable, Callable, Literal, NotRequired, TypeAlias, TypedDict
 
 TURN_EVENT_TURN_START = "turn_start"
+TURN_EVENT_MESSAGE_DELTA = "message_delta"
 TURN_EVENT_TOOL_START = "tool_start"
 TURN_EVENT_TOOL_END = "tool_end"
 TURN_EVENT_TURN_END = "turn_end"
 TURN_EVENT_NAMESPACE = "nanobot.turn"
 TURN_EVENT_SCHEMA_VERSION = 1
 TURN_EVENT_KIND_TURN_START = "turn.start"
+TURN_EVENT_KIND_MESSAGE_DELTA = "message.delta"
 TURN_EVENT_KIND_TOOL_START = "tool.start"
 TURN_EVENT_KIND_TOOL_END = "tool.end"
 TURN_EVENT_KIND_TURN_END = "turn.end"
 
 TurnEventType: TypeAlias = Literal[
     "turn_start",
+    "message_delta",
     "tool_start",
     "tool_end",
     "turn_end",
 ]
 TurnEventKind: TypeAlias = Literal[
     "turn.start",
+    "message.delta",
     "tool.start",
     "tool.end",
     "turn.end",
@@ -30,6 +34,7 @@ TurnEventKind: TypeAlias = Literal[
 
 _TURN_EVENT_KIND_MAP: dict[str, str] = {
     TURN_EVENT_TURN_START: TURN_EVENT_KIND_TURN_START,
+    TURN_EVENT_MESSAGE_DELTA: TURN_EVENT_KIND_MESSAGE_DELTA,
     TURN_EVENT_TOOL_START: TURN_EVENT_KIND_TOOL_START,
     TURN_EVENT_TOOL_END: TURN_EVENT_KIND_TOOL_END,
     TURN_EVENT_TURN_END: TURN_EVENT_KIND_TURN_END,
@@ -51,6 +56,12 @@ class TurnStartEvent(BaseTurnEvent):
     type: Literal["turn_start"]
     initial_message_count: int
     max_iterations: int
+
+
+class MessageDeltaEvent(BaseTurnEvent):
+    type: Literal["message_delta"]
+    delta: str
+    content_len: int
 
 
 class ToolStartEvent(BaseTurnEvent):
@@ -92,7 +103,7 @@ class TurnEndEvent(BaseTurnEvent):
     llm_error_finish_fatal_count: NotRequired[int]
 
 
-TurnEventPayload: TypeAlias = TurnStartEvent | ToolStartEvent | ToolEndEvent | TurnEndEvent
+TurnEventPayload: TypeAlias = TurnStartEvent | MessageDeltaEvent | ToolStartEvent | ToolEndEvent | TurnEndEvent
 TurnEventCallback: TypeAlias = Callable[[TurnEventPayload], Awaitable[None]]
 
 
@@ -121,6 +132,11 @@ TURN_EVENT_CAPABILITIES = {
             "type": TURN_EVENT_TURN_START,
             "kind": TURN_EVENT_KIND_TURN_START,
             "fields": ["initial_message_count", "max_iterations"],
+        },
+        {
+            "type": TURN_EVENT_MESSAGE_DELTA,
+            "kind": TURN_EVENT_KIND_MESSAGE_DELTA,
+            "fields": ["delta", "content_len"],
         },
         {
             "type": TURN_EVENT_TOOL_START,

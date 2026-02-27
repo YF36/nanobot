@@ -4,6 +4,7 @@ import pytest
 
 from nanobot.agent.tools.base import ToolExecutionResult
 from nanobot.agent.turn_events import (
+    TURN_EVENT_KIND_MESSAGE_DELTA,
     TURN_EVENT_KIND_TOOL_END,
     TURN_EVENT_KIND_TOOL_START,
     TURN_EVENT_KIND_TURN_END,
@@ -496,13 +497,18 @@ async def test_turn_runner_streams_text_deltas_via_progress() -> None:
     )
 
     progress: list[tuple[str, bool]] = []
+    events: list[dict] = []
 
     async def _on_progress(content: str, *, tool_hint: bool = False) -> None:
         progress.append((content, tool_hint))
 
+    async def _on_event(event: dict) -> None:
+        events.append(event)
+
     final_content, tools_used, messages = await runner.run(
         [{"role": "user", "content": "hello"}],
         on_progress=_on_progress,
+        on_event=_on_event,
     )
 
     assert provider.stream_calls == 1
@@ -512,6 +518,11 @@ async def test_turn_runner_streams_text_deltas_via_progress() -> None:
     assert messages[-1]["content"] == "Hello stream"
     assert progress
     assert "".join(chunk for chunk, is_hint in progress if not is_hint) == "Hello stream"
+    message_delta_events = [e for e in events if e["type"] == "message_delta"]
+    assert len(message_delta_events) == 2
+    assert [e["kind"] for e in message_delta_events] == [TURN_EVENT_KIND_MESSAGE_DELTA, TURN_EVENT_KIND_MESSAGE_DELTA]
+    assert [e["delta"] for e in message_delta_events] == ["Hello ", "stream"]
+    assert message_delta_events[-1]["content_len"] == len("Hello stream")
 
 
 @pytest.mark.asyncio
