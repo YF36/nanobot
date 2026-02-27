@@ -516,6 +516,12 @@ async def test_consolidate_sanitizes_memory_update_before_write(tmp_path: Path) 
     written_memory = mm.read_long_term()
     assert "## Preferences" in written_memory
     assert "今天讨论的主题" not in written_memory
+    sanitize_metrics = mm.memory_dir / "memory-update-sanitize-metrics.jsonl"
+    rows = [json.loads(line) for line in sanitize_metrics.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(rows) == 1
+    assert rows[0]["session_key"] == "test:memory_rules"
+    assert rows[0]["removed_recent_topic_section_count"] == 1
+    assert rows[0]["removed_transient_status_line_count"] == 0
     history_text = mm.history_file.read_text(encoding="utf-8")
     assert "Discussed anime topics" in history_text
     daily_text = (mm.memory_dir / "2026-02-25.md").read_text(encoding="utf-8")

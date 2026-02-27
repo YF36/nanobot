@@ -131,6 +131,7 @@ class MemoryStore:
         self.history_file = self.memory_dir / "HISTORY.md"
         self.daily_routing_metrics_file = self.memory_dir / "daily-routing-metrics.jsonl"
         self.memory_update_guard_metrics_file = self.memory_dir / "memory-update-guard-metrics.jsonl"
+        self.memory_update_sanitize_metrics_file = self.memory_dir / "memory-update-sanitize-metrics.jsonl"
         self.memory_conflict_metrics_file = self.memory_dir / "memory-conflict-metrics.jsonl"
 
     def read_long_term(self) -> str:
@@ -220,6 +221,32 @@ class MemoryStore:
             logger.warning(
                 "Failed to append memory conflict metric",
                 file=str(self.memory_conflict_metrics_file),
+            )
+
+    def _append_memory_update_sanitize_metric(
+        self,
+        *,
+        session_key: str,
+        removed_recent_topic_section_count: int,
+        removed_transient_status_line_count: int,
+        removed_recent_topic_sections: list[str],
+        removed_transient_status_sections: list[str],
+    ) -> None:
+        row = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "session_key": session_key,
+            "removed_recent_topic_section_count": removed_recent_topic_section_count,
+            "removed_transient_status_line_count": removed_transient_status_line_count,
+            "removed_recent_topic_sections": removed_recent_topic_sections[:3],
+            "removed_transient_status_sections": removed_transient_status_sections[:3],
+        }
+        try:
+            with open(self.memory_update_sanitize_metrics_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except Exception:
+            logger.warning(
+                "Failed to append memory_update sanitize metric",
+                file=str(self.memory_update_sanitize_metrics_file),
             )
 
     @classmethod
@@ -957,6 +984,19 @@ class MemoryStore:
                                 removed_transient_status_line_count=sanitize_details["removed_transient_status_line_count"],
                                 recent_topic_section_samples=sanitize_details["recent_topic_section_samples"],
                                 transient_status_line_samples=sanitize_details["transient_status_line_samples"],
+                            )
+                            self._append_memory_update_sanitize_metric(
+                                session_key=session.key,
+                                removed_recent_topic_section_count=len(
+                                    list(sanitize_details["removed_recent_topic_sections"])
+                                ),
+                                removed_transient_status_line_count=int(
+                                    sanitize_details["removed_transient_status_line_count"]
+                                ),
+                                removed_recent_topic_sections=list(sanitize_details["removed_recent_topic_sections"]),
+                                removed_transient_status_sections=list(
+                                    sanitize_details["removed_transient_status_sections"]
+                                ),
                             )
                         if memory_truncated:
                             logger.warning(
