@@ -208,6 +208,8 @@ def test_summarize_memory_update_guard_metrics_counts_reasons(tmp_path: Path) ->
     assert summary.parse_error_rows == 1
     assert summary.reason_counts["excessive_shrink"] == 2
     assert summary.reason_counts["heading_retention_too_low"] == 1
+    assert summary.sessions_with_hits_by_reason["excessive_shrink"] == 1
+    assert summary.sessions_with_hits_by_reason["heading_retention_too_low"] == 1
     assert summary.by_session["s1"] == 2
     assert summary.by_session["s2"] == 1
     assert summary.sessions_with_guard_hits == 2
@@ -221,6 +223,8 @@ def test_summarize_memory_update_guard_metrics_counts_reasons(tmp_path: Path) ->
     assert "excessive_shrink: `2`" in text
     assert "dominant_reason: `excessive_shrink`" in text
     assert "sessions_with_guard_hits: `2`" in text
+    assert "## Reason Session Coverage" in text
+    assert "excessive_shrink: `1` sessions" in text
     assert "## Candidate Preview Samples" in text
 
 

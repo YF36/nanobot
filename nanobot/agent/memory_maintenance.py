@@ -91,6 +91,7 @@ class MemoryUpdateGuardMetricsSummary:
     total_rows: int
     parse_error_rows: int
     reason_counts: dict[str, int]
+    sessions_with_hits_by_reason: dict[str, int]
     by_session: dict[str, int]
     preview_by_reason: dict[str, str]
     avg_current_memory_chars: int
@@ -1045,6 +1046,7 @@ def summarize_memory_update_guard_metrics(memory_dir: Path) -> MemoryUpdateGuard
             total_rows=0,
             parse_error_rows=0,
             reason_counts={},
+            sessions_with_hits_by_reason={},
             by_session={},
             preview_by_reason={},
             avg_current_memory_chars=0,
@@ -1055,6 +1057,7 @@ def summarize_memory_update_guard_metrics(memory_dir: Path) -> MemoryUpdateGuard
     total_rows = 0
     parse_error_rows = 0
     reason_counter: Counter[str] = Counter()
+    reason_session_counter: dict[str, set[str]] = {}
     session_counter: Counter[str] = Counter()
     preview_by_reason: dict[str, str] = {}
     sum_current_chars = 0
@@ -1081,6 +1084,7 @@ def summarize_memory_update_guard_metrics(memory_dir: Path) -> MemoryUpdateGuard
         returned_chars = item.get("returned_memory_chars")
         reason_counter[reason] += 1
         session_counter[session_key] += 1
+        reason_session_counter.setdefault(reason, set()).add(session_key)
         if preview and reason not in preview_by_reason:
             preview_by_reason[reason] = preview
         if isinstance(current_chars, int) and isinstance(returned_chars, int):
@@ -1093,6 +1097,12 @@ def summarize_memory_update_guard_metrics(memory_dir: Path) -> MemoryUpdateGuard
         total_rows=total_rows,
         parse_error_rows=parse_error_rows,
         reason_counts=dict(sorted(reason_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        sessions_with_hits_by_reason=dict(
+            sorted(
+                ((reason, len(sessions)) for reason, sessions in reason_session_counter.items()),
+                key=lambda kv: (-kv[1], kv[0]),
+            )
+        ),
         by_session=dict(sorted(session_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         preview_by_reason=preview_by_reason,
         avg_current_memory_chars=(int(sum_current_chars / chars_count) if chars_count > 0 else 0),
@@ -1131,6 +1141,12 @@ def render_memory_update_guard_metrics_markdown(summary: MemoryUpdateGuardMetric
     else:
         for reason, count in summary.reason_counts.items():
             lines.append(f"- {reason}: `{count}`")
+    lines.extend(["", "## Reason Session Coverage"])
+    if not summary.sessions_with_hits_by_reason:
+        lines.append("- none")
+    else:
+        for reason, session_count in summary.sessions_with_hits_by_reason.items():
+            lines.append(f"- {reason}: `{session_count}` sessions")
     lines.extend(["", "## Suggested Fixes"])
     if not summary.reason_counts:
         lines.append("- none")

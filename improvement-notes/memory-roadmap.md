@@ -204,6 +204,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已调整：`guard-metrics-summary` 的 `Priority Focus` 默认展示 top 2，降低信息噪声、强化执行聚焦。
 - 已增强：`guard-metrics-summary` 增加 `dominant_reason` 摘要字段，便于快速识别当前主导拒写类型。
 - 已增强：`guard-metrics-summary` 增加 `sessions_with_guard_hits`，可区分“事件集中爆发”与“多会话普遍发生”。
+- 已增强：`guard-metrics-summary` 增加 `reason -> sessions` 覆盖统计（`sessions_with_hits_by_reason`），便于识别单会话异常与跨会话普遍问题。
 - 已增强：`memory-audit --guard-metrics-summary` 支持 `--guard-reason-filter`，可聚焦单类拒写原因做定向排查。
 - 已增强：`memory-audit --sanitize-metrics-summary` 支持 `--sanitize-focus-filter`（`recent_topic` / `transient_status` / `duplicate_bullets`）做定向排查。
 - 已增强：以上 filter 在无匹配或非法值时会输出明确提示，降低误用与排查成本。

@@ -426,6 +426,9 @@ def memory_audit(
             filtered_preview_by_reason = {
                 k: v for k, v in guard_metrics.preview_by_reason.items() if needle.lower() in k.lower()
             }
+            filtered_sessions_by_reason = {
+                k: v for k, v in guard_metrics.sessions_with_hits_by_reason.items() if needle.lower() in k.lower()
+            }
             if not filtered_reason_counts:
                 console.print(f"[yellow]No guard reasons matched filter:[/yellow] {needle}")
             guard_metrics = type(guard_metrics)(
@@ -433,10 +436,12 @@ def memory_audit(
                 total_rows=guard_metrics.total_rows,
                 parse_error_rows=guard_metrics.parse_error_rows,
                 reason_counts=filtered_reason_counts,
+                sessions_with_hits_by_reason=filtered_sessions_by_reason,
                 by_session=guard_metrics.by_session,
                 preview_by_reason=filtered_preview_by_reason,
                 avg_current_memory_chars=guard_metrics.avg_current_memory_chars,
                 avg_returned_memory_chars=guard_metrics.avg_returned_memory_chars,
+                sessions_with_guard_hits=guard_metrics.sessions_with_guard_hits,
             )
         guard_md = render_memory_update_guard_metrics_markdown(guard_metrics)
         if guard_metrics_summary:
