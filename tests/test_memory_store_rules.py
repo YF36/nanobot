@@ -317,6 +317,39 @@ def test_memory_update_guard_detects_heading_retention_drop() -> None:
     assert reason == "heading_retention_too_low"
 
 
+def test_memory_update_guard_detects_unstructured_candidate() -> None:
+    current = (
+        "# Long-term Memory\n\n"
+        "## Preferences\n- 中文沟通\n\n"
+        "## Project Context\n- memory roadmap\n"
+    )
+    candidate = (
+        "# Long-term Memory\n\n"
+        "This is a long plain paragraph without any markdown section headings or bullet points, "
+        "and it keeps describing recent chat details in one block which should not replace structured memory content."
+    )
+    reason = MemoryStore._memory_update_guard_reason(current, candidate)
+    assert reason == "unstructured_candidate"
+
+
+def test_memory_update_guard_detects_date_line_overflow() -> None:
+    current = (
+        "# Long-term Memory\n\n"
+        "## Preferences\n- 中文沟通\n\n"
+        "## Project Context\n- memory roadmap\n"
+    )
+    candidate = (
+        "# Long-term Memory\n\n"
+        "## Updates\n"
+        "- 2026-02-20 discussed memory cleanup step\n"
+        "- 2026-02-21 applied tool fallback tuning\n"
+        "- 2026-02-22 reviewed stream output behavior\n"
+        "- Keep speaking Chinese in responses\n"
+    )
+    reason = MemoryStore._memory_update_guard_reason(current, candidate)
+    assert reason == "date_line_overflow"
+
+
 @pytest.mark.asyncio
 async def test_consolidate_accepts_json_string_tool_arguments(tmp_path: Path) -> None:
     mm = MemoryStore(workspace=tmp_path)

@@ -87,6 +87,10 @@ class MemoryStore:
     _MEMORY_SANITIZE_LOG_SAMPLE_CHARS = 120
     _MEMORY_UPDATE_SHRINK_GUARD_RATIO = 0.4
     _MEMORY_UPDATE_MIN_HEADING_RETAIN_RATIO = 0.5
+    _MEMORY_UPDATE_MIN_STRUCTURED_CHARS = 120
+    _MEMORY_UPDATE_DATE_LINE_RATIO_GUARD = 0.2
+    _MEMORY_UPDATE_DATE_LINE_MIN_COUNT = 3
+    _DATE_TOKEN_RE = re.compile(r"\b20\d{2}-\d{2}-\d{2}\b")
     _HISTORY_ENTRY_DATE_RE = re.compile(r"^\[(20\d{2}-\d{2}-\d{2})(?:\s+\d{2}:\d{2})?\]")
     _DAILY_FILE_DATE_RE = re.compile(r"^(20\d{2}-\d{2}-\d{2})\.md$")
     _RECENT_DAILY_DEFAULT_SECTIONS = frozenset({"Topics", "Decisions", "Open Questions", "Entries"})
@@ -677,6 +681,16 @@ class MemoryStore:
         return headings
 
     @classmethod
+    def _has_structured_markers(cls, text: str) -> bool:
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith("## ") or line.startswith("- "):
+                return True
+        return False
+
+    @classmethod
     def _memory_update_guard_reason(cls, current_memory: str, candidate_update: str) -> str | None:
         """Return reason string when memory_update looks suspicious and should be skipped."""
         current = current_memory.strip()
@@ -690,6 +704,16 @@ class MemoryStore:
         candidate_len = len(candidate)
         if current_len >= 200 and candidate_len < int(current_len * cls._MEMORY_UPDATE_SHRINK_GUARD_RATIO):
             return "excessive_shrink"
+        if candidate_len >= cls._MEMORY_UPDATE_MIN_STRUCTURED_CHARS and not cls._has_structured_markers(candidate):
+            return "unstructured_candidate"
+        non_empty_lines = [ln.strip() for ln in candidate.splitlines() if ln.strip()]
+        if non_empty_lines:
+            date_lines = sum(1 for ln in non_empty_lines if cls._DATE_TOKEN_RE.search(ln))
+            if (
+                date_lines >= cls._MEMORY_UPDATE_DATE_LINE_MIN_COUNT
+                and (date_lines / len(non_empty_lines)) >= cls._MEMORY_UPDATE_DATE_LINE_RATIO_GUARD
+            ):
+                return "date_line_overflow"
 
         current_h2 = cls._extract_h2_headings(current)
         if current_h2:
