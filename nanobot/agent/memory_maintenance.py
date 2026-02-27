@@ -35,6 +35,7 @@ _GUARD_REASON_HINTS = {
     "unstructured_candidate": "Candidate is long but lacks markdown structure; require `##` sections and concise `-` bullets.",
     "date_line_overflow": "Candidate contains too many dated lines; move dated timeline details to daily/history instead of long-term memory.",
 }
+_STRUCTURED_DAILY_OK_RATE_WARN_THRESHOLD = 60.0
 
 
 @dataclass
@@ -1008,6 +1009,12 @@ def render_daily_routing_metrics_markdown(summary: DailyRoutingMetricsSummary) -
             hint = _FALLBACK_REASON_HINTS.get(reason)
             if hint:
                 lines.append(f"- {reason}: {hint}")
+    if total_valid > 0 and ok_rate < _STRUCTURED_DAILY_OK_RATE_WARN_THRESHOLD:
+        if "## Suggested Fixes" not in lines:
+            lines.extend(["", "## Suggested Fixes"])
+        lines.append(
+            "- structured_daily_ok rate is low; tighten consolidation prompt to prefer non-empty `daily_sections` and validate serializer shape."
+        )
 
     lines.extend(["", "## By Date"])
     if not summary.by_date:
@@ -1659,6 +1666,10 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         lines.append("- Run controlled cleanup: `nanobot memory-audit --apply --apply-recent-days 7 --apply-skip-history`")
     if routing.fallback_reason_counts:
         lines.append("- Inspect fallback fix hints via: `nanobot memory-audit --metrics-summary`")
+    if routing_valid > 0 and routing_ok_rate < _STRUCTURED_DAILY_OK_RATE_WARN_THRESHOLD:
+        lines.append(
+            "- structured_daily_ok rate is below target; prioritize consolidation prompt tuning for stable `daily_sections` output."
+        )
     if max(0, guard.total_rows - guard.parse_error_rows) > 0:
         lines.append("- Review guard reasons: `nanobot memory-audit --guard-metrics-summary`")
     unstructured_count = int(guard.reason_counts.get("unstructured_candidate", 0))

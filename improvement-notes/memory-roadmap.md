@@ -191,6 +191,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已实施：`nanobot memory-audit --metrics-summary` 汇总输出（含总体命中率、fallback reason 分布、按天统计）。
 - 已实施：`nanobot memory-audit --metrics-out <path>` 可导出指标汇总 Markdown。
 - 已实施：fallback reason 纠偏建议映射（`metrics-summary` 中自动给出 top reason 对应修复建议）。
+- 已增强：当 `structured_daily_ok` 命中率低于阈值（当前 60%）时，`metrics-summary` 与 dashboard 会给出 prompt/serializer 收敛建议。
 - 已实施：`memory_update` guard 触发指标落盘：`memory/observability/memory-update-guard-metrics.jsonl`。
 - 已增强：guard 指标增加 `candidate_preview`（截断样本），便于快速回溯被拒写的候选内容形态。
 - 已实施：`memory_update` sanitize 命中指标落盘：`memory/observability/memory-update-sanitize-metrics.jsonl`（记录 recent-topic/transient-status 清洗命中量）。

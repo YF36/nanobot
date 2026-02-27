@@ -157,6 +157,26 @@ def test_summarize_daily_routing_metrics_counts_and_reasons(tmp_path: Path) -> N
     assert "should be `string[]`" in rendered
 
 
+def test_render_daily_routing_metrics_markdown_warns_on_low_structured_ok_rate(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(
+        _obs_file(memory_dir, "daily-routing-metrics.jsonl"),
+        "\n".join(
+            [
+                '{"date":"2026-02-27","structured_daily_ok":false,"fallback_reason":"missing"}',
+                '{"date":"2026-02-27","structured_daily_ok":false,"fallback_reason":"missing"}',
+                '{"date":"2026-02-28","structured_daily_ok":true,"fallback_reason":"ok"}',
+            ]
+        )
+        + "\n",
+    )
+
+    summary = summarize_daily_routing_metrics(memory_dir)
+    rendered = render_daily_routing_metrics_markdown(summary)
+    assert "structured_daily_ok rate is low" in rendered
+
+
 def test_render_daily_routing_metrics_markdown_handles_missing_file(tmp_path: Path) -> None:
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
@@ -601,6 +621,7 @@ def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path)
     assert "preview top candidate files" in text
     assert "Low-risk rollout" in text
     assert "## Suggested Next Actions" in text
+    assert "structured_daily_ok rate is below target" in text
 
 
 def test_render_memory_observability_dashboard_warns_on_high_non_decision_drop(tmp_path: Path) -> None:
