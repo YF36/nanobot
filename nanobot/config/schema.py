@@ -195,6 +195,8 @@ class ChannelsConfig(Base):
 
     send_progress: bool = True    # stream agent's text progress to the channel
     send_tool_hints: bool = False  # stream tool-call hints (e.g. read_file("…"))
+    progress_flush_interval_ms: int = 150  # streaming progress coalescing window
+    progress_flush_min_chars: int = 80     # flush earlier once buffered chars reach this threshold
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     discord: DiscordConfig = Field(default_factory=DiscordConfig)

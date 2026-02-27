@@ -512,3 +512,36 @@ async def test_turn_runner_streams_text_deltas_via_progress() -> None:
     assert messages[-1]["content"] == "Hello stream"
     assert progress
     assert "".join(chunk for chunk, is_hint in progress if not is_hint) == "Hello stream"
+
+
+@pytest.mark.asyncio
+async def test_turn_runner_stream_progress_respects_flush_settings() -> None:
+    provider = _StreamingProvider()
+    runner = TurnRunner(
+        provider=provider,
+        tools=_FakeTools(),
+        context_builder=_FakeContext(),
+        model="test",
+        temperature=0.0,
+        max_tokens=256,
+        max_iterations=2,
+        guard_loop_messages=lambda m, i: (m, i),
+        strip_think=lambda s: s,
+        tool_hint=lambda calls: f"Using {len(calls)} tool(s)",
+        stream_progress_flush_interval_s=10.0,
+        stream_progress_flush_chars=999,
+    )
+
+    progress: list[str] = []
+
+    async def _on_progress(content: str, *, tool_hint: bool = False) -> None:
+        if not tool_hint:
+            progress.append(content)
+
+    final_content, _, _ = await runner.run(
+        [{"role": "user", "content": "hello"}],
+        on_progress=_on_progress,
+    )
+
+    assert final_content == "Hello stream"
+    assert progress == ["Hello stream"]

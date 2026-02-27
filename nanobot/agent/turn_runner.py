@@ -26,8 +26,8 @@ logger = get_logger(__name__)
 _CHAT_RETRY_MAX_ATTEMPTS = 2
 _CHAT_RETRY_BASE_DELAY_S = 0.2
 _CONTEXT_OVERFLOW_EXTRA_COMPACTIONS = 1
-_STREAM_PROGRESS_FLUSH_INTERVAL_S = 0.15
-_STREAM_PROGRESS_FLUSH_CHARS = 80
+_DEFAULT_STREAM_PROGRESS_FLUSH_INTERVAL_S = 0.15
+_DEFAULT_STREAM_PROGRESS_FLUSH_CHARS = 80
 
 
 def _session_tool_details(details: dict[str, Any]) -> dict[str, Any]:
@@ -153,6 +153,8 @@ class TurnRunner:
         guard_loop_messages: Callable[[list[dict[str, Any]], int], tuple[list[dict[str, Any]], int]],
         strip_think: Callable[[str | None], str | None],
         tool_hint: Callable[[list[Any]], str],
+        stream_progress_flush_interval_s: float = _DEFAULT_STREAM_PROGRESS_FLUSH_INTERVAL_S,
+        stream_progress_flush_chars: int = _DEFAULT_STREAM_PROGRESS_FLUSH_CHARS,
     ) -> None:
         self.provider = provider
         self.tools = tools
@@ -164,6 +166,8 @@ class TurnRunner:
         self.guard_loop_messages = guard_loop_messages
         self.strip_think = strip_think
         self.tool_hint = tool_hint
+        self.stream_progress_flush_interval_s = max(0.01, float(stream_progress_flush_interval_s))
+        self.stream_progress_flush_chars = max(1, int(stream_progress_flush_chars))
 
     @staticmethod
     def _compact_history_once(
@@ -209,7 +213,11 @@ class TurnRunner:
                 return
             now = time.monotonic()
             total_chars = sum(len(x) for x in progress_buf)
-            if not force and (now - last_flush) < _STREAM_PROGRESS_FLUSH_INTERVAL_S and total_chars < _STREAM_PROGRESS_FLUSH_CHARS:
+            if (
+                not force
+                and (now - last_flush) < self.stream_progress_flush_interval_s
+                and total_chars < self.stream_progress_flush_chars
+            ):
                 return
             chunk = "".join(progress_buf)
             progress_buf.clear()

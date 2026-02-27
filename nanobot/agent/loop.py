@@ -311,6 +311,7 @@ class AgentLoop:
         should_interrupt_after_tool: Callable[[], bool | Awaitable[bool]] | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop. Returns (final_content, tools_used, messages)."""
+        channels_config = getattr(self, "channels_config", None)
         runner = TurnRunner(
             provider=self.provider,
             tools=self.tools,
@@ -322,6 +323,16 @@ class AgentLoop:
             guard_loop_messages=self._guard_loop_messages,
             strip_think=self._strip_think,
             tool_hint=self._tool_hint,
+            stream_progress_flush_interval_s=(
+                max(10, int(getattr(channels_config, "progress_flush_interval_ms", 150))) / 1000.0
+                if channels_config
+                else 0.15
+            ),
+            stream_progress_flush_chars=(
+                max(1, int(getattr(channels_config, "progress_flush_min_chars", 80)))
+                if channels_config
+                else 80
+            ),
         )
         async def _fanout_event(event: TurnEventPayload) -> None:
             await self._on_turn_event(event)
