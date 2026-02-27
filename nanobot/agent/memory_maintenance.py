@@ -81,8 +81,10 @@ class DailyRoutingMetricsSummary:
     structured_ok_count: int
     fallback_count: int
     sessions_with_routing_events: int
+    sessions_with_fallback_events: int
     by_session: dict[str, int]
     fallback_reason_counts: dict[str, int]
+    fallback_sessions_by_reason: dict[str, int]
     by_date: dict[str, dict[str, int]]
 
 
@@ -734,8 +736,10 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
             structured_ok_count=0,
             fallback_count=0,
             sessions_with_routing_events=0,
+            sessions_with_fallback_events=0,
             by_session={},
             fallback_reason_counts={},
+            fallback_sessions_by_reason={},
             by_date={},
         )
 
@@ -745,6 +749,8 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
     fallback_count = 0
     session_counter: Counter[str] = Counter()
     fallback_reason_counter: Counter[str] = Counter()
+    fallback_session_counter: Counter[str] = Counter()
+    fallback_sessions_by_reason: dict[str, set[str]] = {}
     by_date: dict[str, dict[str, int]] = {}
 
     for raw_line in metrics_file.read_text(encoding="utf-8").splitlines():
@@ -778,6 +784,8 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
             bucket["fallback"] += 1
             reason = str(item.get("fallback_reason") or "unknown")
             fallback_reason_counter[reason] += 1
+            fallback_session_counter[session_key] += 1
+            fallback_sessions_by_reason.setdefault(reason, set()).add(session_key)
 
     return DailyRoutingMetricsSummary(
         metrics_file_exists=True,
@@ -786,8 +794,15 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
         structured_ok_count=structured_ok_count,
         fallback_count=fallback_count,
         sessions_with_routing_events=len(session_counter),
+        sessions_with_fallback_events=len(fallback_session_counter),
         by_session=dict(sorted(session_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         fallback_reason_counts=dict(sorted(fallback_reason_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        fallback_sessions_by_reason=dict(
+            sorted(
+                ((reason, len(sessions)) for reason, sessions in fallback_sessions_by_reason.items()),
+                key=lambda kv: (-kv[1], kv[0]),
+            )
+        ),
         by_date=dict(sorted(by_date.items())),
     )
 
@@ -1003,6 +1018,7 @@ def render_daily_routing_metrics_markdown(summary: DailyRoutingMetricsSummary) -
             "## Overall",
             f"- Rows: `{summary.total_rows}` (valid=`{total_valid}`, parse_errors=`{summary.parse_error_rows}`)",
             f"- sessions_with_routing_events: `{summary.sessions_with_routing_events}`",
+            f"- sessions_with_fallback_events: `{summary.sessions_with_fallback_events}`",
             f"- Structured OK: `{summary.structured_ok_count}` ({ok_rate:.1f}%)",
             f"- Fallback: `{summary.fallback_count}` ({fallback_rate:.1f}%)",
             "",
@@ -1013,7 +1029,8 @@ def render_daily_routing_metrics_markdown(summary: DailyRoutingMetricsSummary) -
         lines.append("- none")
     else:
         for reason, count in summary.fallback_reason_counts.items():
-            lines.append(f"- {reason}: `{count}`")
+            session_count = summary.fallback_sessions_by_reason.get(reason, 0)
+            lines.append(f"- {reason}: `{count}` (sessions=`{session_count}`)")
     if summary.fallback_reason_counts:
         lines.extend(["", "## Suggested Fixes"])
         for reason in summary.fallback_reason_counts:
@@ -1652,6 +1669,7 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         "## Routing",
         f"- structured_daily_ok rate: `{routing_ok_rate:.1f}%` (valid=`{routing_valid}`)",
         f"- sessions_with_routing_events: `{routing.sessions_with_routing_events}`",
+        f"- sessions_with_fallback_events: `{routing.sessions_with_fallback_events}`",
         f"- top fallback reasons: `{', '.join(list(routing.fallback_reason_counts.keys())[:3]) if routing.fallback_reason_counts else 'none'}`",
         "",
         "## Guard / Conflict",
