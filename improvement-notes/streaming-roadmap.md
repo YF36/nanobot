@@ -22,8 +22,15 @@
 - `S-Stream3`：部分落地（最小版）
   - 已支持 progress 消息限流上限（每 turn 最大消息数）
   - 已支持可选“流式结束标记”消息（默认关闭）
-  - 已支持 Feishu 渠道最小“单条消息编辑式流式”（配置开关默认关闭）
-  - 其他渠道仍走 progress 多条消息兼容路径
+  - 已支持 Feishu 渠道“单条消息编辑式流式”（单卡片累计追加、PATCH 参数修复、限频重试与节奏优化）
+  - 其他渠道仍走 progress 多条消息兼容路径（已记录为后续扩展项，当前不改动）
+
+统一开关状态（已落地）：
+
+- 已支持主开关：`channels.streamEnabled`
+- 已支持模式：`channels.streamMode = off | auto | force`（默认 `auto`）
+- 已支持 GLM（zhipu）流式参数内置注入：用户无需再手配 provider 级 stream 参数
+- 已支持 `/health?debug=stream` 与 `/health?debug=events` 的 stream 诊断快照（`stream_effective` / 原因）
 
 代表性提交（streaming 主线）：
 
@@ -34,6 +41,10 @@
 - `2538aa9`：每 turn progress 消息上限
 - `6f9d791`：可选 stream done marker
 - `f4894ab`：S-Stream3 渠道消息编辑流式最小实现（Feishu）
+- `f27cc1f`：统一主开关 + zhipu 流式参数自动注入
+- `4118432`：`streamMode`（off/auto/force）三态控制
+- `f7f6796`：Feishu 单卡累计追加更新修复
+- `c4d7f8e`：Feishu 流式更新节奏优化
 
 ---
 

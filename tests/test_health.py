@@ -12,6 +12,14 @@ from nanobot.health import HealthServer
 def _make_server(port: int) -> HealthServer:
     agent = MagicMock()
     agent._running = True
+    agent.channels_config = MagicMock(
+        stream_mode="auto",
+        stream_enabled=True,
+        progress_edit_streaming_enabled=False,
+        send_progress=True,
+    )
+    agent.provider = MagicMock()
+    agent.provider.stream_chat = MagicMock()
 
     bus = MagicMock()
     bus.inbound_size = 0
@@ -19,6 +27,10 @@ def _make_server(port: int) -> HealthServer:
 
     channels = MagicMock()
     channels.get_status.return_value = {"telegram": {"connected": True}}
+    channels.channels = {
+        "telegram": MagicMock(supports_progress_message_editing=False),
+        "feishu": MagicMock(supports_progress_message_editing=True),
+    }
 
     return HealthServer(agent=agent, bus=bus, channels=channels, host="127.0.0.1", port=port)
 
@@ -147,5 +159,32 @@ class TestHealthServer:
             assert manifest["namespace"] == "nanobot.turn"
             assert manifest["version"] == 1
             assert any(e["kind"] == "turn.start" for e in manifest["events"])
+            stream_diag = data["debug"]["stream_diagnostics"]
+            assert stream_diag["stream_mode"] == "auto"
+            assert stream_diag["stream_effective"] is True
+            assert "feishu" in stream_diag["editable_channels"]
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_health_debug_stream_includes_stream_diagnostics(self) -> None:
+        """GET /health?debug=stream includes stream diagnostics snapshot."""
+        server = _make_server(port=18771)
+        await server.start()
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", 18771)
+            writer.write(b"GET /health?debug=stream HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            await writer.drain()
+
+            response = await asyncio.wait_for(reader.read(8192), timeout=3.0)
+            writer.close()
+
+            body = response.split(b"\r\n\r\n", 1)[1]
+            data = json.loads(body)
+            assert "debug" in data
+            stream_diag = data["debug"]["stream_diagnostics"]
+            assert stream_diag["effective_stream_enabled"] is True
+            assert stream_diag["provider_stream_supported"] is True
+            assert stream_diag["stream_effective"] is True
         finally:
             await server.stop()

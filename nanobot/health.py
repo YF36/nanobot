@@ -53,6 +53,58 @@ class HealthServer:
         """Call after each successfully processed message to update timestamp."""
         self.last_processed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
+    def _stream_diagnostics(self) -> dict[str, object]:
+        channels_cfg = getattr(self.agent, "channels_config", None)
+        stream_mode = str(getattr(channels_cfg, "stream_mode", "auto") or "auto").strip().lower()
+        stream_enabled_flag = bool(getattr(channels_cfg, "stream_enabled", False))
+        legacy_edit_flag = bool(getattr(channels_cfg, "progress_edit_streaming_enabled", False))
+        send_progress = bool(getattr(channels_cfg, "send_progress", True))
+
+        if stream_mode == "off":
+            effective_stream_enabled = False
+        elif stream_mode == "force":
+            effective_stream_enabled = True
+        else:
+            effective_stream_enabled = bool(stream_enabled_flag or legacy_edit_flag)
+
+        provider = getattr(self.agent, "provider", None)
+        provider_stream_chat = getattr(provider, "stream_chat", None)
+        provider_stream_supported = callable(provider_stream_chat)
+
+        channels_map = getattr(self.channels, "channels", {}) or {}
+        editable_channels = sorted(
+            name for name, ch in channels_map.items()
+            if bool(getattr(ch, "supports_progress_message_editing", False))
+        )
+
+        llm_stream_ready = bool(effective_stream_enabled and provider_stream_supported)
+        progress_path_ready = bool(send_progress or effective_stream_enabled)
+        stream_effective = bool(llm_stream_ready and progress_path_ready)
+
+        reasons: list[str] = []
+        if effective_stream_enabled and not provider_stream_supported:
+            reasons.append("provider_missing_stream_chat")
+        if effective_stream_enabled and not progress_path_ready:
+            reasons.append("progress_path_disabled")
+        if not effective_stream_enabled:
+            reasons.append("stream_disabled")
+        if stream_effective:
+            reasons.append("ok")
+
+        return {
+            "stream_mode": stream_mode,
+            "stream_enabled": stream_enabled_flag,
+            "legacy_progress_edit_enabled": legacy_edit_flag,
+            "effective_stream_enabled": effective_stream_enabled,
+            "send_progress": send_progress,
+            "provider_stream_supported": provider_stream_supported,
+            "llm_stream_ready": llm_stream_ready,
+            "editable_channels": editable_channels,
+            "progress_path_ready": progress_path_ready,
+            "stream_effective": stream_effective,
+            "reason": reasons,
+        }
+
     def _build_payload(self, *, debug: str | None = None) -> bytes:
         channel_status = self.channels.get_status()
         payload = {
@@ -66,7 +118,12 @@ class HealthServer:
             "last_processed_at": self.last_processed_at,
         }
         if debug == "events":
-            payload["debug"] = {"turn_event_capabilities": turn_event_capabilities()}
+            payload["debug"] = {
+                "turn_event_capabilities": turn_event_capabilities(),
+                "stream_diagnostics": self._stream_diagnostics(),
+            }
+        elif debug == "stream":
+            payload["debug"] = {"stream_diagnostics": self._stream_diagnostics()}
         return json.dumps(payload, indent=2).encode()
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
