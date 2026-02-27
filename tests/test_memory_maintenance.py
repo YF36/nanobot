@@ -685,7 +685,7 @@ def test_render_memory_observability_dashboard_warns_on_oversized_guard_candidat
     assert "Guard shows oversized candidate trend" in text
 
 
-def test_render_memory_observability_dashboard_warns_on_unstructured_and_date_overflow(tmp_path: Path) -> None:
+def test_render_memory_observability_dashboard_warns_on_guard_overflow_patterns(tmp_path: Path) -> None:
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
     _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
@@ -704,6 +704,9 @@ def test_render_memory_observability_dashboard_warns_on_unstructured_and_date_ov
                 '{"session_key":"s7","reason":"url_line_overflow"}',
                 '{"session_key":"s8","reason":"url_line_overflow"}',
                 '{"session_key":"s9","reason":"url_line_overflow"}',
+                '{"session_key":"s10","reason":"duplicate_line_overflow"}',
+                '{"session_key":"s11","reason":"duplicate_line_overflow"}',
+                '{"session_key":"s12","reason":"duplicate_line_overflow"}',
             ]
         )
         + "\n",
@@ -713,6 +716,7 @@ def test_render_memory_observability_dashboard_warns_on_unstructured_and_date_ov
     assert "repeated unstructured candidates" in text
     assert "repeated dated-line overflow" in text
     assert "repeated URL-line overflow" in text
+    assert "repeated duplicate-line overflow" in text
 
 
 def test_render_memory_observability_dashboard_shows_high_risk_preview_command(tmp_path: Path) -> None:
