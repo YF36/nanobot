@@ -1558,6 +1558,12 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         lines.append("- Inspect fallback fix hints via: `nanobot memory-audit --metrics-summary`")
     if max(0, guard.total_rows - guard.parse_error_rows) > 0:
         lines.append("- Review guard reasons: `nanobot memory-audit --guard-metrics-summary`")
+    unstructured_count = int(guard.reason_counts.get("unstructured_candidate", 0))
+    date_overflow_count = int(guard.reason_counts.get("date_line_overflow", 0))
+    if unstructured_count >= 3:
+        lines.append("- Guard shows repeated unstructured candidates; enforce markdown section/bullet structure in consolidation output.")
+    if date_overflow_count >= 3:
+        lines.append("- Guard shows repeated dated-line overflow; keep timeline-like entries in daily/history rather than long-term memory.")
     if guard.avg_current_memory_chars > 0 and guard.avg_returned_memory_chars > int(guard.avg_current_memory_chars * 1.6):
         lines.append("- Guard shows oversized candidate trend; tighten consolidation prompt to return concise long-term memory updates.")
     if max(0, sanitize.total_rows - sanitize.parse_error_rows) > 0:
