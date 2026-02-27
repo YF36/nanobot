@@ -239,12 +239,24 @@ def memory_audit(
     metrics_summary: bool = typer.Option(False, "--metrics-summary", help="Show daily routing metrics summary"),
     metrics_out: str = typer.Option("", help="Optional daily routing metrics markdown output path"),
     apply: bool = typer.Option(False, "--apply", help="Apply conservative cleanup with automatic backup"),
+    apply_recent_days: int = typer.Option(
+        0,
+        "--apply-recent-days",
+        help="When >0, only clean daily files within recent N days (controlled rollout)",
+    ),
+    apply_include_history: bool = typer.Option(
+        True,
+        "--apply-include-history/--apply-skip-history",
+        help="Whether to include HISTORY.md cleanup when using --apply",
+    ),
+    apply_effect_out: str = typer.Option("", help="Optional cleanup effect markdown output path"),
 ):
     """Run memory quality audit; optionally apply conservative cleanup with backups."""
     from nanobot.config.loader import load_config
     from nanobot.agent.memory_maintenance import (
         apply_conservative_cleanup,
         build_cleanup_plan,
+        render_cleanup_effect_markdown,
         render_daily_routing_metrics_markdown,
         render_audit_markdown,
         run_memory_audit,
@@ -282,7 +294,14 @@ def memory_audit(
             console.print(f"[green]✓[/green] Wrote metrics summary: {out}")
 
     if apply:
-        result = apply_conservative_cleanup(target_dir)
+        before = run_memory_audit(target_dir)
+        result = apply_conservative_cleanup(
+            target_dir,
+            daily_recent_days=(apply_recent_days if apply_recent_days > 0 else None),
+            include_history=apply_include_history,
+        )
+        after = run_memory_audit(target_dir)
+        effect_md = render_cleanup_effect_markdown(before, after, result)
         if result.touched_files:
             console.print(
                 "[green]✓[/green] Applied conservative cleanup: "
@@ -291,10 +310,21 @@ def memory_audit(
                 f"daily_trimmed={result.daily_trimmed_bullets}, "
                 f"daily_dedup={result.daily_deduplicated_bullets}"
             )
+            console.print(
+                f"[green]✓[/green] Scope: daily_files={result.scoped_daily_files}, "
+                f"skipped_daily_files={result.skipped_daily_files}, "
+                f"include_history={apply_include_history}"
+            )
             console.print(f"[green]✓[/green] Backup dir: {result.backup_dir}")
             console.print(f"[green]✓[/green] Touched files: {', '.join(result.touched_files)}")
         else:
             console.print("[yellow]No cleanup changes applied.[/yellow]")
+        console.print(Markdown(effect_md))
+        if apply_effect_out:
+            out = Path(apply_effect_out).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(effect_md, encoding="utf-8")
+            console.print(f"[green]✓[/green] Wrote cleanup effect: {out}")
 
 
 def _make_provider(config: Config):

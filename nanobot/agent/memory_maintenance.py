@@ -6,7 +6,7 @@ import json
 import re
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 
@@ -41,6 +41,8 @@ class CleanupApplyResult:
     history_deduplicated_entries: int
     daily_trimmed_bullets: int
     daily_deduplicated_bullets: int
+    scoped_daily_files: int
+    skipped_daily_files: int
     touched_files: list[str]
 
 
@@ -63,6 +65,16 @@ def _iter_daily_files(memory_dir: Path) -> list[Path]:
         if _DATE_FILE_RE.match(p.name):
             items.append(p)
     return items
+
+
+def _daily_file_date(path: Path) -> date | None:
+    m = _DATE_FILE_RE.match(path.name)
+    if not m:
+        return None
+    try:
+        return datetime.strptime(m.group(1), "%Y-%m-%d").date()
+    except ValueError:
+        return None
 
 
 def _parse_history_entries(history_text: str) -> list[str]:
@@ -149,9 +161,24 @@ def _trim_text(value: str, max_chars: int) -> tuple[str, bool]:
     return value[: max_chars - 3].rstrip() + "...", True
 
 
-def apply_conservative_cleanup(memory_dir: Path) -> CleanupApplyResult:
+def apply_conservative_cleanup(
+    memory_dir: Path,
+    *,
+    daily_recent_days: int | None = None,
+    include_history: bool = True,
+) -> CleanupApplyResult:
     history_file = memory_dir / "HISTORY.md"
-    daily_files = _iter_daily_files(memory_dir)
+    all_daily_files = _iter_daily_files(memory_dir)
+    if daily_recent_days is None:
+        daily_files = all_daily_files
+    else:
+        window_days = max(1, int(daily_recent_days))
+        cutoff = datetime.now().date() - timedelta(days=window_days - 1)
+        daily_files = []
+        for p in all_daily_files:
+            d = _daily_file_date(p)
+            if d is not None and d >= cutoff:
+                daily_files.append(p)
     backup_dir = memory_dir / f"_cleanup_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     history_trimmed_entries = 0
@@ -160,7 +187,7 @@ def apply_conservative_cleanup(memory_dir: Path) -> CleanupApplyResult:
     daily_deduplicated_bullets = 0
     touched_files: list[str] = []
 
-    if history_file.exists():
+    if include_history and history_file.exists():
         original = history_file.read_text(encoding="utf-8")
         entries = _parse_history_entries(original)
         seen: set[str] = set()
@@ -226,8 +253,35 @@ def apply_conservative_cleanup(memory_dir: Path) -> CleanupApplyResult:
         history_deduplicated_entries=history_deduplicated_entries,
         daily_trimmed_bullets=daily_trimmed_bullets,
         daily_deduplicated_bullets=daily_deduplicated_bullets,
+        scoped_daily_files=len(daily_files),
+        skipped_daily_files=max(0, len(all_daily_files) - len(daily_files)),
         touched_files=sorted(touched_files),
     )
+
+
+def render_cleanup_effect_markdown(before: MemoryAudit, after: MemoryAudit, result: CleanupApplyResult) -> str:
+    lines = [
+        "# Memory Cleanup Effect",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+        f"- Memory dir: `{result.memory_dir}`",
+        f"- Scoped daily files: `{result.scoped_daily_files}` (skipped=`{result.skipped_daily_files}`)",
+        f"- Touched files: `{len(result.touched_files)}` ({', '.join(result.touched_files) if result.touched_files else 'none'})",
+        "",
+        "## Operation Counters",
+        f"- history_trimmed_entries: `{result.history_trimmed_entries}`",
+        f"- history_deduplicated_entries: `{result.history_deduplicated_entries}`",
+        f"- daily_trimmed_bullets: `{result.daily_trimmed_bullets}`",
+        f"- daily_deduplicated_bullets: `{result.daily_deduplicated_bullets}`",
+        "",
+        "## Audit Delta (Before -> After)",
+        f"- HISTORY long(>600): `{before.history_long_entry_count}` -> `{after.history_long_entry_count}`",
+        f"- HISTORY duplicates: `{before.history_duplicate_count}` -> `{after.history_duplicate_count}`",
+        f"- DAILY long bullets(>240): `{before.daily_long_bullet_count}` -> `{after.daily_long_bullet_count}`",
+        f"- DAILY duplicates: `{before.daily_duplicate_count}` -> `{after.daily_duplicate_count}`",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSummary:

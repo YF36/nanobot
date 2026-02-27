@@ -1,8 +1,10 @@
 from pathlib import Path
+from datetime import datetime, timedelta
 
 from nanobot.agent.memory_maintenance import (
     apply_conservative_cleanup,
     build_cleanup_plan,
+    render_cleanup_effect_markdown,
     render_daily_routing_metrics_markdown,
     run_memory_audit,
     summarize_daily_routing_metrics,
@@ -76,6 +78,8 @@ def test_apply_conservative_cleanup_trims_and_deduplicates_with_backup(tmp_path:
     assert result.history_deduplicated_entries == 1
     assert result.daily_trimmed_bullets == 1
     assert result.daily_deduplicated_bullets == 1
+    assert result.scoped_daily_files == 1
+    assert result.skipped_daily_files == 0
 
     history_after = (memory_dir / "HISTORY.md").read_text(encoding="utf-8")
     assert history_after.count("repeat") == 1
@@ -122,3 +126,37 @@ def test_render_daily_routing_metrics_markdown_handles_missing_file(tmp_path: Pa
     summary = summarize_daily_routing_metrics(memory_dir)
     text = render_daily_routing_metrics_markdown(summary)
     assert "Metrics file: not found" in text
+
+
+def test_apply_conservative_cleanup_scopes_recent_daily_files(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(memory_dir / "HISTORY.md", "[2026-02-27 10:00] keep\n\n")
+    today = datetime.now().date()
+    old_day = today - timedelta(days=40)
+    today_name = today.strftime("%Y-%m-%d")
+    old_name = old_day.strftime("%Y-%m-%d")
+    _write(memory_dir / f"{today_name}.md", f"# {today_name}\n\n## Topics\n\n- repeat\n- repeat\n")
+    _write(memory_dir / f"{old_name}.md", f"# {old_name}\n\n## Topics\n\n- old\n- old\n")
+
+    result = apply_conservative_cleanup(memory_dir, daily_recent_days=1, include_history=False)
+
+    assert result.scoped_daily_files == 1
+    assert result.skipped_daily_files == 1
+    old_content = (memory_dir / f"{old_name}.md").read_text(encoding="utf-8")
+    assert old_content.count("- old") == 2
+
+
+def test_render_cleanup_effect_markdown_contains_delta(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(memory_dir / "HISTORY.md", "[2026-02-27 10:00] " + ("x" * 620) + "\n\n")
+    _write(memory_dir / "2026-02-27.md", "# 2026-02-27\n\n## Topics\n\n- repeat\n- repeat\n")
+    before = run_memory_audit(memory_dir)
+    result = apply_conservative_cleanup(memory_dir)
+    after = run_memory_audit(memory_dir)
+
+    text = render_cleanup_effect_markdown(before, after, result)
+    assert "Audit Delta (Before -> After)" in text
+    assert "HISTORY long(>600)" in text
+    assert "DAILY duplicates" in text
