@@ -606,8 +606,8 @@ def _top_candidate_file_pairs(by_file: dict[str, dict[str, int]], limit: int = 3
     return [f"{name}:{total}" for name, total in items[:limit]]
 
 
-def render_cleanup_drop_preview_markdown(summary: CleanupDropPreviewSummary) -> str:
-    top_files = _top_candidate_file_pairs(summary.by_file, limit=3)
+def render_cleanup_drop_preview_markdown(summary: CleanupDropPreviewSummary, *, top_limit: int = 3) -> str:
+    top_files = _top_candidate_file_pairs(summary.by_file, limit=max(1, int(top_limit)))
     lines = [
         "# Cleanup Drop Preview",
         "",

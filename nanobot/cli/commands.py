@@ -306,6 +306,11 @@ def memory_audit(
         "",
         help="Optional apply drop preview markdown output path",
     ),
+    apply_drop_preview_top: int = typer.Option(
+        3,
+        "--apply-drop-preview-top",
+        help="Top N candidate files shown in apply drop preview summaries",
+    ),
     apply_abort_on_high_risk: bool = typer.Option(
         False,
         "--apply-abort-on-high-risk",
@@ -457,6 +462,7 @@ def memory_audit(
             console.print(f"[green]✓[/green] Wrote archive dry-run summary: {out}")
 
     if apply_drop_preview or apply_drop_preview_out:
+        top_n = max(1, int(apply_drop_preview_top))
         preview = summarize_cleanup_drop_preview(
             target_dir,
             daily_recent_days=(apply_recent_days if apply_recent_days > 0 else None),
@@ -467,7 +473,7 @@ def memory_audit(
                 drop_non_decision_older_than_days if drop_non_decision_older_than_days > 0 else None
             ),
         )
-        preview_md = render_cleanup_drop_preview_markdown(preview)
+        preview_md = render_cleanup_drop_preview_markdown(preview, top_limit=top_n)
         if apply_drop_preview:
             console.print(Markdown(preview_md))
         if apply_drop_preview_out:
@@ -477,6 +483,7 @@ def memory_audit(
             console.print(f"[green]✓[/green] Wrote apply drop preview: {out}")
 
     if apply:
+        top_n = max(1, int(apply_drop_preview_top))
         auto_preview = summarize_cleanup_drop_preview(
             target_dir,
             daily_recent_days=(apply_recent_days if apply_recent_days > 0 else None),
@@ -498,7 +505,7 @@ def memory_audit(
                     ),
                     kv[0],
                 ),
-            )[:3]:
+            )[:top_n]:
                 total = int(counts.get("drop_tool_activity", 0)) + int(counts.get("drop_non_decision", 0))
                 top_files.append(f"{name}:{total}")
             console.print(
