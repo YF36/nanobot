@@ -486,6 +486,7 @@ def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path)
     assert "## Cleanup Conversion Traceability" in text
     assert "latest cleanup run" in text
     assert "## Half-Life Drop Preview (30d)" in text
+    assert "memory_update sanitize events" in text
     assert "preview risk level" in text
     assert "preview dominant driver" in text
     assert "preview top candidate files" in text
@@ -522,6 +523,21 @@ def test_render_memory_observability_dashboard_warns_on_missing_conversion_run_i
 
     text = render_memory_observability_dashboard(memory_dir)
     assert "Conversion index rows found without `run_id`" in text
+
+
+def test_render_memory_observability_dashboard_recommends_sanitize_summary(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
+    _write(memory_dir / "HISTORY.md", "")
+    _write(memory_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n")
+    _write(
+        memory_dir / "memory-update-sanitize-metrics.jsonl",
+        '{"session_key":"s1","removed_recent_topic_section_count":1,"removed_transient_status_line_count":0}\n',
+    )
+
+    text = render_memory_observability_dashboard(memory_dir)
+    assert "Review sanitize hits: `nanobot memory-audit --sanitize-metrics-summary`" in text
 
 
 def test_render_memory_observability_dashboard_shows_high_risk_preview_command(tmp_path: Path) -> None:

@@ -1395,6 +1395,7 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
     audit = run_memory_audit(memory_dir)
     routing = summarize_daily_routing_metrics(memory_dir)
     guard = summarize_memory_update_guard_metrics(memory_dir)
+    sanitize = summarize_memory_update_sanitize_metrics(memory_dir)
     conflict = summarize_memory_conflict_metrics(memory_dir)
     trace = summarize_context_trace(memory_dir)
     cleanup_stage = summarize_cleanup_stage_metrics(memory_dir)
@@ -1428,6 +1429,9 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         "",
         "## Guard / Conflict",
         f"- memory_update guard events: `{max(0, guard.total_rows - guard.parse_error_rows)}`",
+        f"- memory_update sanitize events: `{max(0, sanitize.total_rows - sanitize.parse_error_rows)}`",
+        f"- sanitize removed_recent_topic_sections(total): `{sanitize.total_recent_topic_sections_removed}`",
+        f"- sanitize removed_transient_status_lines(total): `{sanitize.total_transient_status_lines_removed}`",
         f"- memory conflict events: `{max(0, conflict.total_rows - conflict.parse_error_rows)}`",
         "",
         "## Context Trace",
@@ -1466,6 +1470,10 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         lines.append("- Inspect fallback fix hints via: `nanobot memory-audit --metrics-summary`")
     if max(0, guard.total_rows - guard.parse_error_rows) > 0:
         lines.append("- Review guard reasons: `nanobot memory-audit --guard-metrics-summary`")
+    if max(0, sanitize.total_rows - sanitize.parse_error_rows) > 0:
+        lines.append("- Review sanitize hits: `nanobot memory-audit --sanitize-metrics-summary`")
+    if sanitize.total_transient_status_lines_removed >= 20:
+        lines.append("- Transient-status sanitize volume is high; tighten consolidation prompt to reduce noisy memory_update output.")
     if max(0, conflict.total_rows - conflict.parse_error_rows) > 0:
         lines.append("- Review preference conflicts: `nanobot memory-audit --conflict-metrics-summary`")
     if trace.trace_file_exists and trace.prefix_stability_ratio < 0.85:
