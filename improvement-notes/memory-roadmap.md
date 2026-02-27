@@ -179,6 +179,12 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
   - `fallback_reason` 分布（`missing` / `empty` / `invalid_type:*` / `invalid_item:*`）
 - 后续再决定是否升级为“优先提供 `daily_sections`”或进一步收紧 schema/提示词。
 
+观测增强进展（2026-02-27）：
+
+- 已实施：daily 路由结果落盘到 `memory/daily-routing-metrics.jsonl`（每次 consolidation 一行 JSON）。
+- 字段覆盖：`structured_daily_ok`、`fallback_used`、`fallback_reason`、`structured_keys`、`structured_bullet_count`、`session_key`、`date`、`ts`。
+- 用途：支持对 `structured_daily_ok` 命中率和 `fallback_reason` 分布做离线统计，不改变主流程行为。
+
 M2 验收标准：
 
 - 当天会自动生成 daily file，且同日多次 consolidation 追加到同一文件。

@@ -314,6 +314,13 @@ async def test_consolidate_prefers_structured_daily_sections_when_present(tmp_pa
     assert "Use structured daily sections first." in daily_text
     assert "When to add TTL janitor?" in daily_text
     assert "Discussed memory migration plan." not in daily_text
+    metrics_path = mm.memory_dir / "daily-routing-metrics.jsonl"
+    metrics = [json.loads(line) for line in metrics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(metrics) == 1
+    assert metrics[0]["session_key"] == "test:daily_sections_ok"
+    assert metrics[0]["structured_daily_ok"] is True
+    assert metrics[0]["fallback_reason"] == "ok"
+    assert metrics[0]["structured_bullet_count"] == 2
 
 
 @pytest.mark.asyncio
@@ -351,6 +358,13 @@ async def test_consolidate_falls_back_when_daily_sections_invalid(tmp_path: Path
     assert result is True
     daily_text = (mm.memory_dir / "2026-02-25.md").read_text(encoding="utf-8")
     assert "Ran exec command to inspect memory files." in daily_text
+    metrics_path = mm.memory_dir / "daily-routing-metrics.jsonl"
+    metrics = [json.loads(line) for line in metrics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(metrics) == 1
+    assert metrics[0]["session_key"] == "test:daily_sections_bad"
+    assert metrics[0]["structured_daily_ok"] is False
+    assert metrics[0]["fallback_used"] is True
+    assert metrics[0]["fallback_reason"] == "invalid_type:tool_activity"
 
 
 @pytest.mark.asyncio

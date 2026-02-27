@@ -105,6 +105,7 @@ class MemoryStore:
         self.memory_dir = ensure_dir(workspace / "memory")
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "HISTORY.md"
+        self.daily_routing_metrics_file = self.memory_dir / "daily-routing-metrics.jsonl"
 
     def read_long_term(self) -> str:
         if self.memory_file.exists():
@@ -117,6 +118,35 @@ class MemoryStore:
     def append_history(self, entry: str) -> None:
         with open(self.history_file, "a", encoding="utf-8") as f:
             f.write(entry.rstrip() + "\n\n")
+
+    def _append_daily_routing_metric(
+        self,
+        *,
+        session_key: str,
+        date_str: str,
+        structured_daily_ok: bool,
+        fallback_reason: str,
+        structured_keys: list[str],
+        structured_bullet_count: int,
+    ) -> None:
+        row = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "session_key": session_key,
+            "date": date_str,
+            "structured_daily_ok": structured_daily_ok,
+            "fallback_used": (not structured_daily_ok),
+            "fallback_reason": fallback_reason,
+            "structured_keys": structured_keys,
+            "structured_bullet_count": structured_bullet_count,
+        }
+        try:
+            with open(self.daily_routing_metrics_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except Exception:
+            logger.warning(
+                "Failed to append daily routing metric",
+                file=str(self.daily_routing_metrics_file),
+            )
 
     @classmethod
     def _history_entry_date(cls, entry: str) -> str:
@@ -654,6 +684,14 @@ class MemoryStore:
                             fallback_reason=structured_daily_details["reason"],
                             structured_keys=structured_daily_details["keys"],
                             structured_bullet_count=structured_daily_details["bullet_count"],
+                        )
+                        self._append_daily_routing_metric(
+                            session_key=session.key,
+                            date_str=date_str,
+                            structured_daily_ok=structured_daily_ok,
+                            fallback_reason=str(structured_daily_details["reason"]),
+                            structured_keys=list(structured_daily_details["keys"]),
+                            structured_bullet_count=int(structured_daily_details["bullet_count"]),
                         )
                     else:
                         logger.warning(
