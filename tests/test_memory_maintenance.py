@@ -349,6 +349,7 @@ def test_summarize_cleanup_drop_preview_counts_candidates(tmp_path: Path) -> Non
     assert "drop_non_decision_candidates" in text
     assert "Risk level" in text
     assert "Dominant driver" in text
+    assert "Top candidate files" in text
     assert "Recommended Next Command" in text
 
 

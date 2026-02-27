@@ -597,6 +597,10 @@ def summarize_cleanup_drop_preview(
 
 
 def render_cleanup_drop_preview_markdown(summary: CleanupDropPreviewSummary) -> str:
+    top_files: list[str] = []
+    for name, counts in list(summary.by_file.items())[:3]:
+        total = int(counts.get("drop_tool_activity", 0)) + int(counts.get("drop_non_decision", 0))
+        top_files.append(f"{name}:{total}")
     lines = [
         "# Cleanup Drop Preview",
         "",
@@ -604,6 +608,7 @@ def render_cleanup_drop_preview_markdown(summary: CleanupDropPreviewSummary) -> 
         f"- Scoped daily files: `{summary.scoped_daily_files}` (skipped=`{summary.skipped_daily_files}`)",
         f"- Risk level: `{summary.risk_level}`",
         f"- Dominant driver: `{summary.dominant_driver}`",
+        f"- Top candidate files: `{', '.join(top_files) if top_files else 'none'}`",
         "",
         "## Candidate Counts",
         f"- drop_tool_activity_candidates: `{summary.drop_tool_activity_candidates}`",
