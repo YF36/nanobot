@@ -246,6 +246,7 @@ class ProviderConfig(Base):
     api_key: str = ""
     api_base: str | None = None
     extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
+    request_extras: dict[str, object] | None = None  # Extra kwargs passed to LiteLLM acompletion (e.g. extra_body/stream_options)
     resilience: ResilienceConfig = Field(default_factory=ResilienceConfig)
 
     @property

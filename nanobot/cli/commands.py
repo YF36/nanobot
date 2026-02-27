@@ -267,6 +267,7 @@ def _make_provider(config: Config):
         api_base=config.get_api_base(model),
         default_model=model,
         extra_headers=p.extra_headers if p else None,
+        request_extras=p.request_extras if p else None,
         provider_name=provider_name,
         langfuse_config=config.observability.langfuse,
         resilience_config=p.resilience if p else None,

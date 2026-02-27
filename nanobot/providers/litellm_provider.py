@@ -6,7 +6,7 @@ import json_repair
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, AsyncIterator
 
 import litellm
 import structlog
@@ -38,6 +38,7 @@ class LiteLLMProvider(LLMProvider):
         api_base: str | None = None,
         default_model: str = "anthropic/claude-opus-4-5",
         extra_headers: dict[str, str] | None = None,
+        request_extras: dict[str, Any] | None = None,
         provider_name: str | None = None,
         langfuse_config: Any | None = None,
         resilience_config: Any | None = None,
@@ -45,6 +46,7 @@ class LiteLLMProvider(LLMProvider):
         super().__init__(api_key, api_base)
         self.default_model = default_model
         self.extra_headers = extra_headers or {}
+        self.request_extras = request_extras or {}
         self._langfuse_enabled = False
 
         # Resilience: timeout / retry / circuit-breaker
@@ -283,6 +285,101 @@ class LiteLLMProvider(LLMProvider):
             sanitized.append(clean)
         return sanitized
 
+    @staticmethod
+    def _value(obj: Any, key: str, default: Any = None) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    @classmethod
+    def _extract_tool_calls_from_message(cls, message: Any) -> list[ToolCallRequest]:
+        tool_calls: list[ToolCallRequest] = []
+        raw_tool_calls = cls._value(message, "tool_calls") or []
+        for idx, tc in enumerate(raw_tool_calls):
+            fn = cls._value(tc, "function") or {}
+            name = cls._value(fn, "name")
+            if not isinstance(name, str) or not name:
+                continue
+            args_raw = cls._value(fn, "arguments")
+            if isinstance(args_raw, str):
+                try:
+                    arguments = json_repair.loads(args_raw)
+                except Exception:
+                    arguments = {}
+            elif isinstance(args_raw, dict):
+                arguments = args_raw
+            else:
+                arguments = {}
+            if not isinstance(arguments, dict):
+                arguments = {}
+            call_id = cls._value(tc, "id") or f"call_{idx}"
+            tool_calls.append(ToolCallRequest(
+                id=str(call_id),
+                name=name,
+                arguments=arguments,
+            ))
+        return tool_calls
+
+    @classmethod
+    def _extract_delta_text(cls, delta: Any) -> str:
+        content = cls._value(delta, "content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                text = cls._value(item, "text")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+            return "".join(parts)
+        text = cls._value(delta, "text")
+        if isinstance(text, str):
+            return text
+        return ""
+
+    @classmethod
+    def _accumulate_stream_tool_call_deltas(
+        cls,
+        delta: Any,
+        buffers: dict[str, dict[str, str]],
+    ) -> None:
+        raw_tool_calls = cls._value(delta, "tool_calls")
+        if not isinstance(raw_tool_calls, list):
+            return
+        for idx, tc in enumerate(raw_tool_calls):
+            tc_id = cls._value(tc, "id")
+            tc_index = cls._value(tc, "index")
+            key = str(tc_id or (f"idx_{tc_index}" if tc_index is not None else f"seq_{idx}"))
+            buf = buffers.setdefault(key, {"id": key, "name": "", "arguments": ""})
+            fn = cls._value(tc, "function") or {}
+            name = cls._value(fn, "name")
+            if isinstance(name, str) and name:
+                buf["name"] = name
+            args_piece = cls._value(fn, "arguments")
+            if isinstance(args_piece, str) and args_piece:
+                buf["arguments"] += args_piece
+
+    @staticmethod
+    def _tool_calls_from_stream_buffers(buffers: dict[str, dict[str, str]]) -> list[ToolCallRequest]:
+        tool_calls: list[ToolCallRequest] = []
+        for buf in buffers.values():
+            name = buf.get("name") or ""
+            if not name:
+                continue
+            args_raw = buf.get("arguments") or "{}"
+            try:
+                arguments = json_repair.loads(args_raw)
+            except Exception:
+                arguments = {}
+            if not isinstance(arguments, dict):
+                arguments = {}
+            tool_calls.append(ToolCallRequest(
+                id=buf.get("id") or f"call_{len(tool_calls)}",
+                name=name,
+                arguments=arguments,
+            ))
+        return tool_calls
+
     def _check_circuit_breaker(self) -> str | None:
         """Return an error message if the circuit is open, else None."""
         rc = self._resilience
@@ -374,6 +471,9 @@ class LiteLLMProvider(LLMProvider):
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
+        for key, value in self.request_extras.items():
+            kwargs.setdefault(key, value)
+
         # Inject Langfuse trace metadata
         langfuse_metadata = self._build_langfuse_metadata()
         if langfuse_metadata:
@@ -432,25 +532,145 @@ class LiteLLMProvider(LLMProvider):
                 content=f"Error calling LLM: {error_msg}",
                 finish_reason="error",
             )
+
+    async def stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream chat completion as provider-agnostic events."""
+        original_model = model or self.default_model
+        model = self._resolve_model(original_model)
+
+        if self._supports_cache_control(original_model):
+            messages, tools = self._apply_cache_control(messages, tools)
+
+        max_tokens = max(1, max_tokens)
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": self._sanitize_messages(self._sanitize_empty_content(messages)),
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": True,
+        }
+
+        self._apply_model_overrides(model, kwargs)
+
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+        if self.api_base:
+            kwargs["api_base"] = self.api_base
+        if self.extra_headers:
+            kwargs["extra_headers"] = self.extra_headers
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+        for key, value in self.request_extras.items():
+            kwargs.setdefault(key, value)
+        langfuse_metadata = self._build_langfuse_metadata()
+        if langfuse_metadata:
+            kwargs["metadata"] = langfuse_metadata
+
+        content_parts: list[str] = []
+        stream_tool_call_buffers: dict[str, dict[str, str]] = {}
+        final_finish_reason = "stop"
+        final_usage: dict[str, int] = {}
+        fallback_message_tool_calls: list[ToolCallRequest] = []
+
+        try:
+            cb_error = self._check_circuit_breaker()
+            if cb_error:
+                yield {
+                    "type": "done",
+                    "response": LLMResponse(content=f"Error calling LLM: {cb_error}", finish_reason="error"),
+                }
+                return
+
+            rc = self._resilience
+            if rc:
+                kwargs["request_timeout"] = rc.timeout
+                kwargs["num_retries"] = rc.max_retries
+
+            safety_timeout = (rc.timeout + 30) if rc else None
+            coro = acompletion(**kwargs)
+            if safety_timeout:
+                stream = await asyncio.wait_for(coro, timeout=safety_timeout)
+            else:
+                stream = await coro
+
+            async for chunk in stream:
+                choices = self._value(chunk, "choices") or []
+                if not choices:
+                    continue
+                choice = choices[0]
+                finish_reason = self._value(choice, "finish_reason")
+                if isinstance(finish_reason, str) and finish_reason:
+                    final_finish_reason = finish_reason
+
+                delta = self._value(choice, "delta") or {}
+                text = self._extract_delta_text(delta)
+                if text:
+                    content_parts.append(text)
+                    yield {"type": "text_delta", "delta": text}
+                self._accumulate_stream_tool_call_deltas(delta, stream_tool_call_buffers)
+
+                msg = self._value(choice, "message")
+                if msg is not None:
+                    fallback_message_tool_calls = self._extract_tool_calls_from_message(msg)
+
+                usage = self._value(chunk, "usage")
+                if usage is not None:
+                    final_usage = {
+                        "prompt_tokens": int(self._value(usage, "prompt_tokens", 0) or 0),
+                        "completion_tokens": int(self._value(usage, "completion_tokens", 0) or 0),
+                        "total_tokens": int(self._value(usage, "total_tokens", 0) or 0),
+                    }
+
+            tool_calls = self._tool_calls_from_stream_buffers(stream_tool_call_buffers)
+            if not tool_calls:
+                tool_calls = fallback_message_tool_calls
+            self._record_result(True)
+            yield {
+                "type": "done",
+                "response": LLMResponse(
+                    content="".join(content_parts) or None,
+                    tool_calls=tool_calls,
+                    finish_reason=final_finish_reason or "stop",
+                    usage=final_usage,
+                ),
+            }
+        except asyncio.TimeoutError:
+            self._record_result(False)
+            logger.error("llm_stream_timeout", model=model)
+            yield {
+                "type": "done",
+                "response": LLMResponse(
+                    content="Error calling LLM: request timed out",
+                    finish_reason="error",
+                ),
+            }
+        except Exception as e:
+            self._record_result(False)
+            error_msg = str(e)
+            if self.api_key and self.api_key in error_msg:
+                error_msg = error_msg.replace(self.api_key, mask_secret(self.api_key))
+            logger.error("llm_stream_failed", model=model, error=error_msg)
+            yield {
+                "type": "done",
+                "response": LLMResponse(
+                    content=f"Error calling LLM: {error_msg}",
+                    finish_reason="error",
+                ),
+            }
     
     def _parse_response(self, response: Any) -> LLMResponse:
         """Parse LiteLLM response into our standard format."""
         choice = response.choices[0]
         message = choice.message
-        
-        tool_calls = []
-        if hasattr(message, "tool_calls") and message.tool_calls:
-            for tc in message.tool_calls:
-                # Parse arguments from JSON string if needed
-                args = tc.function.arguments
-                if isinstance(args, str):
-                    args = json_repair.loads(args)
-                
-                tool_calls.append(ToolCallRequest(
-                    id=tc.id,
-                    name=tc.function.name,
-                    arguments=args,
-                ))
+        tool_calls = self._extract_tool_calls_from_message(message)
         
         usage = {}
         if hasattr(response, "usage") and response.usage:
