@@ -265,6 +265,15 @@ def memory_audit(
         "",
         help="Optional context trace summary markdown output path",
     ),
+    cleanup_stage_summary: bool = typer.Option(
+        False,
+        "--cleanup-stage-summary",
+        help="Show cleanup stage distribution summary",
+    ),
+    cleanup_stage_out: str = typer.Option(
+        "",
+        help="Optional cleanup stage distribution markdown output path",
+    ),
     archive_dry_run: bool = typer.Option(
         False,
         "--archive-dry-run",
@@ -303,6 +312,7 @@ def memory_audit(
         apply_conservative_cleanup,
         build_cleanup_plan,
         render_daily_archive_dry_run_markdown,
+        render_cleanup_stage_metrics_markdown,
         render_cleanup_effect_markdown,
         render_context_trace_markdown,
         render_memory_conflict_metrics_markdown,
@@ -311,6 +321,7 @@ def memory_audit(
         render_audit_markdown,
         run_memory_audit,
         summarize_daily_archive_dry_run,
+        summarize_cleanup_stage_metrics,
         summarize_context_trace,
         summarize_memory_conflict_metrics,
         summarize_memory_update_guard_metrics,
@@ -380,6 +391,17 @@ def memory_audit(
             out.write_text(trace_md, encoding="utf-8")
             console.print(f"[green]✓[/green] Wrote context trace summary: {out}")
 
+    if cleanup_stage_summary or cleanup_stage_out:
+        cleanup_stage = summarize_cleanup_stage_metrics(target_dir)
+        cleanup_stage_md = render_cleanup_stage_metrics_markdown(cleanup_stage)
+        if cleanup_stage_summary:
+            console.print(Markdown(cleanup_stage_md))
+        if cleanup_stage_out:
+            out = Path(cleanup_stage_out).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(cleanup_stage_md, encoding="utf-8")
+            console.print(f"[green]✓[/green] Wrote cleanup stage summary: {out}")
+
     if archive_dry_run or archive_out:
         dry = summarize_daily_archive_dry_run(target_dir, keep_days=archive_keep_days)
         dry_md = render_daily_archive_dry_run_markdown(dry)
@@ -443,12 +465,14 @@ def memory_observe(
     from nanobot.config.loader import load_config
     from nanobot.agent.memory_maintenance import (
         render_audit_markdown,
+        render_cleanup_stage_metrics_markdown,
         render_context_trace_markdown,
         render_memory_observability_dashboard,
         render_memory_conflict_metrics_markdown,
         render_daily_routing_metrics_markdown,
         render_memory_update_guard_metrics_markdown,
         run_memory_audit,
+        summarize_cleanup_stage_metrics,
         summarize_context_trace,
         summarize_memory_conflict_metrics,
         summarize_daily_routing_metrics,
@@ -472,6 +496,7 @@ def memory_observe(
     guard_md = render_memory_update_guard_metrics_markdown(summarize_memory_update_guard_metrics(target_dir))
     conflict_md = render_memory_conflict_metrics_markdown(summarize_memory_conflict_metrics(target_dir))
     trace_md = render_context_trace_markdown(summarize_context_trace(target_dir))
+    cleanup_stage_md = render_cleanup_stage_metrics_markdown(summarize_cleanup_stage_metrics(target_dir))
     dashboard_md = render_memory_observability_dashboard(target_dir)
 
     audit_path = output_dir / f"{date_prefix}-audit{suffix}.md"
@@ -479,12 +504,14 @@ def memory_observe(
     guard_path = output_dir / f"{date_prefix}-guard-metrics-summary{suffix}.md"
     conflict_path = output_dir / f"{date_prefix}-conflict-metrics-summary{suffix}.md"
     trace_path = output_dir / f"{date_prefix}-context-trace-summary{suffix}.md"
+    cleanup_stage_path = output_dir / f"{date_prefix}-cleanup-stage-summary{suffix}.md"
     dashboard_path = output_dir / f"{date_prefix}-observability-dashboard{suffix}.md"
     audit_path.write_text(audit_md, encoding="utf-8")
     routing_path.write_text(routing_md, encoding="utf-8")
     guard_path.write_text(guard_md, encoding="utf-8")
     conflict_path.write_text(conflict_md, encoding="utf-8")
     trace_path.write_text(trace_md, encoding="utf-8")
+    cleanup_stage_path.write_text(cleanup_stage_md, encoding="utf-8")
     dashboard_path.write_text(dashboard_md, encoding="utf-8")
 
     console.print(f"[green]✓[/green] Wrote audit: {audit_path}")
@@ -492,6 +519,7 @@ def memory_observe(
     console.print(f"[green]✓[/green] Wrote guard metrics: {guard_path}")
     console.print(f"[green]✓[/green] Wrote conflict metrics: {conflict_path}")
     console.print(f"[green]✓[/green] Wrote context trace: {trace_path}")
+    console.print(f"[green]✓[/green] Wrote cleanup stage summary: {cleanup_stage_path}")
     console.print(f"[green]✓[/green] Wrote dashboard: {dashboard_path}")
 
 

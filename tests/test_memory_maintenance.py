@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from nanobot.agent.memory_maintenance import (
     apply_conservative_cleanup,
     build_cleanup_plan,
+    render_cleanup_stage_metrics_markdown,
     render_context_trace_markdown,
     render_memory_observability_dashboard,
     render_daily_archive_dry_run_markdown,
@@ -14,6 +15,7 @@ from nanobot.agent.memory_maintenance import (
     run_memory_audit,
     summarize_context_trace,
     summarize_daily_archive_dry_run,
+    summarize_cleanup_stage_metrics,
     summarize_memory_conflict_metrics,
     summarize_memory_update_guard_metrics,
     summarize_daily_routing_metrics,
@@ -99,6 +101,10 @@ def test_apply_conservative_cleanup_trims_and_deduplicates_with_backup(tmp_path:
     assert result.backup_dir.exists()
     assert (result.backup_dir / "HISTORY.md").exists()
     assert (result.backup_dir / "2026-02-27.md").exists()
+    stage_metrics_lines = (memory_dir / "cleanup-stage-metrics.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(stage_metrics_lines) == 1
+    assert '"trim":2' in stage_metrics_lines[0]
+    assert '"dedupe":2' in stage_metrics_lines[0]
 
 
 def test_summarize_daily_routing_metrics_counts_and_reasons(tmp_path: Path) -> None:
@@ -244,6 +250,35 @@ def test_render_context_trace_markdown_handles_missing_file(tmp_path: Path) -> N
     assert "Trace file: not found" in text
 
 
+def test_summarize_cleanup_stage_metrics_counts_distribution(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(
+        memory_dir / "cleanup-stage-metrics.jsonl",
+        "\n".join(
+            [
+                '{"stage_counts":{"trim":2,"dedupe":1,"drop_tool_activity":0}}',
+                '{"stage_counts":{"trim":0,"dedupe":0,"drop_tool_activity":3}}',
+                "not-json",
+            ]
+        )
+        + "\n",
+    )
+
+    summary = summarize_cleanup_stage_metrics(memory_dir)
+    assert summary.metrics_file_exists is True
+    assert summary.total_rows == 3
+    assert summary.parse_error_rows == 1
+    assert summary.total_stage_counts["trim"] == 2
+    assert summary.total_stage_counts["dedupe"] == 1
+    assert summary.total_stage_counts["drop_tool_activity"] == 3
+    assert summary.runs_with_stage["trim"] == 1
+    assert summary.runs_with_stage["drop_tool_activity"] == 1
+    text = render_cleanup_stage_metrics_markdown(summary)
+    assert "Stage Distribution" in text
+    assert "drop_tool_activity" in text
+
+
 def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path) -> None:
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
@@ -260,6 +295,7 @@ def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path)
     assert "# Memory Observability Dashboard" in text
     assert "## Quality Snapshot" in text
     assert "## Routing" in text
+    assert "## Pruning Stage Distribution" in text
     assert "## Suggested Next Actions" in text
 
 

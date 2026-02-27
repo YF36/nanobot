@@ -331,6 +331,10 @@ M3 验收标准：
   - 统计 soft trim / hard clear / summary prune 的触发次数与占比；
   - 在 `memory-observe` 快照中增加 `pruning_stage_distribution` 摘要。
 - 价值：避免过早进入高损耗压缩，保护关键记忆。
+- 进展（2026-02-27）：
+  - 已落地最小版阶段观测：`memory-audit --apply` 追加写入 `memory/cleanup-stage-metrics.jsonl`；
+  - 已新增汇总输出：`memory-audit --cleanup-stage-summary`；
+  - 已纳入 `memory-observe` 快照：新增 `*-cleanup-stage-summary.md`，并在 dashboard 增加 `Pruning Stage Distribution` 摘要。
 
 4. 追加优先 + 转换不丢失（P2/P8）
 

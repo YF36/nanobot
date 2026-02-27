@@ -107,6 +107,15 @@ class ContextTraceSummary:
     prefix_stability_ratio: float
 
 
+@dataclass
+class CleanupStageMetricsSummary:
+    metrics_file_exists: bool
+    total_rows: int
+    parse_error_rows: int
+    total_stage_counts: dict[str, int]
+    runs_with_stage: dict[str, int]
+
+
 def _iter_daily_files(memory_dir: Path) -> list[Path]:
     items: list[Path] = []
     for p in sorted(memory_dir.glob("*.md")):
@@ -145,6 +154,12 @@ def _parse_history_entries(history_text: str) -> list[str]:
 def _backup_file(src: Path, backup_dir: Path) -> None:
     backup_dir.mkdir(parents=True, exist_ok=True)
     (backup_dir / src.name).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+def _append_jsonl(path: Path, payload: dict[str, object]) -> None:
+    line = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+    with path.open("a", encoding="utf-8") as fp:
+        fp.write(line)
 
 
 def _extract_history_dates(entries: list[str]) -> set[str]:
@@ -317,7 +332,7 @@ def apply_conservative_cleanup(
     if not touched_files and backup_dir.exists():
         backup_dir.rmdir()
 
-    return CleanupApplyResult(
+    result = CleanupApplyResult(
         memory_dir=memory_dir,
         backup_dir=backup_dir,
         history_trimmed_entries=history_trimmed_entries,
@@ -328,6 +343,28 @@ def apply_conservative_cleanup(
         scoped_daily_files=len(daily_files),
         skipped_daily_files=max(0, len(all_daily_files) - len(daily_files)),
         touched_files=sorted(touched_files),
+    )
+    _write_cleanup_stage_metrics(memory_dir, result)
+    return result
+
+
+def _write_cleanup_stage_metrics(memory_dir: Path, result: CleanupApplyResult) -> None:
+    metrics_file = memory_dir / "cleanup-stage-metrics.jsonl"
+    stage_counts = {
+        "trim": int(result.history_trimmed_entries + result.daily_trimmed_bullets),
+        "dedupe": int(result.history_deduplicated_entries + result.daily_deduplicated_bullets),
+        "drop_tool_activity": int(result.daily_dropped_tool_activity_bullets),
+    }
+    _append_jsonl(
+        metrics_file,
+        {
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "changed": bool(result.touched_files),
+            "scoped_daily_files": int(result.scoped_daily_files),
+            "skipped_daily_files": int(result.skipped_daily_files),
+            "stage_counts": stage_counts,
+            "files_touched_count": int(len(result.touched_files)),
+        },
     )
 
 
@@ -416,6 +453,99 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
         fallback_reason_counts=dict(sorted(fallback_reason_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         by_date=dict(sorted(by_date.items())),
     )
+
+
+def summarize_cleanup_stage_metrics(memory_dir: Path) -> CleanupStageMetricsSummary:
+    metrics_file = memory_dir / "cleanup-stage-metrics.jsonl"
+    if not metrics_file.exists():
+        return CleanupStageMetricsSummary(
+            metrics_file_exists=False,
+            total_rows=0,
+            parse_error_rows=0,
+            total_stage_counts={},
+            runs_with_stage={},
+        )
+
+    total_rows = 0
+    parse_error_rows = 0
+    total_stage_counter: Counter[str] = Counter()
+    runs_with_stage_counter: Counter[str] = Counter()
+
+    for raw_line in metrics_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        total_rows += 1
+        try:
+            item = json.loads(line)
+        except Exception:
+            parse_error_rows += 1
+            continue
+        if not isinstance(item, dict):
+            parse_error_rows += 1
+            continue
+
+        stage_counts = item.get("stage_counts")
+        if not isinstance(stage_counts, dict):
+            parse_error_rows += 1
+            continue
+
+        for stage in ("trim", "dedupe", "drop_tool_activity"):
+            raw = stage_counts.get(stage, 0)
+            if not isinstance(raw, int):
+                parse_error_rows += 1
+                continue
+            value = max(0, int(raw))
+            total_stage_counter[stage] += value
+            if value > 0:
+                runs_with_stage_counter[stage] += 1
+
+    return CleanupStageMetricsSummary(
+        metrics_file_exists=True,
+        total_rows=total_rows,
+        parse_error_rows=parse_error_rows,
+        total_stage_counts=dict(sorted(total_stage_counter.items())),
+        runs_with_stage=dict(sorted(runs_with_stage_counter.items())),
+    )
+
+
+def render_cleanup_stage_metrics_markdown(summary: CleanupStageMetricsSummary) -> str:
+    lines = [
+        "# Cleanup Stage Metrics Summary",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+    ]
+    if not summary.metrics_file_exists:
+        lines.extend(["- Metrics file: not found (`cleanup-stage-metrics.jsonl`)", ""])
+        return "\n".join(lines)
+
+    valid = max(0, summary.total_rows - summary.parse_error_rows)
+    lines.extend(
+        [
+            "- Metrics file: found (`cleanup-stage-metrics.jsonl`)",
+            "",
+            "## Overall",
+            f"- Rows: `{summary.total_rows}` (valid=`{valid}`, parse_errors=`{summary.parse_error_rows}`)",
+            "",
+            "## Stage Distribution (Total Events)",
+        ]
+    )
+    if not summary.total_stage_counts:
+        lines.append("- none")
+    else:
+        total_events = sum(summary.total_stage_counts.values())
+        for stage, count in summary.total_stage_counts.items():
+            ratio = (count / total_events * 100.0) if total_events > 0 else 0.0
+            lines.append(f"- {stage}: `{count}` ({ratio:.1f}%)")
+    lines.extend(["", "## Stage Activation (Runs With Stage>0)"])
+    if not summary.runs_with_stage:
+        lines.append("- none")
+    else:
+        for stage, runs in summary.runs_with_stage.items():
+            ratio = (runs / valid * 100.0) if valid > 0 else 0.0
+            lines.append(f"- {stage}: `{runs}` runs ({ratio:.1f}% of valid runs)")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def render_daily_routing_metrics_markdown(summary: DailyRoutingMetricsSummary) -> str:
@@ -780,9 +910,12 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
     guard = summarize_memory_update_guard_metrics(memory_dir)
     conflict = summarize_memory_conflict_metrics(memory_dir)
     trace = summarize_context_trace(memory_dir)
+    cleanup_stage = summarize_cleanup_stage_metrics(memory_dir)
 
     routing_valid = max(0, routing.total_rows - routing.parse_error_rows)
     routing_ok_rate = (routing.structured_ok_count / routing_valid * 100.0) if routing_valid else 0.0
+    cleanup_valid = max(0, cleanup_stage.total_rows - cleanup_stage.parse_error_rows)
+    cleanup_total_events = sum(cleanup_stage.total_stage_counts.values())
 
     lines = [
         "# Memory Observability Dashboard",
@@ -807,6 +940,14 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         f"- prefix stability ratio: `{trace.prefix_stability_ratio:.2f}`",
         f"- trace rows(valid): `{max(0, trace.total_rows - trace.parse_error_rows)}`",
         "",
+        "## Pruning Stage Distribution",
+        f"- cleanup rows(valid): `{cleanup_valid}`",
+        f"- cleanup total stage events: `{cleanup_total_events}`",
+        (
+            f"- top stage mix: "
+            f"`{', '.join([f'{k}:{v}' for k, v in sorted(cleanup_stage.total_stage_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:3]]) if cleanup_stage.total_stage_counts else 'none'}`"
+        ),
+        "",
         "## Suggested Next Actions",
     ]
 
@@ -820,6 +961,12 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         lines.append("- Review preference conflicts: `nanobot memory-audit --conflict-metrics-summary`")
     if trace.trace_file_exists and trace.prefix_stability_ratio < 0.85:
         lines.append("- Prefix stability below target (0.85): inspect dynamic prompt mutations / tool catalog drift")
+    if cleanup_stage.metrics_file_exists and cleanup_valid == 0:
+        lines.append("- Cleanup stage metrics only has parse errors: inspect `cleanup-stage-metrics.jsonl` writer/format.")
+    if cleanup_stage.total_stage_counts:
+        tool_drop = cleanup_stage.total_stage_counts.get("drop_tool_activity", 0)
+        if cleanup_total_events > 0 and (tool_drop / cleanup_total_events) > 0.5:
+            lines.append("- `drop_tool_activity` dominates cleanup events; verify retention window is not too aggressive.")
     if lines[-1] == "## Suggested Next Actions":
         lines.append("- No immediate action required; continue observing daily snapshots.")
 
