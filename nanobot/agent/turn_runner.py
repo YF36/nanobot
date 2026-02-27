@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import time
 import uuid
@@ -230,13 +231,19 @@ class TurnRunner:
                 await on_progress(chunk)
 
         try:
-            async for event in stream_method(
+            stream_obj = stream_method(
                 messages=messages,
                 tools=self.tools.get_definitions(),
                 model=self.model,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-            ):
+            )
+            if inspect.isawaitable(stream_obj):
+                stream_obj = await stream_obj
+            if not hasattr(stream_obj, "__aiter__"):
+                raise NotImplementedError("stream_chat did not return an async iterator")
+
+            async for event in stream_obj:
                 event_type = event.get("type")
                 if event_type == "text_delta":
                     delta = event.get("delta")

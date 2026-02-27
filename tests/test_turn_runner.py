@@ -11,6 +11,7 @@ from nanobot.agent.turn_events import (
     TURN_EVENT_KIND_TURN_START,
 )
 from nanobot.agent.turn_runner import TurnRunner, _session_tool_details
+from nanobot.providers.base import LLMProvider
 
 
 def test_session_tool_details_wraps_compact_data_with_version() -> None:
@@ -207,6 +208,25 @@ class _StreamingProvider:
                 finish_reason="stop",
             ),
         }
+
+
+class _NoStreamingProvider(LLMProvider):
+    def __init__(self):
+        super().__init__(api_key=None, api_base=None)
+        self.chat_calls = 0
+
+    async def chat(self, **kwargs):
+        self.chat_calls += 1
+        return SimpleNamespace(
+            has_tool_calls=False,
+            content="non-stream response",
+            tool_calls=[],
+            reasoning_content=None,
+            finish_reason="stop",
+        )
+
+    def get_default_model(self) -> str:
+        return "test-model"
 
 
 @pytest.mark.asyncio
@@ -556,3 +576,37 @@ async def test_turn_runner_stream_progress_respects_flush_settings() -> None:
 
     assert final_content == "Hello stream"
     assert progress == ["Hello stream"]
+
+
+@pytest.mark.asyncio
+async def test_turn_runner_falls_back_when_provider_has_base_stream_chat() -> None:
+    provider = _NoStreamingProvider()
+    runner = TurnRunner(
+        provider=provider,
+        tools=_FakeTools(),
+        context_builder=_FakeContext(),
+        model="test",
+        temperature=0.0,
+        max_tokens=256,
+        max_iterations=2,
+        guard_loop_messages=lambda m, i: (m, i),
+        strip_think=lambda s: s,
+        tool_hint=lambda calls: f"Using {len(calls)} tool(s)",
+    )
+
+    progress: list[str] = []
+
+    async def _on_progress(content: str, *, tool_hint: bool = False) -> None:
+        if not tool_hint:
+            progress.append(content)
+
+    final_content, tools_used, messages = await runner.run(
+        [{"role": "user", "content": "hello"}],
+        on_progress=_on_progress,
+    )
+
+    assert provider.chat_calls == 1
+    assert final_content == "non-stream response"
+    assert tools_used == []
+    assert messages[-1]["content"] == "non-stream response"
+    assert progress == []
