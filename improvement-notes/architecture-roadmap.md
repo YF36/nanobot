@@ -201,6 +201,104 @@
 
 ## nanobot 当前代码中值得重构的点（重点）
 
+## 从 `memory3.md` 可迁移到架构线的原则（Runtime Safety / Interruptibility）
+
+说明：这部分是从 `memory3.md` 中“非记忆管理”的内容提炼而来，适合放在架构路线图，而不是 `memory-roadmap.md`。
+
+### A1. 系统级不信任（Distrust by Default）
+
+核心观点：
+
+- 不依赖 LLM 自觉停止或自我纠偏。
+- 防护机制应在 LLM 推理循环之外、规则化、可审计。
+
+建议落地（nanobot）：
+
+1. 循环检测分层（同工具同参数重复、无进展轮询、工具 ping-pong）。
+2. 触发阈值分级（warn -> block），并记录指标（触发次数、触发类型）。
+3. 错误重载策略：连续同类错误时自动触发技能/工具提示补充。
+
+与现状关系：
+
+- 当前已有 retry/guard 基础，但“循环检测 + 分级熔断”仍可增强。
+
+### A2. 可中断性优先（Interruptibility）
+
+核心观点：
+
+- 用户必须能随时改变方向；中断后状态要一致可恢复。
+
+建议落地（按优先级）：
+
+1. Steering（软中断）：
+  - 工具执行后检查中断请求；
+  - 保留已完成结果，未执行工具标记 skipped。
+2. Abort（硬中断）：
+  - 工具层统一支持 `timeout/cancel`；
+  - 避免长命令“卡死 turn”。
+3. Session Reset（最硬）：
+  - 不可恢复时重建 session，但保留可审计轨迹。
+
+与现状关系：
+
+- nanobot 的 steer 能力已存在，但可进一步做“粒度分层 + 统一状态语义”。
+
+### A3. 工具执行约束（Timeout / Cancel / Truncate）
+
+核心观点：
+
+- 工具执行不可预测（时长、输出体积、网络波动），需要统一的执行约束。
+
+建议落地：
+
+1. 统一 timeout 配置与默认值（按工具类型）。
+2. 统一 cancel 信号传递（exec/web/file 操作可中断）。
+3. 统一截断与落盘策略（大输出保留路径，消息只给摘要）。
+
+与现状关系：
+
+- 当前部分工具已有安全/截断能力，建议提升到统一策略层。
+
+### A4. 前缀稳定与 Append-Only 约束（运行时视角）
+
+核心观点：
+
+- 动态改 system prompt / 中间插入消息会提高缓存失效率，增加成本和延迟。
+
+建议落地：
+
+1. 固定系统前缀，动态信息尽量后置（tool_result 或 runtime context）。
+2. 历史变换遵循 append-only 语义（允许压缩/占位替换，不做中间重排）。
+3. 建立可观测指标（prefix hash / stability ratio / stage trace）。
+
+与现状关系：
+
+- `memory` 线已开始 context trace 观测；架构线应把它升级为通用 runtime 规范。
+
+### A5. 可观测优先（Observable First）
+
+核心观点：
+
+- 无指标就无法优化，尤其是中断、循环、压缩、缓存稳定性这类系统问题。
+
+建议最小指标集（架构层）：
+
+- `prefix_stability_ratio`
+- `context_utilization`（调用前 token 规模）
+- `loop_detection_blocks`
+- `interrupt_handled_count`（steer/abort/reset）
+- `pruning_stage_distribution`
+
+### A6. 文档边界（避免和 memory 路线重叠）
+
+放在 `architecture-roadmap.md`：
+
+- 系统级不信任、防循环、可中断性、工具执行约束、runtime 可观测性。
+
+放在 `memory-roadmap.md`：
+
+- `MEMORY/HISTORY/daily` 分层、写入准入、记忆清理、记忆归档、记忆专属指标。
+
 ## A. `AgentLoop` 过重（首要重构）
 
 症状：
