@@ -347,6 +347,7 @@ def test_summarize_cleanup_drop_preview_counts_candidates(tmp_path: Path) -> Non
     assert "Cleanup Drop Preview" in text
     assert "drop_non_decision_candidates" in text
     assert "Risk level" in text
+    assert "Recommended Next Command" in text
 
 
 def test_summarize_cleanup_drop_preview_reports_high_risk(tmp_path: Path) -> None:

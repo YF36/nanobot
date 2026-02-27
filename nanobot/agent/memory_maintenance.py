@@ -606,6 +606,19 @@ def render_cleanup_drop_preview_markdown(summary: CleanupDropPreviewSummary) -> 
             lines.append(
                 f"- {name}: tool_activity=`{counts.get('drop_tool_activity', 0)}`, non_decision=`{counts.get('drop_non_decision', 0)}`"
             )
+    lines.extend(["", "## Recommended Next Command"])
+    if summary.risk_level == "high":
+        lines.append(
+            "- `nanobot memory-audit --apply-drop-preview --apply-recent-days 7 --drop-tool-activity-older-than-days 30 --drop-non-decision-older-than-days 30`"
+        )
+    elif summary.risk_level == "medium":
+        lines.append(
+            "- `nanobot memory-audit --apply --apply-recent-days 7 --drop-tool-activity-older-than-days 30 --drop-non-decision-older-than-days 30 --apply-abort-on-high-risk`"
+        )
+    else:
+        lines.append(
+            "- `nanobot memory-audit --apply --drop-tool-activity-older-than-days 30 --drop-non-decision-older-than-days 30 --apply-abort-on-high-risk`"
+        )
     lines.append("")
     return "\n".join(lines)
 
