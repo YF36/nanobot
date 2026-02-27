@@ -200,6 +200,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已实施：`nanobot memory-audit --guard-metrics-out <path>` 可导出 guard 指标汇总 Markdown。
 - 已实施：dashboard 纳入 sanitize 指标摘要（事件数 + 清洗量），并在命中时给出 `--sanitize-metrics-summary` 排查建议。
 - 已实施：sanitize 指标汇总增加 `Suggested Fixes`（按 recent-topic / transient-status 命中给 prompt/规则收敛建议）。
+- 已增强：sanitize 指标汇总增加 `Top Sanitized Sections`（高频被清洗 section 样本），便于定向优化 consolidation 输出。
 - 已实施：guard 指标汇总内置 `reason -> fix hint` 建议（含 `unstructured_candidate` / `date_line_overflow`），便于快速回收写入质量问题。
 - 已实施：`memory` 偏好冲突指标落盘：`memory/memory-conflict-metrics.jsonl`（当前覆盖 language / communication_style）。
 - 已实施：`nanobot memory-audit --conflict-metrics-summary` 汇总冲突 key 分布与高频会话。

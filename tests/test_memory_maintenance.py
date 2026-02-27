@@ -205,9 +205,9 @@ def test_summarize_memory_update_sanitize_metrics_counts(tmp_path: Path) -> None
         memory_dir / "memory-update-sanitize-metrics.jsonl",
         "\n".join(
             [
-                '{"session_key":"s1","removed_recent_topic_section_count":2,"removed_transient_status_line_count":1}',
-                '{"session_key":"s1","removed_recent_topic_section_count":1,"removed_transient_status_line_count":0}',
-                '{"session_key":"s2","removed_recent_topic_section_count":0,"removed_transient_status_line_count":3}',
+                '{"session_key":"s1","removed_recent_topic_section_count":2,"removed_transient_status_line_count":1,"removed_recent_topic_sections":["今天讨论的主题"],"removed_transient_status_sections":["System Technical Issues"]}',
+                '{"session_key":"s1","removed_recent_topic_section_count":1,"removed_transient_status_line_count":0,"removed_recent_topic_sections":["今天讨论的主题"]}',
+                '{"session_key":"s2","removed_recent_topic_section_count":0,"removed_transient_status_line_count":3,"removed_transient_status_sections":["System Technical Issues"]}',
                 "not-json",
             ]
         )
@@ -221,11 +221,14 @@ def test_summarize_memory_update_sanitize_metrics_counts(tmp_path: Path) -> None
     assert summary.total_transient_status_lines_removed == 4
     assert summary.by_session["s1"] == 2
     assert summary.by_session["s2"] == 1
+    assert summary.top_recent_topic_sections["今天讨论的主题"] == 2
+    assert summary.top_transient_status_sections["System Technical Issues"] == 2
     text = render_memory_update_sanitize_metrics_markdown(summary)
     assert "Memory Update Sanitize Metrics Summary" in text
     assert "removed_recent_topic_sections(total)" in text
     assert "## Suggested Fixes" in text
     assert "Recent-topic sanitize hits are non-zero" in text
+    assert "## Top Sanitized Sections" in text
 
 
 def test_render_memory_update_sanitize_metrics_markdown_handles_missing_file(tmp_path: Path) -> None:

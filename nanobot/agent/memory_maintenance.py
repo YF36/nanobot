@@ -97,6 +97,8 @@ class MemoryUpdateSanitizeMetricsSummary:
     total_recent_topic_sections_removed: int
     total_transient_status_lines_removed: int
     by_session: dict[str, int]
+    top_recent_topic_sections: dict[str, int]
+    top_transient_status_sections: dict[str, int]
 
 
 @dataclass
@@ -1107,6 +1109,8 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
             total_recent_topic_sections_removed=0,
             total_transient_status_lines_removed=0,
             by_session={},
+            top_recent_topic_sections={},
+            top_transient_status_sections={},
         )
 
     total_rows = 0
@@ -1114,6 +1118,8 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
     recent_topic_removed = 0
     transient_lines_removed = 0
     session_counter: Counter[str] = Counter()
+    recent_section_counter: Counter[str] = Counter()
+    transient_section_counter: Counter[str] = Counter()
 
     for raw_line in metrics_file.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
@@ -1136,6 +1142,16 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
             continue
         recent_topic_removed += max(0, int(rcount))
         transient_lines_removed += max(0, int(tcount))
+        raw_recent_sections = item.get("removed_recent_topic_sections")
+        raw_transient_sections = item.get("removed_transient_status_sections")
+        if isinstance(raw_recent_sections, list):
+            for sec in raw_recent_sections:
+                if isinstance(sec, str) and sec.strip():
+                    recent_section_counter[sec.strip()] += 1
+        if isinstance(raw_transient_sections, list):
+            for sec in raw_transient_sections:
+                if isinstance(sec, str) and sec.strip():
+                    transient_section_counter[sec.strip()] += 1
         session_counter[session_key] += 1
 
     return MemoryUpdateSanitizeMetricsSummary(
@@ -1145,6 +1161,8 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
         total_recent_topic_sections_removed=recent_topic_removed,
         total_transient_status_lines_removed=transient_lines_removed,
         by_session=dict(sorted(session_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        top_recent_topic_sections=dict(sorted(recent_section_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        top_transient_status_sections=dict(sorted(transient_section_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
     )
 
 
@@ -1185,6 +1203,20 @@ def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitize
         and summary.total_transient_status_lines_removed == 0
     ):
         lines.append("- No sanitize-specific prompt adjustment needed based on current metrics.")
+    lines.extend(["", "## Top Sanitized Sections"])
+    if not summary.top_recent_topic_sections and not summary.top_transient_status_sections:
+        lines.append("- none")
+    else:
+        if summary.top_recent_topic_sections:
+            lines.append(
+                "- recent_topic: "
+                + ", ".join([f"`{k}`:`{v}`" for k, v in list(summary.top_recent_topic_sections.items())[:3]])
+            )
+        if summary.top_transient_status_sections:
+            lines.append(
+                "- transient_status: "
+                + ", ".join([f"`{k}`:`{v}`" for k, v in list(summary.top_transient_status_sections.items())[:3]])
+            )
     lines.extend(["", "## Sessions (Top)"])
     if not summary.by_session:
         lines.append("- none")
