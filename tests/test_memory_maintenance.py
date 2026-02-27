@@ -4,12 +4,14 @@ from datetime import datetime, timedelta
 from nanobot.agent.memory_maintenance import (
     apply_conservative_cleanup,
     build_cleanup_plan,
+    render_context_trace_markdown,
     render_daily_archive_dry_run_markdown,
     render_cleanup_effect_markdown,
     render_memory_conflict_metrics_markdown,
     render_daily_routing_metrics_markdown,
     render_memory_update_guard_metrics_markdown,
     run_memory_audit,
+    summarize_context_trace,
     summarize_daily_archive_dry_run,
     summarize_memory_conflict_metrics,
     summarize_memory_update_guard_metrics,
@@ -202,6 +204,42 @@ def test_render_memory_conflict_metrics_markdown_handles_missing_file(tmp_path: 
     summary = summarize_memory_conflict_metrics(memory_dir)
     text = render_memory_conflict_metrics_markdown(summary)
     assert "Metrics file: not found" in text
+
+
+def test_summarize_context_trace_reports_stage_counts_and_stability(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(
+        memory_dir / "context-trace.jsonl",
+        "\n".join(
+            [
+                '{"stage":"before_compact","estimated_tokens":100,"prefix_hash":"a1"}',
+                '{"stage":"after_compact","estimated_tokens":80,"prefix_hash":"a1"}',
+                '{"stage":"before_send","estimated_tokens":120,"prefix_hash":"a1"}',
+                '{"stage":"before_send","estimated_tokens":110,"prefix_hash":"a1"}',
+                '{"stage":"before_send","estimated_tokens":130,"prefix_hash":"b2"}',
+                "not-json",
+            ]
+        )
+        + "\n",
+    )
+    summary = summarize_context_trace(memory_dir)
+    assert summary.trace_file_exists is True
+    assert summary.total_rows == 6
+    assert summary.parse_error_rows == 1
+    assert summary.by_stage["before_send"] == 3
+    assert summary.avg_tokens_by_stage["before_send"] == 120
+    assert 0.0 <= summary.prefix_stability_ratio <= 1.0
+    text = render_context_trace_markdown(summary)
+    assert "Prefix stability ratio" in text
+
+
+def test_render_context_trace_markdown_handles_missing_file(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    summary = summarize_context_trace(memory_dir)
+    text = render_context_trace_markdown(summary)
+    assert "Trace file: not found" in text
 
 
 def test_apply_conservative_cleanup_scopes_recent_daily_files(tmp_path: Path) -> None:

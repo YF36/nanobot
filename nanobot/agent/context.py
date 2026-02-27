@@ -1,10 +1,12 @@
 """Context builder for assembling agent prompts."""
 
 import base64
+import hashlib
 import io
 import json
 import mimetypes
 import platform
+from datetime import datetime
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -71,6 +73,7 @@ class ContextBuilder:
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
+        self._context_trace_file = workspace / "memory" / "context-trace.jsonl"
         self._max_context_tokens = max_context_tokens or self._DEFAULT_MAX_CONTEXT_TOKENS
         self._tool_catalog_compact_threshold = (
             tool_catalog_compact_threshold
@@ -414,6 +417,31 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
 
         return self._drop_leading_non_user(merged)
 
+    def _append_context_trace(
+        self,
+        *,
+        stage: str,
+        message_count: int,
+        estimated_tokens: int,
+        prefix_hash: str,
+        includes_recent_daily: bool,
+    ) -> None:
+        row = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "stage": stage,
+            "message_count": message_count,
+            "estimated_tokens": estimated_tokens,
+            "prefix_hash": prefix_hash,
+            "includes_recent_daily": includes_recent_daily,
+        }
+        try:
+            self._context_trace_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._context_trace_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except Exception:
+            # Observability only; never affect main flow.
+            return
+
     def build_messages(
         self,
         history: list[dict[str, Any]],
@@ -462,6 +490,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                     ]
                     if p
                 )
+        includes_recent_daily = "Recent Daily Memory (On-Demand)" in (dynamic_prompt or "")
         tool_runtime_prompt = self._build_tool_runtime_prompt(tool_definitions)
         if tool_runtime_prompt:
             dynamic_prompt = "\n\n---\n\n".join(p for p in [dynamic_prompt, tool_runtime_prompt] if p)
@@ -486,15 +515,32 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
 
         # Token budget uses full combined prompt
         full_system = "\n\n---\n\n".join(p for p in [static_prompt, dynamic_prompt] if p)
+        prefix_hash = hashlib.sha256(full_system.encode("utf-8")).hexdigest()[:16] if full_system else ""
         system_tokens = count_tokens(full_system)
         runtime_tokens = self._estimate_message_tokens(runtime_context_msg) if runtime_context_msg else 0
         current_tokens = self._estimate_message_tokens({"content": user_content})
         # Reserve 4096 tokens for the LLM reply
         budget_tokens = self._max_context_tokens - system_tokens - runtime_tokens - current_tokens - 4096
         budget_tokens = max(budget_tokens, 0)
+        pre_compact_tokens = sum(self._estimate_message_tokens(m) for m in history)
+        self._append_context_trace(
+            stage="before_compact",
+            message_count=len(history),
+            estimated_tokens=pre_compact_tokens,
+            prefix_hash=prefix_hash,
+            includes_recent_daily=includes_recent_daily,
+        )
 
         # History (compact then trim to fit budget)
         compacted = self._compact_history(history)
+        post_compact_tokens = sum(self._estimate_message_tokens(m) for m in compacted)
+        self._append_context_trace(
+            stage="after_compact",
+            message_count=len(compacted),
+            estimated_tokens=post_compact_tokens,
+            prefix_hash=prefix_hash,
+            includes_recent_daily=includes_recent_daily,
+        )
         trimmed = self._trim_history(compacted, budget_tokens)
 
         # Drop trailing user message in history if it was never answered —
@@ -509,6 +555,14 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
 
         # Current message (with optional image attachments)
         messages.append({"role": "user", "content": user_content})
+        total_tokens = sum(self._estimate_message_tokens(m) for m in messages)
+        self._append_context_trace(
+            stage="before_send",
+            message_count=len(messages),
+            estimated_tokens=total_tokens,
+            prefix_hash=prefix_hash,
+            includes_recent_daily=includes_recent_daily,
+        )
 
         return messages
 

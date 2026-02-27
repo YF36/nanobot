@@ -96,6 +96,16 @@ class MemoryConflictMetricsSummary:
     by_session: dict[str, int]
 
 
+@dataclass
+class ContextTraceSummary:
+    trace_file_exists: bool
+    total_rows: int
+    parse_error_rows: int
+    by_stage: dict[str, int]
+    avg_tokens_by_stage: dict[str, int]
+    prefix_stability_ratio: float
+
+
 def _iter_daily_files(memory_dir: Path) -> list[Path]:
     items: list[Path] = []
     for p in sorted(memory_dir.glob("*.md")):
@@ -634,6 +644,108 @@ def render_memory_conflict_metrics_markdown(summary: MemoryConflictMetricsSummar
             if idx >= 10:
                 break
             lines.append(f"- {session_key}: `{count}`")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def summarize_context_trace(memory_dir: Path) -> ContextTraceSummary:
+    trace_file = memory_dir / "context-trace.jsonl"
+    if not trace_file.exists():
+        return ContextTraceSummary(
+            trace_file_exists=False,
+            total_rows=0,
+            parse_error_rows=0,
+            by_stage={},
+            avg_tokens_by_stage={},
+            prefix_stability_ratio=0.0,
+        )
+
+    total_rows = 0
+    parse_error_rows = 0
+    stage_counter: Counter[str] = Counter()
+    stage_tokens_sum: Counter[str] = Counter()
+    stage_tokens_count: Counter[str] = Counter()
+    before_send_prefixes: list[str] = []
+
+    for raw_line in trace_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        total_rows += 1
+        try:
+            item = json.loads(line)
+        except Exception:
+            parse_error_rows += 1
+            continue
+        if not isinstance(item, dict):
+            parse_error_rows += 1
+            continue
+        stage = str(item.get("stage") or "unknown")
+        stage_counter[stage] += 1
+        est = item.get("estimated_tokens")
+        if isinstance(est, int):
+            stage_tokens_sum[stage] += est
+            stage_tokens_count[stage] += 1
+        if stage == "before_send":
+            prefix = str(item.get("prefix_hash") or "")
+            if prefix:
+                before_send_prefixes.append(prefix)
+
+    avg_tokens_by_stage: dict[str, int] = {}
+    for stage, count in stage_tokens_count.items():
+        if count > 0:
+            avg_tokens_by_stage[stage] = int(stage_tokens_sum[stage] / count)
+
+    stable_pairs = 0
+    total_pairs = max(0, len(before_send_prefixes) - 1)
+    for i in range(total_pairs):
+        if before_send_prefixes[i] == before_send_prefixes[i + 1]:
+            stable_pairs += 1
+    ratio = (stable_pairs / total_pairs) if total_pairs > 0 else 0.0
+
+    return ContextTraceSummary(
+        trace_file_exists=True,
+        total_rows=total_rows,
+        parse_error_rows=parse_error_rows,
+        by_stage=dict(sorted(stage_counter.items())),
+        avg_tokens_by_stage=dict(sorted(avg_tokens_by_stage.items())),
+        prefix_stability_ratio=ratio,
+    )
+
+
+def render_context_trace_markdown(summary: ContextTraceSummary) -> str:
+    lines = [
+        "# Context Trace Summary",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+    ]
+    if not summary.trace_file_exists:
+        lines.extend(["- Trace file: not found (`context-trace.jsonl`)", ""])
+        return "\n".join(lines)
+
+    valid = max(0, summary.total_rows - summary.parse_error_rows)
+    lines.extend(
+        [
+            "- Trace file: found (`context-trace.jsonl`)",
+            "",
+            "## Overall",
+            f"- Rows: `{summary.total_rows}` (valid=`{valid}`, parse_errors=`{summary.parse_error_rows}`)",
+            f"- Prefix stability ratio (before_send): `{summary.prefix_stability_ratio:.2f}`",
+            "",
+            "## Stage Counts",
+        ]
+    )
+    if not summary.by_stage:
+        lines.append("- none")
+    else:
+        for stage, count in summary.by_stage.items():
+            lines.append(f"- {stage}: `{count}`")
+    lines.extend(["", "## Avg Tokens By Stage"])
+    if not summary.avg_tokens_by_stage:
+        lines.append("- none")
+    else:
+        for stage, avg in summary.avg_tokens_by_stage.items():
+            lines.append(f"- {stage}: `{avg}`")
     lines.append("")
     return "\n".join(lines)
 

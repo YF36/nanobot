@@ -298,6 +298,63 @@ M3 验收标准：
 - 归档后关键信息不丢失（抽样验证）。
 - 若引入 TTL：过期清理可回放、可审计（备份/归档留痕）。
 
+### M4 候选（吸收 `memory3.md` 的可执行原则）
+
+基于 `memory3.md`，对 nanobot 当前实现最值得借鉴、且可低风险落地的点如下（按建议优先级）：
+
+1. 前缀稳定性指标化（P1）
+
+- 目标：把“前缀一致性”从原则变成可观测指标。
+- 建议落地：
+  - 在每次 provider 调用前记录 `prefix_hash` / `prompt_tokens` / `history_tokens`；
+  - 计算并输出 `prefix_stability_ratio`（连续调用前缀不变比例）。
+- 价值：帮助判断是否存在“无意动态 system prompt”或序列化抖动导致的 cache miss。
+  - 进展（2026-02-27）：已落地最小实现（`memory/context-trace.jsonl` + `memory-audit --context-trace-summary`）。
+
+2. 轻量 Context Trace（P9）
+
+- 目标：对“上下文在每轮如何演化”形成可回放证据。
+- 建议落地（JSONL）：
+  - `stage`（before_compact / after_compact / before_send）
+  - `message_count`
+  - `estimated_tokens`
+  - `prefix_hash`
+  - `timestamp`
+- 价值：为后续 pruning 阈值调优提供客观依据，而不是体感调参。
+  - 进展（2026-02-27）：`memory-observe` 已纳入 context trace 快照导出。
+
+3. 渐进降级的阶段分布观测（P4）
+
+- 目标：验证“多数情况停留在低损耗阶段”的策略是否成立。
+- 建议落地：
+  - 统计 soft trim / hard clear / summary prune 的触发次数与占比；
+  - 在 `memory-observe` 快照中增加 `pruning_stage_distribution` 摘要。
+- 价值：避免过早进入高损耗压缩，保护关键记忆。
+
+4. 追加优先 + 转换不丢失（P2/P8）
+
+- 目标：继续坚持 append-only 语义，同时保证可回溯。
+- 建议落地：
+  - 对被清理/归档内容保留结构化索引（日期、section、来源文件）；
+  - 归档策略先 dry-run，再小流量 apply，始终保留回滚备份。
+- 价值：控制噪声的同时避免“静默丢记忆”。
+
+5. 信息半衰期驱动的保留策略（C6）
+
+- 目标：把“信息类型差异”显式化到保留规则中。
+- 建议落地：
+  - `Decisions` 默认保留更久；
+  - `Tool Activity` 更短窗口，且默认不注入 recall；
+  - 临时错误状态仅在观测文件保留，不进入长期记忆。
+- 价值：减少“留垃圾、丢决策”的风险。
+
+6. 约束优先级裁决（冲突处理模板）
+
+- 目标：当策略冲突时有统一裁决标准，减少临时拍板。
+- 建议采用：
+  - `prefix稳定性 > append-only > 可中断性/防循环 > 渐进降级 > 按需加载 > 其他`
+- 价值：后续设计评审可复用，不随实现者变化。
+
 ### M3 辅助工具现状（2026-02-27）
 
 - 已有只读体检命令：`nanobot memory-audit`

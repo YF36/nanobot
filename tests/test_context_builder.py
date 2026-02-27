@@ -306,6 +306,21 @@ def test_build_messages_recent_recall_can_include_tool_activity_when_asked(tmp_p
     assert "run pytest" in system_text
 
 
+def test_build_messages_writes_context_trace_rows(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    history = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "reply"},
+    ]
+    builder.build_messages(history=history, current_message="我们之前聊过什么？")
+    trace_file = tmp_path / "memory" / "context-trace.jsonl"
+    assert trace_file.exists()
+    rows = [json.loads(line) for line in trace_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+    stages = [r["stage"] for r in rows]
+    assert stages == ["before_compact", "after_compact", "before_send"]
+    assert all("prefix_hash" in r for r in rows)
+
+
 def test_build_messages_moves_session_metadata_out_of_system_prompt(tmp_path) -> None:
     builder = _builder(tmp_path)
     builder.build_system_prompt_parts = lambda skill_names=None: ("STATIC", "DYNAMIC")  # type: ignore[method-assign]

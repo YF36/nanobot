@@ -256,6 +256,15 @@ def memory_audit(
         "",
         help="Optional memory conflict metrics markdown output path",
     ),
+    context_trace_summary: bool = typer.Option(
+        False,
+        "--context-trace-summary",
+        help="Show context trace summary",
+    ),
+    context_trace_out: str = typer.Option(
+        "",
+        help="Optional context trace summary markdown output path",
+    ),
     archive_dry_run: bool = typer.Option(
         False,
         "--archive-dry-run",
@@ -290,12 +299,14 @@ def memory_audit(
         build_cleanup_plan,
         render_daily_archive_dry_run_markdown,
         render_cleanup_effect_markdown,
+        render_context_trace_markdown,
         render_memory_conflict_metrics_markdown,
         render_daily_routing_metrics_markdown,
         render_memory_update_guard_metrics_markdown,
         render_audit_markdown,
         run_memory_audit,
         summarize_daily_archive_dry_run,
+        summarize_context_trace,
         summarize_memory_conflict_metrics,
         summarize_memory_update_guard_metrics,
         summarize_daily_routing_metrics,
@@ -352,6 +363,17 @@ def memory_audit(
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(conflict_md, encoding="utf-8")
             console.print(f"[green]✓[/green] Wrote conflict metrics summary: {out}")
+
+    if context_trace_summary or context_trace_out:
+        trace_summary = summarize_context_trace(target_dir)
+        trace_md = render_context_trace_markdown(trace_summary)
+        if context_trace_summary:
+            console.print(Markdown(trace_md))
+        if context_trace_out:
+            out = Path(context_trace_out).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(trace_md, encoding="utf-8")
+            console.print(f"[green]✓[/green] Wrote context trace summary: {out}")
 
     if archive_dry_run or archive_out:
         dry = summarize_daily_archive_dry_run(target_dir, keep_days=archive_keep_days)
@@ -412,10 +434,12 @@ def memory_observe(
     from nanobot.config.loader import load_config
     from nanobot.agent.memory_maintenance import (
         render_audit_markdown,
+        render_context_trace_markdown,
         render_memory_conflict_metrics_markdown,
         render_daily_routing_metrics_markdown,
         render_memory_update_guard_metrics_markdown,
         run_memory_audit,
+        summarize_context_trace,
         summarize_memory_conflict_metrics,
         summarize_daily_routing_metrics,
         summarize_memory_update_guard_metrics,
@@ -437,20 +461,24 @@ def memory_observe(
     routing_md = render_daily_routing_metrics_markdown(summarize_daily_routing_metrics(target_dir))
     guard_md = render_memory_update_guard_metrics_markdown(summarize_memory_update_guard_metrics(target_dir))
     conflict_md = render_memory_conflict_metrics_markdown(summarize_memory_conflict_metrics(target_dir))
+    trace_md = render_context_trace_markdown(summarize_context_trace(target_dir))
 
     audit_path = output_dir / f"{date_prefix}-audit{suffix}.md"
     routing_path = output_dir / f"{date_prefix}-metrics-summary{suffix}.md"
     guard_path = output_dir / f"{date_prefix}-guard-metrics-summary{suffix}.md"
     conflict_path = output_dir / f"{date_prefix}-conflict-metrics-summary{suffix}.md"
+    trace_path = output_dir / f"{date_prefix}-context-trace-summary{suffix}.md"
     audit_path.write_text(audit_md, encoding="utf-8")
     routing_path.write_text(routing_md, encoding="utf-8")
     guard_path.write_text(guard_md, encoding="utf-8")
     conflict_path.write_text(conflict_md, encoding="utf-8")
+    trace_path.write_text(trace_md, encoding="utf-8")
 
     console.print(f"[green]✓[/green] Wrote audit: {audit_path}")
     console.print(f"[green]✓[/green] Wrote routing metrics: {routing_path}")
     console.print(f"[green]✓[/green] Wrote guard metrics: {guard_path}")
     console.print(f"[green]✓[/green] Wrote conflict metrics: {conflict_path}")
+    console.print(f"[green]✓[/green] Wrote context trace: {trace_path}")
 
 
 def _make_provider(config: Config):
