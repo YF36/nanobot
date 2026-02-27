@@ -236,6 +236,8 @@ def memory_audit(
     memory_dir: str = typer.Option("", help="Memory directory path; defaults to <workspace>/memory from config"),
     report_out: str = typer.Option("", help="Optional markdown report output path"),
     plan_out: str = typer.Option("", help="Optional cleanup plan JSON output path (dry-run actions only)"),
+    metrics_summary: bool = typer.Option(False, "--metrics-summary", help="Show daily routing metrics summary"),
+    metrics_out: str = typer.Option("", help="Optional daily routing metrics markdown output path"),
     apply: bool = typer.Option(False, "--apply", help="Apply conservative cleanup with automatic backup"),
 ):
     """Run memory quality audit; optionally apply conservative cleanup with backups."""
@@ -243,8 +245,10 @@ def memory_audit(
     from nanobot.agent.memory_maintenance import (
         apply_conservative_cleanup,
         build_cleanup_plan,
+        render_daily_routing_metrics_markdown,
         render_audit_markdown,
         run_memory_audit,
+        summarize_daily_routing_metrics,
     )
 
     config = load_config()
@@ -265,6 +269,17 @@ def memory_audit(
         plan = build_cleanup_plan(target_dir)
         out.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
         console.print(f"[green]✓[/green] Wrote dry-run cleanup plan: {out}")
+
+    if metrics_summary or metrics_out:
+        metrics = summarize_daily_routing_metrics(target_dir)
+        metrics_md = render_daily_routing_metrics_markdown(metrics)
+        if metrics_summary:
+            console.print(Markdown(metrics_md))
+        if metrics_out:
+            out = Path(metrics_out).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(metrics_md, encoding="utf-8")
+            console.print(f"[green]✓[/green] Wrote metrics summary: {out}")
 
     if apply:
         result = apply_conservative_cleanup(target_dir)

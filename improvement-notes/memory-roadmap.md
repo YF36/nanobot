@@ -184,6 +184,20 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已实施：daily 路由结果落盘到 `memory/daily-routing-metrics.jsonl`（每次 consolidation 一行 JSON）。
 - 字段覆盖：`structured_daily_ok`、`fallback_used`、`fallback_reason`、`structured_keys`、`structured_bullet_count`、`session_key`、`date`、`ts`。
 - 用途：支持对 `structured_daily_ok` 命中率和 `fallback_reason` 分布做离线统计，不改变主流程行为。
+- 已实施：`nanobot memory-audit --metrics-summary` 汇总输出（含总体命中率、fallback reason 分布、按天统计）。
+- 已实施：`nanobot memory-audit --metrics-out <path>` 可导出指标汇总 Markdown。
+
+观测记录归档（2026-02-27）：
+
+- 原始观测文件统一归档到 `improvement-notes/memory-observations/`：
+  - `improvement-notes/memory-observations/20260227-audit.md`
+  - `improvement-notes/memory-observations/20260227-cleanup-plan.json`
+  - `improvement-notes/memory-observations/20260227-metrics-summary.md`
+- 路线图仅保留“可执行结论”，原始报表/计划留在归档目录，避免主文档噪声累积。
+- 该批次结论摘要：
+  - 审计显示记忆质量仍有漂移（`HISTORY` 长条目、`daily` 长 bullet/重复项仍存在）；
+  - 清理计划建议优先做“裁剪超长 + 去重”（低风险）；
+  - 指标汇总文件当前显示 `daily-routing-metrics.jsonl` 尚未生成，需要后续 consolidation 周期再采样。
 
 M2 验收标准：
 

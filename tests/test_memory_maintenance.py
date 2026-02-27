@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from nanobot.agent.memory_maintenance import apply_conservative_cleanup, build_cleanup_plan, run_memory_audit
+from nanobot.agent.memory_maintenance import (
+    apply_conservative_cleanup,
+    build_cleanup_plan,
+    render_daily_routing_metrics_markdown,
+    run_memory_audit,
+    summarize_daily_routing_metrics,
+)
 
 
 def _write(path: Path, text: str) -> None:
@@ -79,3 +85,40 @@ def test_apply_conservative_cleanup_trims_and_deduplicates_with_backup(tmp_path:
     assert result.backup_dir.exists()
     assert (result.backup_dir / "HISTORY.md").exists()
     assert (result.backup_dir / "2026-02-27.md").exists()
+
+
+def test_summarize_daily_routing_metrics_counts_and_reasons(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(
+        memory_dir / "daily-routing-metrics.jsonl",
+        "\n".join(
+            [
+                '{"date":"2026-02-27","structured_daily_ok":true,"fallback_reason":"ok"}',
+                '{"date":"2026-02-27","structured_daily_ok":false,"fallback_reason":"missing"}',
+                '{"date":"2026-02-28","structured_daily_ok":false,"fallback_reason":"invalid_type:topics"}',
+                "not-json",
+            ]
+        )
+        + "\n",
+    )
+
+    summary = summarize_daily_routing_metrics(memory_dir)
+    assert summary.metrics_file_exists is True
+    assert summary.total_rows == 4
+    assert summary.parse_error_rows == 1
+    assert summary.structured_ok_count == 1
+    assert summary.fallback_count == 2
+    assert summary.fallback_reason_counts["missing"] == 1
+    assert summary.fallback_reason_counts["invalid_type:topics"] == 1
+    assert summary.by_date["2026-02-27"]["total"] == 2
+    assert summary.by_date["2026-02-27"]["structured_ok"] == 1
+    assert summary.by_date["2026-02-28"]["fallback"] == 1
+
+
+def test_render_daily_routing_metrics_markdown_handles_missing_file(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    summary = summarize_daily_routing_metrics(memory_dir)
+    text = render_daily_routing_metrics_markdown(summary)
+    assert "Metrics file: not found" in text

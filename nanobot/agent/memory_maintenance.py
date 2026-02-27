@@ -44,6 +44,17 @@ class CleanupApplyResult:
     touched_files: list[str]
 
 
+@dataclass
+class DailyRoutingMetricsSummary:
+    metrics_file_exists: bool
+    total_rows: int
+    parse_error_rows: int
+    structured_ok_count: int
+    fallback_count: int
+    fallback_reason_counts: dict[str, int]
+    by_date: dict[str, dict[str, int]]
+
+
 def _iter_daily_files(memory_dir: Path) -> list[Path]:
     items: list[Path] = []
     for p in sorted(memory_dir.glob("*.md")):
@@ -217,6 +228,113 @@ def apply_conservative_cleanup(memory_dir: Path) -> CleanupApplyResult:
         daily_deduplicated_bullets=daily_deduplicated_bullets,
         touched_files=sorted(touched_files),
     )
+
+
+def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSummary:
+    metrics_file = memory_dir / "daily-routing-metrics.jsonl"
+    if not metrics_file.exists():
+        return DailyRoutingMetricsSummary(
+            metrics_file_exists=False,
+            total_rows=0,
+            parse_error_rows=0,
+            structured_ok_count=0,
+            fallback_count=0,
+            fallback_reason_counts={},
+            by_date={},
+        )
+
+    total_rows = 0
+    parse_error_rows = 0
+    structured_ok_count = 0
+    fallback_count = 0
+    fallback_reason_counter: Counter[str] = Counter()
+    by_date: dict[str, dict[str, int]] = {}
+
+    for raw_line in metrics_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        total_rows += 1
+        try:
+            item = json.loads(line)
+        except Exception:
+            parse_error_rows += 1
+            continue
+        if not isinstance(item, dict):
+            parse_error_rows += 1
+            continue
+
+        date = str(item.get("date") or "")
+        if not date:
+            date = "unknown"
+        bucket = by_date.setdefault(date, {"total": 0, "structured_ok": 0, "fallback": 0})
+        bucket["total"] += 1
+
+        structured_ok = bool(item.get("structured_daily_ok", False))
+        if structured_ok:
+            structured_ok_count += 1
+            bucket["structured_ok"] += 1
+        else:
+            fallback_count += 1
+            bucket["fallback"] += 1
+            reason = str(item.get("fallback_reason") or "unknown")
+            fallback_reason_counter[reason] += 1
+
+    return DailyRoutingMetricsSummary(
+        metrics_file_exists=True,
+        total_rows=total_rows,
+        parse_error_rows=parse_error_rows,
+        structured_ok_count=structured_ok_count,
+        fallback_count=fallback_count,
+        fallback_reason_counts=dict(sorted(fallback_reason_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        by_date=dict(sorted(by_date.items())),
+    )
+
+
+def render_daily_routing_metrics_markdown(summary: DailyRoutingMetricsSummary) -> str:
+    lines = [
+        "# Daily Routing Metrics Summary",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+    ]
+    if not summary.metrics_file_exists:
+        lines.extend(["- Metrics file: not found (`daily-routing-metrics.jsonl`)", ""])
+        return "\n".join(lines)
+
+    total_valid = max(0, summary.total_rows - summary.parse_error_rows)
+    ok_rate = (summary.structured_ok_count / total_valid * 100.0) if total_valid else 0.0
+    fallback_rate = (summary.fallback_count / total_valid * 100.0) if total_valid else 0.0
+
+    lines.extend(
+        [
+            "- Metrics file: found (`daily-routing-metrics.jsonl`)",
+            "",
+            "## Overall",
+            f"- Rows: `{summary.total_rows}` (valid=`{total_valid}`, parse_errors=`{summary.parse_error_rows}`)",
+            f"- Structured OK: `{summary.structured_ok_count}` ({ok_rate:.1f}%)",
+            f"- Fallback: `{summary.fallback_count}` ({fallback_rate:.1f}%)",
+            "",
+            "## Fallback Reasons",
+        ]
+    )
+    if not summary.fallback_reason_counts:
+        lines.append("- none")
+    else:
+        for reason, count in summary.fallback_reason_counts.items():
+            lines.append(f"- {reason}: `{count}`")
+
+    lines.extend(["", "## By Date"])
+    if not summary.by_date:
+        lines.append("- none")
+    else:
+        for date, row in summary.by_date.items():
+            valid = row["total"]
+            ok_pct = (row["structured_ok"] / valid * 100.0) if valid else 0.0
+            lines.append(
+                f"- {date}: total=`{row['total']}`, structured_ok=`{row['structured_ok']}` ({ok_pct:.1f}%), fallback=`{row['fallback']}`"
+            )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def build_cleanup_plan(memory_dir: Path) -> dict[str, object]:
