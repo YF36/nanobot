@@ -82,6 +82,13 @@ def test_append_daily_history_entry_applies_compact_fallback(tmp_path: Path) -> 
     assert "No new information added" not in content
 
 
+def test_synthesize_daily_sections_from_entry_uses_mapped_section_and_compact_bullet() -> None:
+    sections = MemoryStore._synthesize_daily_sections_from_entry(
+        "[2026-02-25 10:00] User asked about memory design. No new information added."
+    )
+    assert sections == {"topics": ["about memory design."]}
+
+
 def test_normalize_daily_sections_detailed_reports_quality_reasons() -> None:
     normalized, reason = MemoryStore._normalize_daily_sections_detailed(None)
     assert normalized is None and reason == "missing"
@@ -563,6 +570,48 @@ async def test_consolidate_falls_back_when_daily_sections_invalid(tmp_path: Path
     assert metrics[0]["structured_daily_ok"] is False
     assert metrics[0]["fallback_used"] is True
     assert metrics[0]["fallback_reason"] == "invalid_type:tool_activity"
+
+
+@pytest.mark.asyncio
+async def test_consolidate_synthesizes_structured_daily_sections_when_missing(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    mm.write_long_term("# Long-term Memory\n")
+
+    session = Session(key="test:daily_sections_missing")
+    for i in range(60):
+        session.add_message("user", f"msg{i}")
+
+    provider = MagicMock()
+
+    async def _fake_chat(**kwargs):
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="t1",
+                    name="save_memory",
+                    arguments={
+                        "history_entry": "[2026-02-25 10:00] Ran exec command to inspect memory files.",
+                        "memory_update": "# Long-term Memory\n",
+                    },
+                )
+            ],
+        )
+
+    provider.chat = _fake_chat
+    result = await mm.consolidate(session=session, provider=provider, model="test", memory_window=50)
+
+    assert result is True
+    daily_text = (mm.memory_dir / "2026-02-25.md").read_text(encoding="utf-8")
+    assert "## Tool Activity" in daily_text
+    assert "- Ran exec command to inspect memory files." in daily_text
+    metrics_path = mm.observability_dir / "daily-routing-metrics.jsonl"
+    metrics = [json.loads(line) for line in metrics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(metrics) == 1
+    assert metrics[0]["session_key"] == "test:daily_sections_missing"
+    assert metrics[0]["structured_daily_ok"] is True
+    assert metrics[0]["fallback_used"] is False
+    assert metrics[0]["fallback_reason"] == "ok"
 
 
 @pytest.mark.asyncio

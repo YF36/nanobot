@@ -114,6 +114,12 @@ class MemoryStore:
         "tool_activity": "Tool Activity",
         "open_questions": "Open Questions",
     }
+    _DAILY_SECTIONS_REVERSE_SCHEMA_MAP = {
+        "Topics": "topics",
+        "Decisions": "decisions",
+        "Tool Activity": "tool_activity",
+        "Open Questions": "open_questions",
+    }
     _HISTORY_ENTRY_MAX_CHARS = 600
     _DAILY_BULLET_MAX_CHARS = 240
     _FALLBACK_PREFIX_PATTERNS = (
@@ -509,6 +515,18 @@ class MemoryStore:
             sample=self._truncate_log_sample(self._history_entry_body(entry)),
         )
         return daily_file
+
+    @classmethod
+    def _synthesize_daily_sections_from_entry(cls, entry: str) -> dict[str, list[str]] | None:
+        section = cls._daily_section_for_history_entry(entry)
+        schema_key = cls._DAILY_SECTIONS_REVERSE_SCHEMA_MAP.get(section)
+        if not schema_key:
+            return None
+        bullet = cls._compact_fallback_daily_bullet(cls._history_entry_body(entry))
+        bullet, _ = cls._sanitize_daily_bullet(bullet)
+        if not bullet:
+            return None
+        return {schema_key: [bullet]}
 
     def get_memory_context(self) -> str:
         long_term = self.read_long_term()
@@ -1065,6 +1083,10 @@ class MemoryStore:
             self.append_history(entry_text)
             date_str = self._history_entry_date(entry_text)
             raw_daily_sections = args.get("daily_sections")
+            if raw_daily_sections is None:
+                synthesized_sections = self._synthesize_daily_sections_from_entry(entry_text)
+                if synthesized_sections is not None:
+                    raw_daily_sections = synthesized_sections
             _, structured_daily_ok, structured_daily_details = self.append_daily_sections_detailed(
                 date_str,
                 raw_daily_sections,

@@ -165,6 +165,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已实施（step1）：daily 分栏路由 debug 日志（含 section 与短样例）用于观察命中质量。
 - 已实施（step2，兼容版）：`save_memory` 工具 schema 支持可选 `daily_sections`（`topics/decisions/tool_activity/open_questions`）。
 - 已实施（step2，兼容版）：`consolidate()` 优先写入结构化 daily sections；结构非法或缺失时回退到启发式分栏。
+- 已增强（step2+）：当 `daily_sections` 缺失时，会基于 `history_entry` 自动合成最小结构化 sections（按启发式 section 映射），优先走结构化写入路径。
 - 已实施（step2+，2026-02-27）：daily 写入去噪增强：
   - fallback（`history_entry`）写入 daily 时仅写正文，不再带时间戳前缀；
   - 同一 daily section 内完全相同 bullet 自动去重（结构化写入与 fallback 均生效）。
