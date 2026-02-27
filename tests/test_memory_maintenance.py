@@ -14,6 +14,7 @@ from nanobot.agent.memory_maintenance import (
     render_memory_conflict_metrics_markdown,
     render_daily_routing_metrics_markdown,
     render_memory_update_guard_metrics_markdown,
+    render_memory_update_sanitize_metrics_markdown,
     run_memory_audit,
     summarize_context_trace,
     summarize_daily_archive_dry_run,
@@ -22,6 +23,7 @@ from nanobot.agent.memory_maintenance import (
     summarize_cleanup_drop_preview,
     summarize_memory_conflict_metrics,
     summarize_memory_update_guard_metrics,
+    summarize_memory_update_sanitize_metrics,
     summarize_daily_routing_metrics,
 )
 
@@ -191,6 +193,42 @@ def test_render_memory_update_guard_metrics_markdown_handles_missing_file(tmp_pa
     memory_dir.mkdir()
     summary = summarize_memory_update_guard_metrics(memory_dir)
     text = render_memory_update_guard_metrics_markdown(summary)
+    assert "Metrics file: not found" in text
+
+
+def test_summarize_memory_update_sanitize_metrics_counts(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(
+        memory_dir / "memory-update-sanitize-metrics.jsonl",
+        "\n".join(
+            [
+                '{"session_key":"s1","removed_recent_topic_section_count":2,"removed_transient_status_line_count":1}',
+                '{"session_key":"s1","removed_recent_topic_section_count":1,"removed_transient_status_line_count":0}',
+                '{"session_key":"s2","removed_recent_topic_section_count":0,"removed_transient_status_line_count":3}',
+                "not-json",
+            ]
+        )
+        + "\n",
+    )
+    summary = summarize_memory_update_sanitize_metrics(memory_dir)
+    assert summary.metrics_file_exists is True
+    assert summary.total_rows == 4
+    assert summary.parse_error_rows == 1
+    assert summary.total_recent_topic_sections_removed == 3
+    assert summary.total_transient_status_lines_removed == 4
+    assert summary.by_session["s1"] == 2
+    assert summary.by_session["s2"] == 1
+    text = render_memory_update_sanitize_metrics_markdown(summary)
+    assert "Memory Update Sanitize Metrics Summary" in text
+    assert "removed_recent_topic_sections(total)" in text
+
+
+def test_render_memory_update_sanitize_metrics_markdown_handles_missing_file(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    summary = summarize_memory_update_sanitize_metrics(memory_dir)
+    text = render_memory_update_sanitize_metrics_markdown(summary)
     assert "Metrics file: not found" in text
 
 

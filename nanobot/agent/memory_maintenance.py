@@ -89,6 +89,16 @@ class MemoryUpdateGuardMetricsSummary:
 
 
 @dataclass
+class MemoryUpdateSanitizeMetricsSummary:
+    metrics_file_exists: bool
+    total_rows: int
+    parse_error_rows: int
+    total_recent_topic_sections_removed: int
+    total_transient_status_lines_removed: int
+    by_session: dict[str, int]
+
+
+@dataclass
 class DailyArchiveDryRunSummary:
     keep_days: int
     candidate_file_count: int
@@ -1063,6 +1073,91 @@ def render_memory_update_guard_metrics_markdown(summary: MemoryUpdateGuardMetric
                 lines.append(f"- {reason}: {hint}")
 
     lines.extend(["", "## Sessions (Top)"])
+    if not summary.by_session:
+        lines.append("- none")
+    else:
+        for idx, (session_key, count) in enumerate(summary.by_session.items()):
+            if idx >= 10:
+                break
+            lines.append(f"- {session_key}: `{count}`")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSanitizeMetricsSummary:
+    metrics_file = memory_dir / "memory-update-sanitize-metrics.jsonl"
+    if not metrics_file.exists():
+        return MemoryUpdateSanitizeMetricsSummary(
+            metrics_file_exists=False,
+            total_rows=0,
+            parse_error_rows=0,
+            total_recent_topic_sections_removed=0,
+            total_transient_status_lines_removed=0,
+            by_session={},
+        )
+
+    total_rows = 0
+    parse_error_rows = 0
+    recent_topic_removed = 0
+    transient_lines_removed = 0
+    session_counter: Counter[str] = Counter()
+
+    for raw_line in metrics_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        total_rows += 1
+        try:
+            item = json.loads(line)
+        except Exception:
+            parse_error_rows += 1
+            continue
+        if not isinstance(item, dict):
+            parse_error_rows += 1
+            continue
+        session_key = str(item.get("session_key") or "unknown")
+        rcount = item.get("removed_recent_topic_section_count")
+        tcount = item.get("removed_transient_status_line_count")
+        if not isinstance(rcount, int) or not isinstance(tcount, int):
+            parse_error_rows += 1
+            continue
+        recent_topic_removed += max(0, int(rcount))
+        transient_lines_removed += max(0, int(tcount))
+        session_counter[session_key] += 1
+
+    return MemoryUpdateSanitizeMetricsSummary(
+        metrics_file_exists=True,
+        total_rows=total_rows,
+        parse_error_rows=parse_error_rows,
+        total_recent_topic_sections_removed=recent_topic_removed,
+        total_transient_status_lines_removed=transient_lines_removed,
+        by_session=dict(sorted(session_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+    )
+
+
+def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitizeMetricsSummary) -> str:
+    lines = [
+        "# Memory Update Sanitize Metrics Summary",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+    ]
+    if not summary.metrics_file_exists:
+        lines.extend(["- Metrics file: not found (`memory-update-sanitize-metrics.jsonl`)", ""])
+        return "\n".join(lines)
+
+    total_valid = max(0, summary.total_rows - summary.parse_error_rows)
+    lines.extend(
+        [
+            "- Metrics file: found (`memory-update-sanitize-metrics.jsonl`)",
+            "",
+            "## Overall",
+            f"- Rows: `{summary.total_rows}` (valid=`{total_valid}`, parse_errors=`{summary.parse_error_rows}`)",
+            f"- removed_recent_topic_sections(total): `{summary.total_recent_topic_sections_removed}`",
+            f"- removed_transient_status_lines(total): `{summary.total_transient_status_lines_removed}`",
+            "",
+            "## Sessions (Top)",
+        ]
+    )
     if not summary.by_session:
         lines.append("- none")
     else:
