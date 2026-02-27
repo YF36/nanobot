@@ -317,6 +317,18 @@ class AgentLoop:
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop. Returns (final_content, tools_used, messages)."""
         channels_config = getattr(self, "channels_config", None)
+        effective_stream_enabled = False
+        if channels_config:
+            stream_mode = str(getattr(channels_config, "stream_mode", "auto") or "auto").strip().lower()
+            if stream_mode == "force":
+                effective_stream_enabled = True
+            elif stream_mode == "off":
+                effective_stream_enabled = False
+            else:
+                effective_stream_enabled = bool(
+                    getattr(channels_config, "stream_enabled", False)
+                    or getattr(channels_config, "progress_edit_streaming_enabled", False)
+                )
         runner = TurnRunner(
             provider=self.provider,
             tools=self.tools,
@@ -328,12 +340,7 @@ class AgentLoop:
             guard_loop_messages=self._guard_loop_messages,
             strip_think=self._strip_think,
             tool_hint=self._tool_hint,
-            stream_enabled=(
-                bool(getattr(channels_config, "stream_enabled", False))
-                or bool(getattr(channels_config, "progress_edit_streaming_enabled", False))
-                if channels_config
-                else False
-            ),
+            stream_enabled=effective_stream_enabled,
             stream_progress_flush_interval_s=(
                 max(10, int(getattr(channels_config, "progress_flush_interval_ms", 150))) / 1000.0
                 if channels_config

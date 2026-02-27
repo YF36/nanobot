@@ -124,3 +124,61 @@ async def test_dispatch_outbound_stream_enabled_enables_progress_and_edit_path()
 
     assert len(fake.sent) == 1
     assert fake.sent[0].metadata.get("_progress_edit") is True
+
+
+@pytest.mark.asyncio
+async def test_dispatch_outbound_stream_mode_off_disables_stream_path() -> None:
+    config = Config()
+    config.channels.stream_enabled = True
+    config.channels.stream_mode = "off"
+    config.channels.send_progress = False
+    bus = MessageBus()
+    manager = ChannelManager(config, bus)
+
+    fake = _FakeEditableChannel(config.channels, bus)
+    manager.channels = {"cli": fake}
+
+    task = asyncio.create_task(manager._dispatch_outbound())
+    try:
+        await bus.publish_outbound(OutboundMessage(
+            channel="cli",
+            chat_id="chat_1",
+            content="chunk 1",
+            metadata={"_progress": True, "message_id": "mid_1"},
+        ))
+        await asyncio.sleep(0.05)
+    finally:
+        task.cancel()
+        await task
+
+    assert len(fake.sent) == 0
+
+
+@pytest.mark.asyncio
+async def test_dispatch_outbound_stream_mode_force_enables_stream_path() -> None:
+    config = Config()
+    config.channels.stream_enabled = False
+    config.channels.stream_mode = "force"
+    config.channels.send_progress = False
+    config.channels.progress_edit_streaming_enabled = False
+    bus = MessageBus()
+    manager = ChannelManager(config, bus)
+
+    fake = _FakeEditableChannel(config.channels, bus)
+    manager.channels = {"cli": fake}
+
+    task = asyncio.create_task(manager._dispatch_outbound())
+    try:
+        await bus.publish_outbound(OutboundMessage(
+            channel="cli",
+            chat_id="chat_1",
+            content="chunk 1",
+            metadata={"_progress": True, "message_id": "mid_1"},
+        ))
+        await asyncio.sleep(0.05)
+    finally:
+        task.cancel()
+        await task
+
+    assert len(fake.sent) == 1
+    assert fake.sent[0].metadata.get("_progress_edit") is True

@@ -194,6 +194,7 @@ class ChannelsConfig(Base):
     """Configuration for chat channels."""
 
     stream_enabled: bool = False  # master switch: enable end-to-end streaming (LLM stream + channel progress/edit when supported)
+    stream_mode: str = "auto"  # off | auto | force
     send_progress: bool = True    # stream agent's text progress to the channel
     send_tool_hints: bool = False  # stream tool-call hints (e.g. read_file("…"))
     progress_flush_interval_ms: int = 150  # streaming progress coalescing window

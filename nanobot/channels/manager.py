@@ -160,6 +160,18 @@ class ChannelManager:
                 logger.info("QQ channel enabled")
             except ImportError as e:
                 logger.warning("QQ channel not available", error=str(e))
+
+    @staticmethod
+    def _effective_stream_enabled(channels_cfg: Any) -> bool:
+        mode = str(getattr(channels_cfg, "stream_mode", "auto") or "auto").strip().lower()
+        if mode == "off":
+            return False
+        if mode == "force":
+            return True
+        return bool(
+            getattr(channels_cfg, "stream_enabled", False)
+            or getattr(channels_cfg, "progress_edit_streaming_enabled", False)
+        )
     
     async def _start_channel(self, name: str, channel: BaseChannel) -> None:
         """Start a channel and log any exceptions."""
@@ -217,7 +229,7 @@ class ChannelManager:
                     timeout=1.0
                 )
 
-                stream_enabled = bool(getattr(self.config.channels, "stream_enabled", False))
+                stream_enabled = self._effective_stream_enabled(self.config.channels)
                 effective_send_progress = bool(self.config.channels.send_progress or stream_enabled)
                 effective_progress_edit_streaming = bool(
                     self.config.channels.progress_edit_streaming_enabled or stream_enabled
