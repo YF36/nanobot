@@ -87,6 +87,7 @@ def test_apply_conservative_cleanup_trims_and_deduplicates_with_backup(tmp_path:
     assert result.history_deduplicated_entries == 1
     assert result.daily_trimmed_bullets == 1
     assert result.daily_deduplicated_bullets == 1
+    assert result.daily_dropped_tool_activity_bullets == 0
     assert result.scoped_daily_files == 1
     assert result.skipped_daily_files == 0
 
@@ -277,6 +278,7 @@ def test_apply_conservative_cleanup_scopes_recent_daily_files(tmp_path: Path) ->
 
     assert result.scoped_daily_files == 1
     assert result.skipped_daily_files == 1
+    assert result.daily_dropped_tool_activity_bullets == 0
     old_content = (memory_dir / f"{old_name}.md").read_text(encoding="utf-8")
     assert old_content.count("- old") == 2
 
@@ -294,6 +296,34 @@ def test_render_cleanup_effect_markdown_contains_delta(tmp_path: Path) -> None:
     assert "Audit Delta (Before -> After)" in text
     assert "HISTORY long(>600)" in text
     assert "DAILY duplicates" in text
+
+
+def test_apply_conservative_cleanup_drops_old_tool_activity_only(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    old_day = (datetime.now() - timedelta(days=40)).strftime("%Y-%m-%d")
+    _write(
+        memory_dir / f"{old_day}.md",
+        (
+            f"# {old_day}\n\n"
+            "## Topics\n\n- keep topic\n\n"
+            "## Tool Activity\n\n- old cmd 1\n- old cmd 2\n\n"
+            "## Open Questions\n\n- keep question\n"
+        ),
+    )
+
+    result = apply_conservative_cleanup(
+        memory_dir,
+        daily_recent_days=None,
+        include_history=False,
+        drop_tool_activity_older_than_days=30,
+    )
+    assert result.daily_dropped_tool_activity_bullets == 2
+    text = (memory_dir / f"{old_day}.md").read_text(encoding="utf-8")
+    assert "keep topic" in text
+    assert "keep question" in text
+    assert "old cmd 1" not in text
+    assert "old cmd 2" not in text
 
 
 def test_summarize_daily_archive_dry_run_respects_keep_window(tmp_path: Path) -> None:

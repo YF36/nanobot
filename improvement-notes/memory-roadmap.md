@@ -366,5 +366,7 @@ M3 验收标准：
 - 已有受控清理范围开关：`nanobot memory-audit --apply --apply-recent-days N [--apply-skip-history]`
   - 行为：可限制只处理最近 N 天 daily files；可选择跳过 `HISTORY.md` 清理；
   - 适合灰度验证，避免一次性全量改写。
+- 已有半衰期清理开关：`--drop-tool-activity-older-than-days N`
+  - 行为：在 `--apply` 时可按天数清理过旧 `Tool Activity` bullet（仅删除该 section，不影响其他 section）。
 - 已有清理闭环报告：`nanobot memory-audit --apply --apply-effect-out <path>`
   - 输出清理前后对比（`before/after/delta`），便于验证收益并做回滚决策。

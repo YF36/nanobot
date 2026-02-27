@@ -290,6 +290,11 @@ def memory_audit(
         "--apply-include-history/--apply-skip-history",
         help="Whether to include HISTORY.md cleanup when using --apply",
     ),
+    drop_tool_activity_older_than_days: int = typer.Option(
+        0,
+        "--drop-tool-activity-older-than-days",
+        help="When >0 and using --apply, remove Tool Activity bullets older than N days",
+    ),
     apply_effect_out: str = typer.Option("", help="Optional cleanup effect markdown output path"),
 ):
     """Run memory quality audit; optionally apply conservative cleanup with backups."""
@@ -392,6 +397,9 @@ def memory_audit(
             target_dir,
             daily_recent_days=(apply_recent_days if apply_recent_days > 0 else None),
             include_history=apply_include_history,
+            drop_tool_activity_older_than_days=(
+                drop_tool_activity_older_than_days if drop_tool_activity_older_than_days > 0 else None
+            ),
         )
         after = run_memory_audit(target_dir)
         effect_md = render_cleanup_effect_markdown(before, after, result)
@@ -401,7 +409,8 @@ def memory_audit(
                 f"history_trimmed={result.history_trimmed_entries}, "
                 f"history_dedup={result.history_deduplicated_entries}, "
                 f"daily_trimmed={result.daily_trimmed_bullets}, "
-                f"daily_dedup={result.daily_deduplicated_bullets}"
+                f"daily_dedup={result.daily_deduplicated_bullets}, "
+                f"daily_drop_tool={result.daily_dropped_tool_activity_bullets}"
             )
             console.print(
                 f"[green]✓[/green] Scope: daily_files={result.scoped_daily_files}, "

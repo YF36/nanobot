@@ -54,6 +54,7 @@ class CleanupApplyResult:
     history_deduplicated_entries: int
     daily_trimmed_bullets: int
     daily_deduplicated_bullets: int
+    daily_dropped_tool_activity_bullets: int
     scoped_daily_files: int
     skipped_daily_files: int
     touched_files: list[str]
@@ -215,6 +216,7 @@ def apply_conservative_cleanup(
     *,
     daily_recent_days: int | None = None,
     include_history: bool = True,
+    drop_tool_activity_older_than_days: int | None = None,
 ) -> CleanupApplyResult:
     history_file = memory_dir / "HISTORY.md"
     all_daily_files = _iter_daily_files(memory_dir)
@@ -234,7 +236,12 @@ def apply_conservative_cleanup(
     history_deduplicated_entries = 0
     daily_trimmed_bullets = 0
     daily_deduplicated_bullets = 0
+    daily_dropped_tool_activity_bullets = 0
     touched_files: list[str] = []
+    drop_tool_cutoff = None
+    if drop_tool_activity_older_than_days is not None:
+        window_days = max(1, int(drop_tool_activity_older_than_days))
+        drop_tool_cutoff = datetime.now().date() - timedelta(days=window_days - 1)
 
     if include_history and history_file.exists():
         original = history_file.read_text(encoding="utf-8")
@@ -264,9 +271,24 @@ def apply_conservative_cleanup(
         seen_bullets: set[str] = set()
         changed = False
         new_lines: list[str] = []
+        daily_date = _daily_file_date(daily)
+        current_section = ""
         for line in lines:
+            if line.startswith("## "):
+                current_section = line[3:].strip()
+                new_lines.append(line)
+                continue
             if not line.startswith("- "):
                 new_lines.append(line)
+                continue
+            if (
+                drop_tool_cutoff is not None
+                and daily_date is not None
+                and daily_date < drop_tool_cutoff
+                and current_section == "Tool Activity"
+            ):
+                daily_dropped_tool_activity_bullets += 1
+                changed = True
                 continue
             bullet = line[2:].strip()
             trimmed, was_trimmed = _trim_text(" ".join(bullet.split()).strip(), 240)
@@ -302,6 +324,7 @@ def apply_conservative_cleanup(
         history_deduplicated_entries=history_deduplicated_entries,
         daily_trimmed_bullets=daily_trimmed_bullets,
         daily_deduplicated_bullets=daily_deduplicated_bullets,
+        daily_dropped_tool_activity_bullets=daily_dropped_tool_activity_bullets,
         scoped_daily_files=len(daily_files),
         skipped_daily_files=max(0, len(all_daily_files) - len(daily_files)),
         touched_files=sorted(touched_files),
@@ -322,6 +345,7 @@ def render_cleanup_effect_markdown(before: MemoryAudit, after: MemoryAudit, resu
         f"- history_deduplicated_entries: `{result.history_deduplicated_entries}`",
         f"- daily_trimmed_bullets: `{result.daily_trimmed_bullets}`",
         f"- daily_deduplicated_bullets: `{result.daily_deduplicated_bullets}`",
+        f"- daily_dropped_tool_activity_bullets: `{result.daily_dropped_tool_activity_bullets}`",
         "",
         "## Audit Delta (Before -> After)",
         f"- HISTORY long(>600): `{before.history_long_entry_count}` -> `{after.history_long_entry_count}`",
