@@ -1092,6 +1092,13 @@ class MemoryStore:
                 raw_daily_sections,
             )
             if not structured_daily_ok:
+                synthesized_sections = self._synthesize_daily_sections_from_entry(entry_text)
+                if synthesized_sections is not None and synthesized_sections != raw_daily_sections:
+                    _, structured_daily_ok, structured_daily_details = self.append_daily_sections_detailed(
+                        date_str,
+                        synthesized_sections,
+                    )
+            if not structured_daily_ok:
                 self.append_daily_history_entry(entry_text)
             logger.debug(
                 "Memory daily routing decision",
