@@ -461,6 +461,7 @@ def memory_audit(
                     dominant_focus=(
                         "recent_topic" if sanitize_metrics.total_recent_topic_sections_removed > 0 else "none"
                     ),
+                    sessions_with_sanitize_hits=sanitize_metrics.sessions_with_sanitize_hits,
                     by_session=sanitize_metrics.by_session,
                     top_recent_topic_sections=sanitize_metrics.top_recent_topic_sections,
                     top_transient_status_sections={},
@@ -475,6 +476,7 @@ def memory_audit(
                     dominant_focus=(
                         "transient_status" if sanitize_metrics.total_transient_status_lines_removed > 0 else "none"
                     ),
+                    sessions_with_sanitize_hits=sanitize_metrics.sessions_with_sanitize_hits,
                     by_session=sanitize_metrics.by_session,
                     top_recent_topic_sections={},
                     top_transient_status_sections=sanitize_metrics.top_transient_status_sections,

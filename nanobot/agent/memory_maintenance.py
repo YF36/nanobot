@@ -101,6 +101,7 @@ class MemoryUpdateSanitizeMetricsSummary:
     total_recent_topic_sections_removed: int
     total_transient_status_lines_removed: int
     dominant_focus: str
+    sessions_with_sanitize_hits: int
     by_session: dict[str, int]
     top_recent_topic_sections: dict[str, int]
     top_transient_status_sections: dict[str, int]
@@ -1151,6 +1152,7 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
             total_recent_topic_sections_removed=0,
             total_transient_status_lines_removed=0,
             dominant_focus="none",
+            sessions_with_sanitize_hits=0,
             by_session={},
             top_recent_topic_sections={},
             top_transient_status_sections={},
@@ -1213,6 +1215,7 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
         total_recent_topic_sections_removed=recent_topic_removed,
         total_transient_status_lines_removed=transient_lines_removed,
         dominant_focus=dominant_focus,
+        sessions_with_sanitize_hits=len(session_counter),
         by_session=dict(sorted(session_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         top_recent_topic_sections=dict(sorted(recent_section_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         top_transient_status_sections=dict(sorted(transient_section_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
@@ -1236,6 +1239,7 @@ def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitize
             "",
             "## Overall",
             f"- Rows: `{summary.total_rows}` (valid=`{total_valid}`, parse_errors=`{summary.parse_error_rows}`)",
+            f"- sessions_with_sanitize_hits: `{summary.sessions_with_sanitize_hits}`",
             f"- removed_recent_topic_sections(total): `{summary.total_recent_topic_sections_removed}`",
             f"- removed_transient_status_lines(total): `{summary.total_transient_status_lines_removed}`",
             f"- dominant_focus: `{summary.dominant_focus}`",

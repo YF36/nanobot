@@ -214,6 +214,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已增强：sanitize 指标汇总增加 `Top Sanitized Sections`（高频被清洗 section 样本），便于定向优化 consolidation 输出。
 - 已增强：sanitize 指标汇总增加 `Priority Focus`（按命中量排序的优先处理方向），帮助先处理高收益噪声来源。
 - 已增强：sanitize 指标汇总增加 `dominant_focus` 摘要字段，快速判断当前主导清洗类型（recent_topic / transient_status）。
+- 已增强：sanitize 指标汇总增加 `sessions_with_sanitize_hits`，补齐“事件量 vs 受影响会话数”视角。
 - 已实施：guard 指标汇总内置 `reason -> fix hint` 建议（含 `unstructured_candidate` / `date_line_overflow`），便于快速回收写入质量问题。
 - 已实施：`memory` 偏好冲突指标落盘：`memory/memory-conflict-metrics.jsonl`（当前覆盖 language / communication_style）。
 - 已实施：`nanobot memory-audit --conflict-metrics-summary` 汇总冲突 key 分布与高频会话。
