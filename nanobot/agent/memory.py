@@ -238,16 +238,20 @@ class MemoryStore:
         session_key: str,
         removed_recent_topic_section_count: int,
         removed_transient_status_line_count: int,
+        removed_duplicate_bullet_count: int,
         removed_recent_topic_sections: list[str],
         removed_transient_status_sections: list[str],
+        removed_duplicate_bullet_sections: list[str],
     ) -> None:
         row = {
             "ts": datetime.now().isoformat(timespec="seconds"),
             "session_key": session_key,
             "removed_recent_topic_section_count": removed_recent_topic_section_count,
             "removed_transient_status_line_count": removed_transient_status_line_count,
+            "removed_duplicate_bullet_count": removed_duplicate_bullet_count,
             "removed_recent_topic_sections": removed_recent_topic_sections[:3],
             "removed_transient_status_sections": removed_transient_status_sections[:3],
+            "removed_duplicate_bullet_sections": removed_duplicate_bullet_sections[:3],
         }
         try:
             with open(self.memory_update_sanitize_metrics_file, "a", encoding="utf-8") as f:
@@ -631,8 +635,10 @@ class MemoryStore:
                 "removed_recent_topic_sections": [],
                 "removed_transient_status_sections": [],
                 "removed_transient_status_line_count": 0,
+                "removed_duplicate_bullet_count": 0,
                 "recent_topic_section_samples": [],
                 "transient_status_line_samples": [],
+                "duplicate_bullet_section_samples": [],
             }
 
         lines = update.splitlines()
@@ -685,6 +691,10 @@ class MemoryStore:
             kept.append(line)
             i += 1
 
+        deduped_kept, removed_duplicate_bullet_count, duplicate_bullet_section_samples = (
+            cls._dedupe_markdown_bullets_by_section(kept)
+        )
+        kept = deduped_kept
         sanitized = "\n".join(kept).strip()
         if not sanitized:
             sanitized = current_memory
@@ -695,10 +705,46 @@ class MemoryStore:
             "removed_recent_topic_sections": removed_recent_sections,
             "removed_transient_status_sections": sorted(set(removed_transient_status_sections)),
             "removed_transient_status_line_count": removed_transient_status_line_count,
+            "removed_duplicate_bullet_count": removed_duplicate_bullet_count,
             "recent_topic_section_samples": recent_topic_section_samples,
             "transient_status_line_samples": transient_status_line_samples,
+            "duplicate_bullet_section_samples": duplicate_bullet_section_samples,
         }
         return sanitized, details
+
+    @classmethod
+    def _dedupe_markdown_bullets_by_section(cls, lines: list[str]) -> tuple[list[str], int, list[str]]:
+        kept: list[str] = []
+        seen: set[tuple[str, str]] = set()
+        current_heading = "(root)"
+        removed = 0
+        section_samples: list[str] = []
+        for line in lines:
+            if line.startswith("## "):
+                heading = line[3:].strip()
+                current_heading = heading or "(untitled)"
+                kept.append(line)
+                continue
+            stripped = line.strip()
+            if not stripped.startswith("- "):
+                kept.append(line)
+                continue
+            normalized = re.sub(r"\s+", " ", stripped[2:].strip()).lower()
+            if not normalized:
+                kept.append(line)
+                continue
+            key = (current_heading, normalized)
+            if key in seen:
+                removed += 1
+                if (
+                    current_heading not in section_samples
+                    and len(section_samples) < cls._MEMORY_SANITIZE_LOG_SAMPLE_LIMIT
+                ):
+                    section_samples.append(current_heading)
+                continue
+            seen.add(key)
+            kept.append(line)
+        return kept, removed, section_samples
 
     @classmethod
     def _sanitize_memory_update(cls, update: str, current_memory: str) -> tuple[str, list[str]]:
@@ -1011,15 +1057,21 @@ class MemoryStore:
                         if not isinstance(update, str):
                             update = json.dumps(update, ensure_ascii=False)
                         update, sanitize_details = self._sanitize_memory_update_detailed(update, current_memory)
-                        if sanitize_details["removed_sections"] or sanitize_details["removed_transient_status_line_count"]:
+                        if (
+                            sanitize_details["removed_sections"]
+                            or sanitize_details["removed_transient_status_line_count"]
+                            or sanitize_details["removed_duplicate_bullet_count"]
+                        ):
                             logger.warning(
                                 "Memory consolidation sanitized long-term memory update",
                                 removed_sections=sanitize_details["removed_sections"],
                                 removed_recent_topic_sections=sanitize_details["removed_recent_topic_sections"],
                                 removed_transient_status_sections=sanitize_details["removed_transient_status_sections"],
                                 removed_transient_status_line_count=sanitize_details["removed_transient_status_line_count"],
+                                removed_duplicate_bullet_count=sanitize_details["removed_duplicate_bullet_count"],
                                 recent_topic_section_samples=sanitize_details["recent_topic_section_samples"],
                                 transient_status_line_samples=sanitize_details["transient_status_line_samples"],
+                                duplicate_bullet_section_samples=sanitize_details["duplicate_bullet_section_samples"],
                             )
                             self._append_memory_update_sanitize_metric(
                                 session_key=session.key,
@@ -1029,9 +1081,15 @@ class MemoryStore:
                                 removed_transient_status_line_count=int(
                                     sanitize_details["removed_transient_status_line_count"]
                                 ),
+                                removed_duplicate_bullet_count=int(
+                                    sanitize_details["removed_duplicate_bullet_count"]
+                                ),
                                 removed_recent_topic_sections=list(sanitize_details["removed_recent_topic_sections"]),
                                 removed_transient_status_sections=list(
                                     sanitize_details["removed_transient_status_sections"]
+                                ),
+                                removed_duplicate_bullet_sections=list(
+                                    sanitize_details["duplicate_bullet_section_samples"]
                                 ),
                             )
                         if memory_truncated:

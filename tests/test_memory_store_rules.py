@@ -288,6 +288,27 @@ def test_sanitize_memory_update_detailed_reports_reason_categories() -> None:
     assert "service timeout error" in details["transient_status_line_samples"][0]
 
 
+def test_sanitize_memory_update_deduplicates_bullets_within_same_section() -> None:
+    current = "# Long-term Memory\n\n## Preferences\n- 中文沟通\n"
+    update = (
+        "# Long-term Memory\n\n"
+        "## Preferences\n"
+        "- 中文沟通\n"
+        "- 中文沟通\n"
+        "- 保持技术讨论风格\n"
+        "- 保持技术讨论风格\n"
+        "\n## Constraints\n"
+        "- local-first\n"
+    )
+
+    sanitized, details = MemoryStore._sanitize_memory_update_detailed(update, current)
+
+    assert sanitized.count("- 中文沟通") == 1
+    assert sanitized.count("- 保持技术讨论风格") == 1
+    assert details["removed_duplicate_bullet_count"] == 2
+    assert "Preferences" in details["duplicate_bullet_section_samples"]
+
+
 def test_memory_update_guard_detects_excessive_shrink() -> None:
     current = (
         "# Long-term Memory\n\n"

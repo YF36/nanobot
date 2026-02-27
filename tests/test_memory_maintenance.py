@@ -270,9 +270,9 @@ def test_summarize_memory_update_sanitize_metrics_counts(tmp_path: Path) -> None
         memory_dir / "memory-update-sanitize-metrics.jsonl",
         "\n".join(
             [
-                '{"session_key":"s1","removed_recent_topic_section_count":2,"removed_transient_status_line_count":1,"removed_recent_topic_sections":["今天讨论的主题"],"removed_transient_status_sections":["System Technical Issues"]}',
-                '{"session_key":"s1","removed_recent_topic_section_count":1,"removed_transient_status_line_count":0,"removed_recent_topic_sections":["今天讨论的主题"]}',
-                '{"session_key":"s2","removed_recent_topic_section_count":0,"removed_transient_status_line_count":3,"removed_transient_status_sections":["System Technical Issues"]}',
+                '{"session_key":"s1","removed_recent_topic_section_count":2,"removed_transient_status_line_count":1,"removed_duplicate_bullet_count":2,"removed_recent_topic_sections":["今天讨论的主题"],"removed_transient_status_sections":["System Technical Issues"],"removed_duplicate_bullet_sections":["Preferences"]}',
+                '{"session_key":"s1","removed_recent_topic_section_count":1,"removed_transient_status_line_count":0,"removed_duplicate_bullet_count":0,"removed_recent_topic_sections":["今天讨论的主题"]}',
+                '{"session_key":"s2","removed_recent_topic_section_count":0,"removed_transient_status_line_count":3,"removed_duplicate_bullet_count":1,"removed_transient_status_sections":["System Technical Issues"],"removed_duplicate_bullet_sections":["Project Context"]}',
                 "not-json",
             ]
         )
@@ -284,18 +284,22 @@ def test_summarize_memory_update_sanitize_metrics_counts(tmp_path: Path) -> None
     assert summary.parse_error_rows == 1
     assert summary.total_recent_topic_sections_removed == 3
     assert summary.total_transient_status_lines_removed == 4
+    assert summary.total_duplicate_bullets_removed == 3
     assert summary.dominant_focus == "transient_status"
     assert summary.sessions_with_sanitize_hits == 2
     assert summary.by_session["s1"] == 2
     assert summary.by_session["s2"] == 1
     assert summary.top_recent_topic_sections["今天讨论的主题"] == 2
     assert summary.top_transient_status_sections["System Technical Issues"] == 2
+    assert summary.top_duplicate_bullet_sections["Preferences"] == 1
     text = render_memory_update_sanitize_metrics_markdown(summary)
     assert "Memory Update Sanitize Metrics Summary" in text
     assert "sessions_with_sanitize_hits: `2`" in text
     assert "removed_recent_topic_sections(total)" in text
+    assert "removed_duplicate_bullets(total)" in text
     assert "## Suggested Fixes" in text
     assert "Recent-topic sanitize hits are non-zero" in text
+    assert "Duplicate-bullet sanitize hits are non-zero" in text
     assert "## Priority Focus" in text
     assert "transient_status" in text
     assert "## Top Sanitized Sections" in text

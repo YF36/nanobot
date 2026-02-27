@@ -103,11 +103,13 @@ class MemoryUpdateSanitizeMetricsSummary:
     parse_error_rows: int
     total_recent_topic_sections_removed: int
     total_transient_status_lines_removed: int
+    total_duplicate_bullets_removed: int
     dominant_focus: str
     sessions_with_sanitize_hits: int
     by_session: dict[str, int]
     top_recent_topic_sections: dict[str, int]
     top_transient_status_sections: dict[str, int]
+    top_duplicate_bullet_sections: dict[str, int]
 
 
 @dataclass
@@ -1154,20 +1156,24 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
             parse_error_rows=0,
             total_recent_topic_sections_removed=0,
             total_transient_status_lines_removed=0,
+            total_duplicate_bullets_removed=0,
             dominant_focus="none",
             sessions_with_sanitize_hits=0,
             by_session={},
             top_recent_topic_sections={},
             top_transient_status_sections={},
+            top_duplicate_bullet_sections={},
         )
 
     total_rows = 0
     parse_error_rows = 0
     recent_topic_removed = 0
     transient_lines_removed = 0
+    duplicate_bullets_removed = 0
     session_counter: Counter[str] = Counter()
     recent_section_counter: Counter[str] = Counter()
     transient_section_counter: Counter[str] = Counter()
+    duplicate_section_counter: Counter[str] = Counter()
 
     for raw_line in metrics_file.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
@@ -1185,13 +1191,16 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
         session_key = str(item.get("session_key") or "unknown")
         rcount = item.get("removed_recent_topic_section_count")
         tcount = item.get("removed_transient_status_line_count")
-        if not isinstance(rcount, int) or not isinstance(tcount, int):
+        dcount = item.get("removed_duplicate_bullet_count", 0)
+        if not isinstance(rcount, int) or not isinstance(tcount, int) or not isinstance(dcount, int):
             parse_error_rows += 1
             continue
         recent_topic_removed += max(0, int(rcount))
         transient_lines_removed += max(0, int(tcount))
+        duplicate_bullets_removed += max(0, int(dcount))
         raw_recent_sections = item.get("removed_recent_topic_sections")
         raw_transient_sections = item.get("removed_transient_status_sections")
+        raw_duplicate_sections = item.get("removed_duplicate_bullet_sections")
         if isinstance(raw_recent_sections, list):
             for sec in raw_recent_sections:
                 if isinstance(sec, str) and sec.strip():
@@ -1200,13 +1209,19 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
             for sec in raw_transient_sections:
                 if isinstance(sec, str) and sec.strip():
                     transient_section_counter[sec.strip()] += 1
+        if isinstance(raw_duplicate_sections, list):
+            for sec in raw_duplicate_sections:
+                if isinstance(sec, str) and sec.strip():
+                    duplicate_section_counter[sec.strip()] += 1
         session_counter[session_key] += 1
 
-    if recent_topic_removed > transient_lines_removed:
+    if recent_topic_removed > transient_lines_removed and recent_topic_removed >= duplicate_bullets_removed:
         dominant_focus = "recent_topic"
-    elif transient_lines_removed > recent_topic_removed:
+    elif transient_lines_removed > recent_topic_removed and transient_lines_removed >= duplicate_bullets_removed:
         dominant_focus = "transient_status"
-    elif recent_topic_removed == 0 and transient_lines_removed == 0:
+    elif duplicate_bullets_removed > 0:
+        dominant_focus = "duplicate_bullets"
+    elif recent_topic_removed == 0 and transient_lines_removed == 0 and duplicate_bullets_removed == 0:
         dominant_focus = "none"
     else:
         dominant_focus = "balanced"
@@ -1217,11 +1232,13 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
         parse_error_rows=parse_error_rows,
         total_recent_topic_sections_removed=recent_topic_removed,
         total_transient_status_lines_removed=transient_lines_removed,
+        total_duplicate_bullets_removed=duplicate_bullets_removed,
         dominant_focus=dominant_focus,
         sessions_with_sanitize_hits=len(session_counter),
         by_session=dict(sorted(session_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         top_recent_topic_sections=dict(sorted(recent_section_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         top_transient_status_sections=dict(sorted(transient_section_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        top_duplicate_bullet_sections=dict(sorted(duplicate_section_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
     )
 
 
@@ -1245,6 +1262,7 @@ def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitize
             f"- sessions_with_sanitize_hits: `{summary.sessions_with_sanitize_hits}`",
             f"- removed_recent_topic_sections(total): `{summary.total_recent_topic_sections_removed}`",
             f"- removed_transient_status_lines(total): `{summary.total_transient_status_lines_removed}`",
+            f"- removed_duplicate_bullets(total): `{summary.total_duplicate_bullets_removed}`",
             f"- dominant_focus: `{summary.dominant_focus}`",
         ]
     )
@@ -1257,9 +1275,14 @@ def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitize
         lines.append(
             "- Transient-status sanitize hits are non-zero: avoid copying dated error/status lines into `memory_update`; keep durable constraints only."
         )
+    if summary.total_duplicate_bullets_removed > 0:
+        lines.append(
+            "- Duplicate-bullet sanitize hits are non-zero: deduplicate repetitive bullets in `memory_update` and keep one durable statement per fact."
+        )
     if (
         summary.total_recent_topic_sections_removed == 0
         and summary.total_transient_status_lines_removed == 0
+        and summary.total_duplicate_bullets_removed == 0
     ):
         lines.append("- No sanitize-specific prompt adjustment needed based on current metrics.")
     else:
@@ -1267,6 +1290,7 @@ def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitize
         focus_items = [
             ("recent_topic", summary.total_recent_topic_sections_removed),
             ("transient_status", summary.total_transient_status_lines_removed),
+            ("duplicate_bullets", summary.total_duplicate_bullets_removed),
         ]
         focus_items.sort(key=lambda kv: (-kv[1], kv[0]))
         for key, count in focus_items:
@@ -1274,6 +1298,8 @@ def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitize
                 continue
             if key == "recent_topic":
                 lines.append(f"- {key}: `{count}` (prioritize reducing ephemeral topic sections in memory_update)")
+            elif key == "duplicate_bullets":
+                lines.append(f"- {key}: `{count}` (prioritize deduplicating repeated bullets in memory_update)")
             else:
                 lines.append(f"- {key}: `{count}` (prioritize filtering dated status/error lines)")
     lines.extend(["", "## Top Sanitized Sections"])
@@ -1289,6 +1315,11 @@ def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitize
             lines.append(
                 "- transient_status: "
                 + ", ".join([f"`{k}`:`{v}`" for k, v in list(summary.top_transient_status_sections.items())[:3]])
+            )
+        if summary.top_duplicate_bullet_sections:
+            lines.append(
+                "- duplicate_bullets: "
+                + ", ".join([f"`{k}`:`{v}`" for k, v in list(summary.top_duplicate_bullet_sections.items())[:3]])
             )
     lines.extend(["", "## Sessions (Top)"])
     if not summary.by_session:

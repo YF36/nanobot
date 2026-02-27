@@ -194,6 +194,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已实施：`memory_update` guard 触发指标落盘：`memory/memory-update-guard-metrics.jsonl`。
 - 已增强：guard 指标增加 `candidate_preview`（截断样本），便于快速回溯被拒写的候选内容形态。
 - 已实施：`memory_update` sanitize 命中指标落盘：`memory/memory-update-sanitize-metrics.jsonl`（记录 recent-topic/transient-status 清洗命中量）。
+- 已实施：`memory_update` 清洗阶段在同一 section 内做重复 bullet 去重，并将命中量写入 sanitize 指标（`removed_duplicate_bullet_count`）。
 - 已实施：`nanobot memory-audit --guard-metrics-summary` 汇总 guard reason 分布与高频会话。
 - 已增强：`guard-metrics-summary` 展示各 reason 的 `candidate_preview` 样本，便于快速定位被拒写内容形态。
 - 已增强：`guard-metrics-summary` 增加平均长度指标（`avg_current_memory_chars` / `avg_returned_memory_chars`），便于判断是否存在系统性过长输出。
@@ -214,6 +215,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已增强：dashboard 同步展示 `sessions_with_sanitize_hits`，补齐 sanitize 的会话影响面可观测性。
 - 已实施：sanitize 指标汇总增加 `Suggested Fixes`（按 recent-topic / transient-status 命中给 prompt/规则收敛建议）。
 - 已增强：sanitize 指标汇总增加 `Top Sanitized Sections`（高频被清洗 section 样本），便于定向优化 consolidation 输出。
+- 已增强：sanitize 指标汇总纳入 `duplicate_bullets` 维度（总量 + section 样本 + Suggested Fixes）。
 - 已增强：sanitize 指标汇总增加 `Priority Focus`（按命中量排序的优先处理方向），帮助先处理高收益噪声来源。
 - 已增强：sanitize 指标汇总增加 `dominant_focus` 摘要字段，快速判断当前主导清洗类型（recent_topic / transient_status）。
 - 已增强：sanitize 指标汇总增加 `sessions_with_sanitize_hits`，补齐“事件量 vs 受影响会话数”视角。
