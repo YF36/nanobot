@@ -596,11 +596,18 @@ def summarize_cleanup_drop_preview(
     )
 
 
-def render_cleanup_drop_preview_markdown(summary: CleanupDropPreviewSummary) -> str:
-    top_files: list[str] = []
-    for name, counts in list(summary.by_file.items())[:3]:
+def _top_candidate_file_pairs(by_file: dict[str, dict[str, int]], limit: int = 3) -> list[str]:
+    items: list[tuple[str, int]] = []
+    for name, counts in by_file.items():
         total = int(counts.get("drop_tool_activity", 0)) + int(counts.get("drop_non_decision", 0))
-        top_files.append(f"{name}:{total}")
+        if total > 0:
+            items.append((name, total))
+    items.sort(key=lambda x: (-x[1], x[0]))
+    return [f"{name}:{total}" for name, total in items[:limit]]
+
+
+def render_cleanup_drop_preview_markdown(summary: CleanupDropPreviewSummary) -> str:
+    top_files = _top_candidate_file_pairs(summary.by_file, limit=3)
     lines = [
         "# Cleanup Drop Preview",
         "",
@@ -1288,10 +1295,7 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         drop_tool_activity_older_than_days=30,
         drop_non_decision_older_than_days=30,
     )
-    preview_top_files: list[str] = []
-    for name, counts in list(cleanup_preview.by_file.items())[:3]:
-        total = int(counts.get("drop_tool_activity", 0)) + int(counts.get("drop_non_decision", 0))
-        preview_top_files.append(f"{name}:{total}")
+    preview_top_files = _top_candidate_file_pairs(cleanup_preview.by_file, limit=3)
 
     routing_valid = max(0, routing.total_rows - routing.parse_error_rows)
     routing_ok_rate = (routing.structured_ok_count / routing_valid * 100.0) if routing_valid else 0.0

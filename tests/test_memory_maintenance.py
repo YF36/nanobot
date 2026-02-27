@@ -392,6 +392,25 @@ def test_render_cleanup_drop_preview_markdown_medium_risk_recommendation(tmp_pat
     assert "--apply --apply-recent-days 7" in text
 
 
+def test_render_cleanup_drop_preview_top_candidate_files_sorted_by_impact(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(
+        memory_dir / "2020-01-01.md",
+        "# 2020-01-01\n\n## Topics\n\n- one\n",
+    )
+    _write(
+        memory_dir / "2020-01-02.md",
+        "# 2020-01-02\n\n## Topics\n\n- a\n- b\n- c\n- d\n- e\n",
+    )
+    summary = summarize_cleanup_drop_preview(
+        memory_dir,
+        drop_non_decision_older_than_days=30,
+    )
+    text = render_cleanup_drop_preview_markdown(summary)
+    assert "Top candidate files: `2020-01-02.md:5, 2020-01-01.md:1`" in text
+
+
 def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path) -> None:
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
