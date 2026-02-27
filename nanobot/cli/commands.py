@@ -529,6 +529,7 @@ def memory_observe(
     from nanobot.agent.memory_maintenance import (
         render_audit_markdown,
         render_cleanup_conversion_index_markdown,
+        render_cleanup_drop_preview_markdown,
         render_cleanup_stage_metrics_markdown,
         render_context_trace_markdown,
         render_memory_observability_dashboard,
@@ -537,6 +538,7 @@ def memory_observe(
         render_memory_update_guard_metrics_markdown,
         run_memory_audit,
         summarize_cleanup_conversion_index,
+        summarize_cleanup_drop_preview,
         summarize_cleanup_stage_metrics,
         summarize_context_trace,
         summarize_memory_conflict_metrics,
@@ -563,6 +565,13 @@ def memory_observe(
     trace_md = render_context_trace_markdown(summarize_context_trace(target_dir))
     cleanup_stage_md = render_cleanup_stage_metrics_markdown(summarize_cleanup_stage_metrics(target_dir))
     cleanup_conversion_md = render_cleanup_conversion_index_markdown(summarize_cleanup_conversion_index(target_dir))
+    cleanup_preview_md = render_cleanup_drop_preview_markdown(
+        summarize_cleanup_drop_preview(
+            target_dir,
+            drop_tool_activity_older_than_days=30,
+            drop_non_decision_older_than_days=30,
+        )
+    )
     dashboard_md = render_memory_observability_dashboard(target_dir)
 
     audit_path = output_dir / f"{date_prefix}-audit{suffix}.md"
@@ -572,6 +581,7 @@ def memory_observe(
     trace_path = output_dir / f"{date_prefix}-context-trace-summary{suffix}.md"
     cleanup_stage_path = output_dir / f"{date_prefix}-cleanup-stage-summary{suffix}.md"
     cleanup_conversion_path = output_dir / f"{date_prefix}-cleanup-conversion-summary{suffix}.md"
+    cleanup_preview_path = output_dir / f"{date_prefix}-cleanup-drop-preview-summary{suffix}.md"
     dashboard_path = output_dir / f"{date_prefix}-observability-dashboard{suffix}.md"
     audit_path.write_text(audit_md, encoding="utf-8")
     routing_path.write_text(routing_md, encoding="utf-8")
@@ -580,6 +590,7 @@ def memory_observe(
     trace_path.write_text(trace_md, encoding="utf-8")
     cleanup_stage_path.write_text(cleanup_stage_md, encoding="utf-8")
     cleanup_conversion_path.write_text(cleanup_conversion_md, encoding="utf-8")
+    cleanup_preview_path.write_text(cleanup_preview_md, encoding="utf-8")
     dashboard_path.write_text(dashboard_md, encoding="utf-8")
 
     console.print(f"[green]✓[/green] Wrote audit: {audit_path}")
@@ -589,6 +600,7 @@ def memory_observe(
     console.print(f"[green]✓[/green] Wrote context trace: {trace_path}")
     console.print(f"[green]✓[/green] Wrote cleanup stage summary: {cleanup_stage_path}")
     console.print(f"[green]✓[/green] Wrote cleanup conversion summary: {cleanup_conversion_path}")
+    console.print(f"[green]✓[/green] Wrote cleanup drop preview summary: {cleanup_preview_path}")
     console.print(f"[green]✓[/green] Wrote dashboard: {dashboard_path}")
 
 

@@ -362,6 +362,7 @@ def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path)
     assert "## Routing" in text
     assert "## Pruning Stage Distribution" in text
     assert "## Cleanup Conversion Traceability" in text
+    assert "## Half-Life Drop Preview (30d)" in text
     assert "## Suggested Next Actions" in text
 
 

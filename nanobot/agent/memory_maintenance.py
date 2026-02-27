@@ -1220,6 +1220,11 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
     trace = summarize_context_trace(memory_dir)
     cleanup_stage = summarize_cleanup_stage_metrics(memory_dir)
     cleanup_conv = summarize_cleanup_conversion_index(memory_dir)
+    cleanup_preview = summarize_cleanup_drop_preview(
+        memory_dir,
+        drop_tool_activity_older_than_days=30,
+        drop_non_decision_older_than_days=30,
+    )
 
     routing_valid = max(0, routing.total_rows - routing.parse_error_rows)
     routing_ok_rate = (routing.structured_ok_count / routing_valid * 100.0) if routing_valid else 0.0
@@ -1264,6 +1269,10 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
             f"`{', '.join([f'{k}:{v}' for k, v in list(cleanup_conv.action_counts.items())[:3]]) if cleanup_conv.action_counts else 'none'}`"
         ),
         "",
+        "## Half-Life Drop Preview (30d)",
+        f"- tool_activity candidates: `{cleanup_preview.drop_tool_activity_candidates}`",
+        f"- non_decision candidates: `{cleanup_preview.drop_non_decision_candidates}`",
+        "",
         "## Suggested Next Actions",
     ]
 
@@ -1290,6 +1299,15 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
             )
         if non_decision_drop >= 50:
             lines.append("- `drop_non_decision` absolute count is large; sample-check archived dailies before widening rollout.")
+    total_preview_candidates = (
+        cleanup_preview.drop_tool_activity_candidates + cleanup_preview.drop_non_decision_candidates
+    )
+    if total_preview_candidates > 0:
+        lines.append(
+            "- Use preview before apply: `nanobot memory-audit --apply-drop-preview --drop-tool-activity-older-than-days 30 --drop-non-decision-older-than-days 30`"
+        )
+    if cleanup_preview.drop_non_decision_candidates >= 50:
+        lines.append("- Preview shows high non-decision drops; consider narrowing `--drop-non-decision-older-than-days` first.")
     if lines[-1] == "## Suggested Next Actions":
         lines.append("- No immediate action required; continue observing daily snapshots.")
 
