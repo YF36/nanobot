@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -85,7 +85,10 @@ class MemoryStore:
     )
     _MEMORY_SANITIZE_LOG_SAMPLE_LIMIT = 3
     _MEMORY_SANITIZE_LOG_SAMPLE_CHARS = 120
+    _MEMORY_UPDATE_SHRINK_GUARD_RATIO = 0.4
+    _MEMORY_UPDATE_MIN_HEADING_RETAIN_RATIO = 0.5
     _HISTORY_ENTRY_DATE_RE = re.compile(r"^\[(20\d{2}-\d{2}-\d{2})(?:\s+\d{2}:\d{2})?\]")
+    _DAILY_FILE_DATE_RE = re.compile(r"^(20\d{2}-\d{2}-\d{2})\.md$")
     _DAILY_MEMORY_SECTIONS = (
         "Topics",
         "Decisions",
@@ -100,6 +103,18 @@ class MemoryStore:
     }
     _HISTORY_ENTRY_MAX_CHARS = 600
     _DAILY_BULLET_MAX_CHARS = 240
+    _FALLBACK_PREFIX_PATTERNS = (
+        re.compile(
+            r"^(?:User|Assistant|System)\s+(?:asked|requested|shared|sent|provided|explained|confirmed|discussed)\s+",
+            re.IGNORECASE,
+        ),
+        re.compile(r"^(?:用户|助手|系统)(?:询问|请求|分享|发送|提供|解释|确认|讨论)(?:了)?"),
+    )
+    _FALLBACK_META_CLAUSE_PATTERNS = (
+        re.compile(r"\bThis interaction indicates\b.*$", re.IGNORECASE),
+        re.compile(r"\baligns with user's established interest\b.*$", re.IGNORECASE),
+        re.compile(r"\bNo new information added\b.*$", re.IGNORECASE),
+    )
 
     def __init__(self, workspace: Path):
         self.memory_dir = ensure_dir(workspace / "memory")
@@ -237,6 +252,23 @@ class MemoryStore:
         return text, "ok"
 
     @classmethod
+    def _compact_fallback_daily_bullet(cls, text: str) -> str:
+        """Conservative de-noise for fallback daily bullets.
+
+        Keeps core meaning while removing common templated phrasing.
+        """
+        compact = " ".join(text.split()).strip()
+        if not compact:
+            return ""
+        for pat in cls._FALLBACK_PREFIX_PATTERNS:
+            compact = pat.sub("", compact).strip()
+        for pat in cls._FALLBACK_META_CLAUSE_PATTERNS:
+            compact = pat.sub("", compact).strip()
+        compact = compact.strip()
+        compact = re.sub(r"^[-:;\s]+", "", compact)
+        return compact
+
+    @classmethod
     def _normalize_daily_sections_detailed(cls, value: object) -> tuple[dict[str, list[str]] | None, str]:
         if value is None:
             return None, "missing"
@@ -314,7 +346,11 @@ class MemoryStore:
             daily_file.write_text(self._daily_memory_template(date_str), encoding="utf-8")
             created = True
         section = self._daily_section_for_history_entry(entry)
-        wrote = self._append_bullet_to_daily_section(daily_file, section, self._history_entry_body(entry))
+        fallback_bullet = self._compact_fallback_daily_bullet(self._history_entry_body(entry))
+        fallback_bullet, _ = self._sanitize_daily_bullet(fallback_bullet)
+        wrote = False
+        if fallback_bullet:
+            wrote = self._append_bullet_to_daily_section(daily_file, section, fallback_bullet)
         logger.debug(
             "Memory daily entry appended",
             date=date_str,
@@ -329,6 +365,51 @@ class MemoryStore:
     def get_memory_context(self) -> str:
         long_term = self.read_long_term()
         return f"## Long-term Memory\n{long_term}" if long_term else ""
+
+    def get_recent_daily_context(
+        self,
+        *,
+        days: int = 7,
+        max_bullets: int = 12,
+        max_chars: int = 1200,
+    ) -> str:
+        """Return a compact recent-daily snippet for recall-style queries."""
+        window_days = max(1, days)
+        bullet_budget = max(1, max_bullets)
+        char_budget = max(200, max_chars)
+        cutoff = datetime.now().date() - timedelta(days=window_days - 1)
+
+        dated_files: list[tuple[str, Path]] = []
+        for p in self.memory_dir.glob("*.md"):
+            m = self._DAILY_FILE_DATE_RE.match(p.name)
+            if not m:
+                continue
+            date_str = m.group(1)
+            try:
+                d = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if d >= cutoff:
+                dated_files.append((date_str, p))
+        dated_files.sort(key=lambda x: x[0], reverse=True)
+
+        lines: list[str] = []
+        total_chars = 0
+        for date_str, path in dated_files:
+            text = path.read_text(encoding="utf-8")
+            for raw in text.splitlines():
+                if not raw.startswith("- "):
+                    continue
+                bullet = raw[2:].strip()
+                if not bullet:
+                    continue
+                line = f"- {date_str}: {bullet}"
+                projected = total_chars + len(line) + 1
+                if len(lines) >= bullet_budget or projected > char_budget:
+                    return "\n".join(lines)
+                lines.append(line)
+                total_chars = projected
+        return "\n".join(lines)
 
     @classmethod
     def _estimate_tokens(cls, text: str) -> int:
@@ -477,6 +558,40 @@ class MemoryStore:
         """Backward-compatible wrapper returning removed section headings only."""
         sanitized, details = cls._sanitize_memory_update_detailed(update, current_memory)
         return sanitized, list(details["removed_sections"])
+
+    @classmethod
+    def _extract_h2_headings(cls, text: str) -> list[str]:
+        headings: list[str] = []
+        for line in text.splitlines():
+            if line.startswith("## "):
+                heading = line[3:].strip()
+                if heading:
+                    headings.append(heading)
+        return headings
+
+    @classmethod
+    def _memory_update_guard_reason(cls, current_memory: str, candidate_update: str) -> str | None:
+        """Return reason string when memory_update looks suspicious and should be skipped."""
+        current = current_memory.strip()
+        candidate = candidate_update.strip()
+        if not candidate:
+            return "empty_candidate"
+        if not current:
+            return None
+
+        current_len = len(current)
+        candidate_len = len(candidate)
+        if current_len >= 200 and candidate_len < int(current_len * cls._MEMORY_UPDATE_SHRINK_GUARD_RATIO):
+            return "excessive_shrink"
+
+        current_h2 = cls._extract_h2_headings(current)
+        if current_h2:
+            candidate_h2 = set(cls._extract_h2_headings(candidate))
+            kept = sum(1 for h in current_h2 if h in candidate_h2)
+            keep_ratio = kept / len(current_h2)
+            if keep_ratio < cls._MEMORY_UPDATE_MIN_HEADING_RETAIN_RATIO:
+                return "heading_retention_too_low"
+        return None
 
     def _fit_chunk_by_soft_budget(
         self,
@@ -719,7 +834,16 @@ class MemoryStore:
                                 returned_memory_chars=len(update),
                             )
                         elif update != current_memory:
-                            self.write_long_term(update)
+                            guard_reason = self._memory_update_guard_reason(current_memory, update)
+                            if guard_reason:
+                                logger.warning(
+                                    "Skipping memory_update write due to guard",
+                                    reason=guard_reason,
+                                    current_memory_chars=len(current_memory),
+                                    returned_memory_chars=len(update),
+                                )
+                            else:
+                                self.write_long_term(update)
 
                     processed_count += len(chunk)
                     pending = pending[len(chunk):]

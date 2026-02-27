@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -61,6 +62,24 @@ def test_append_daily_history_entry_deduplicates_exact_bullets_within_section(tm
 
     content = (mm.memory_dir / "2026-02-25.md").read_text(encoding="utf-8")
     assert content.count("- Duplicate summary.") == 1
+
+
+def test_compact_fallback_daily_bullet_removes_templated_prefix_and_meta_clause() -> None:
+    text = (
+        "User asked about memory design. This interaction indicates a requirement for long-term retention."
+    )
+    compact = MemoryStore._compact_fallback_daily_bullet(text)
+    assert compact == "about memory design."
+
+
+def test_append_daily_history_entry_applies_compact_fallback(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    mm.append_daily_history_entry(
+        "[2026-02-25 10:00] User asked about memory design. No new information added."
+    )
+    content = (mm.memory_dir / "2026-02-25.md").read_text(encoding="utf-8")
+    assert "- about memory design." in content
+    assert "No new information added" not in content
 
 
 def test_normalize_daily_sections_detailed_reports_quality_reasons() -> None:
@@ -157,6 +176,19 @@ def test_append_daily_sections_deduplicates_exact_bullets(tmp_path: Path) -> Non
     assert content.count("- run pytest") == 1
 
 
+def test_get_recent_daily_context_returns_recent_bullets_only(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    today = datetime.now().strftime("%Y-%m-%d")
+    mm.append_daily_sections(today, {"topics": ["recent topic"], "decisions": ["recent decision"]})
+    old = mm.memory_dir / "2020-01-01.md"
+    old.write_text("# 2020-01-01\n\n## Topics\n\n- old topic\n", encoding="utf-8")
+
+    context = mm.get_recent_daily_context(days=1, max_bullets=5, max_chars=500)
+    assert "recent topic" in context
+    assert "recent decision" in context
+    assert "old topic" not in context
+
+
 def test_consolidation_system_prompt_restricts_memory_update_to_long_term_facts() -> None:
     prompt = MemoryStore._consolidation_system_prompt()
     assert "long-term stable facts only" in prompt
@@ -238,6 +270,35 @@ def test_sanitize_memory_update_detailed_reports_reason_categories() -> None:
     assert "今天讨论的主题" in details["recent_topic_section_samples"][0]
     assert details["transient_status_line_samples"]
     assert "service timeout error" in details["transient_status_line_samples"][0]
+
+
+def test_memory_update_guard_detects_excessive_shrink() -> None:
+    current = (
+        "# Long-term Memory\n\n"
+        "## Preferences\n- 中文沟通\n\n"
+        "## Project Context\n- "
+        + ("memory roadmap details " * 20)
+        + "\n\n"
+        "## Constraints\n- local-first\n"
+    )
+    candidate = "# Long-term Memory\n\n## Preferences\n- 中文沟通\n"
+    reason = MemoryStore._memory_update_guard_reason(current, candidate)
+    assert reason == "excessive_shrink"
+
+
+def test_memory_update_guard_detects_heading_retention_drop() -> None:
+    current = (
+        "# Long-term Memory\n\n"
+        "## Preferences\n- 中文沟通\n\n"
+        "## Project Context\n- memory roadmap\n\n"
+        "## Constraints\n- local-first\n"
+    )
+    candidate = (
+        "# Long-term Memory\n\n"
+        "## New Section\n- unrelated\n"
+    )
+    reason = MemoryStore._memory_update_guard_reason(current, candidate)
+    assert reason == "heading_retention_too_low"
 
 
 @pytest.mark.asyncio
@@ -445,3 +506,42 @@ async def test_consolidate_skips_history_entry_when_quality_gate_rejects(tmp_pat
     assert result is True
     history_text = mm.history_file.read_text(encoding="utf-8") if mm.history_file.exists() else ""
     assert history_text.strip() == ""
+
+
+@pytest.mark.asyncio
+async def test_consolidate_skips_memory_update_when_guard_triggers(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    current = (
+        "# Long-term Memory\n\n"
+        "## Preferences\n- 中文沟通\n\n"
+        "## Project Context\n- memory roadmap\n\n"
+        "## Constraints\n- local-first\n"
+    )
+    mm.write_long_term(current)
+
+    session = Session(key="test:memory_update_guard")
+    for i in range(60):
+        session.add_message("user", f"msg{i}")
+
+    provider = MagicMock()
+
+    async def _fake_chat(**kwargs):
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="t1",
+                    name="save_memory",
+                    arguments={
+                        "history_entry": "[2026-02-25 10:00] Keep stable memory only.",
+                        "memory_update": "# Long-term Memory\n\n## Preferences\n- 中文沟通\n",
+                    },
+                )
+            ],
+        )
+
+    provider.chat = _fake_chat
+    result = await mm.consolidate(session=session, provider=provider, model="test", memory_window=50)
+
+    assert result is True
+    assert mm.read_long_term() == current

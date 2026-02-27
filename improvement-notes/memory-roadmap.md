@@ -168,6 +168,10 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已实施（step2+，2026-02-27）：daily 写入去噪增强：
   - fallback（`history_entry`）写入 daily 时仅写正文，不再带时间戳前缀；
   - 同一 daily section 内完全相同 bullet 自动去重（结构化写入与 fallback 均生效）。
+- 已实施（step2+，2026-02-27）：fallback 质量收敛（保守规则）：
+  - 去除常见模板化角色前缀（如 `User asked...`）；
+  - 去除明显冗余元信息尾句（如 `This interaction indicates...` / `No new information added...`）；
+  - 保持“仅规则压缩、不做语义改写”。
 - 保持兼容：`history_entry` / `memory_update` 仍为必填主路径，旧模型输出不受影响。
 
 当前策略决策（阶段性，2026-02-26）：
@@ -226,6 +230,13 @@ M3 设计原则（补充，吸收 Clawdbot/相关文章思路）：
   - 临时状态、过期偏好、旧决策需要可降权/过期/替换。
   - 未来引入 TTL / janitor 时，目标不只是“省空间”，而是避免矛盾记忆与脏记忆长期驻留。
 
+M3 前置保护（2026-02-27 已落地）：
+
+- 已实施 `memory_update` 异常变更阈值保护（guard）：
+  - 候选更新相对当前内容“过度收缩”时拒写；
+  - `##` 标题保留率过低时拒写（结构突变保护）；
+  - 拒写时记录告警日志并保留现有 `MEMORY.md`，防止一次异常 consolidation 覆盖长期记忆。
+
 实施建议：
 
 - daily file 默认不注入 system prompt，只在需要回顾近期上下文时按需读取。
@@ -237,6 +248,14 @@ M3 设计原则（补充，吸收 Clawdbot/相关文章思路）：
   - `L2`: daily files（本阶段已有）
   - `L1`: insights / lessons（LLM 反思提炼或结构化教训）
   - `L0`: `.abstract` 目录摘要（优先读，降低 token）
+
+M3 最小实现进展（2026-02-27）：
+
+- 已实施“按需读取 recent daily memory（最小版）”：
+  - 默认不注入 daily 内容；
+  - 当当前消息命中回顾类关键词（如“之前/上次/回顾/recall/previous”等）时，
+    才动态注入最近 7 天的精简 daily bullet 片段（有条数与字符上限）。
+- 目标：在不常驻增加 prompt 噪声的前提下，增强“回顾最近对话”场景的命中率。
 
 M3 验收标准：
 

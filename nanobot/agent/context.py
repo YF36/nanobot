@@ -56,6 +56,9 @@ class ContextBuilder:
     _DEFAULT_MAX_CONTEXT_TOKENS = 30_000
     _TOOL_CATALOG_COMPACT_THRESHOLD = 10
     _TOOL_CATALOG_MAX_CHARS_BEFORE_COMPACT = 2200
+    _RECENT_DAILY_RECALL_DAYS = 7
+    _RECENT_DAILY_RECALL_MAX_BULLETS = 12
+    _RECENT_DAILY_RECALL_MAX_CHARS = 1200
 
     def __init__(
         self,
@@ -440,6 +443,23 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
 
         # System prompt — split into static (cacheable) and dynamic parts
         static_prompt, dynamic_prompt = self.build_system_prompt_parts(skill_names)
+        if self._should_include_recent_daily_memory(current_message):
+            recent_daily = self.memory.get_recent_daily_context(
+                days=self._RECENT_DAILY_RECALL_DAYS,
+                max_bullets=self._RECENT_DAILY_RECALL_MAX_BULLETS,
+                max_chars=self._RECENT_DAILY_RECALL_MAX_CHARS,
+            )
+            if recent_daily:
+                dynamic_prompt = "\n\n---\n\n".join(
+                    p
+                    for p in [
+                        dynamic_prompt,
+                        "# Recent Daily Memory (On-Demand)\n\n"
+                        "Use this only as recall hints; verify with files when precision matters.\n\n"
+                        + recent_daily,
+                    ]
+                    if p
+                )
         tool_runtime_prompt = self._build_tool_runtime_prompt(tool_definitions)
         if tool_runtime_prompt:
             dynamic_prompt = "\n\n---\n\n".join(p for p in [dynamic_prompt, tool_runtime_prompt] if p)
@@ -489,6 +509,28 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         messages.append({"role": "user", "content": user_content})
 
         return messages
+
+    @staticmethod
+    def _should_include_recent_daily_memory(current_message: str) -> bool:
+        text = (current_message or "").strip().lower()
+        if not text:
+            return False
+        keywords = (
+            "之前",
+            "刚才",
+            "上次",
+            "最近聊",
+            "回顾",
+            "回忆",
+            "我们聊过",
+            "recall",
+            "earlier",
+            "previous",
+            "what did we",
+            "history",
+            "last time",
+        )
+        return any(k in text for k in keywords)
 
     @staticmethod
     def _build_runtime_context_message(

@@ -1,10 +1,21 @@
 import json
+from datetime import datetime
 
 from nanobot.agent.context import ContextBuilder
 
 
 def _builder(tmp_path):
     return ContextBuilder(tmp_path)
+
+
+def _system_joined_text(system_content) -> str:
+    if isinstance(system_content, list):
+        return "\n".join(
+            block.get("text", "")
+            for block in system_content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return str(system_content)
 
 
 def test_compact_history_preserves_consecutive_tool_messages(tmp_path) -> None:
@@ -239,6 +250,29 @@ def test_build_messages_omits_runtime_tool_catalog_when_no_tools(tmp_path) -> No
     else:
         joined = str(content)
     assert "## Runtime Tool Catalog" not in joined
+
+
+def test_build_messages_includes_recent_daily_memory_on_recall_query(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    today = datetime.now().strftime("%Y-%m-%d")
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(exist_ok=True)
+    (memory_dir / f"{today}.md").write_text(
+        f"# {today}\n\n## Topics\n\n- discussed memory roadmap\n", encoding="utf-8"
+    )
+
+    messages = builder.build_messages(history=[], current_message="我们之前聊过什么？")
+    system_text = _system_joined_text(messages[0]["content"])
+    assert "## Runtime Tool Catalog" not in system_text
+    assert "Recent Daily Memory (On-Demand)" in system_text
+    assert "discussed memory roadmap" in system_text
+
+
+def test_build_messages_does_not_include_recent_daily_memory_on_normal_query(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    messages = builder.build_messages(history=[], current_message="你好，介绍一下今天功能")
+    system_text = _system_joined_text(messages[0]["content"])
+    assert "Recent Daily Memory (On-Demand)" not in system_text
 
 
 def test_build_messages_moves_session_metadata_out_of_system_prompt(tmp_path) -> None:
