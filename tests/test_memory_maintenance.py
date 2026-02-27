@@ -191,6 +191,7 @@ def test_summarize_memory_update_guard_metrics_counts_reasons(tmp_path: Path) ->
     assert "incremental edits" in text
     assert "## Priority Focus" in text
     assert "excessive_shrink: `2`" in text
+    assert "dominant_reason: `excessive_shrink`" in text
     assert "## Candidate Preview Samples" in text
 
 

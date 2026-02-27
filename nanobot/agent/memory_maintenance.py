@@ -1081,6 +1081,7 @@ def render_memory_update_guard_metrics_markdown(summary: MemoryUpdateGuardMetric
             f"- Rows: `{summary.total_rows}` (valid=`{total_valid}`, parse_errors=`{summary.parse_error_rows}`)",
             f"- avg_current_memory_chars: `{summary.avg_current_memory_chars}`",
             f"- avg_returned_memory_chars: `{summary.avg_returned_memory_chars}`",
+            f"- dominant_reason: `{next(iter(summary.reason_counts.keys())) if summary.reason_counts else 'none'}`",
             "",
             "## Guard Reasons",
         ]
