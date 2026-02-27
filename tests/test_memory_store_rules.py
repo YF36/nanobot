@@ -362,6 +362,23 @@ def test_memory_update_guard_detects_candidate_too_long() -> None:
     assert reason == "candidate_too_long"
 
 
+def test_memory_update_guard_detects_code_block_content() -> None:
+    current = (
+        "# Long-term Memory\n\n"
+        "## Preferences\n- 中文沟通\n\n"
+        "## Project Context\n- memory roadmap\n"
+    )
+    candidate = (
+        "# Long-term Memory\n\n"
+        "## Notes\n"
+        "```text\n"
+        "raw command output ...\n"
+        "```\n"
+    )
+    reason = MemoryStore._memory_update_guard_reason(current, candidate)
+    assert reason == "contains_code_block"
+
+
 @pytest.mark.asyncio
 async def test_consolidate_accepts_json_string_tool_arguments(tmp_path: Path) -> None:
     mm = MemoryStore(workspace=tmp_path)

@@ -89,6 +89,7 @@ class MemoryStore:
     _MEMORY_UPDATE_MIN_HEADING_RETAIN_RATIO = 0.5
     _MEMORY_UPDATE_MIN_STRUCTURED_CHARS = 120
     _MEMORY_UPDATE_MAX_CHARS = 12_000
+    _MEMORY_UPDATE_CODE_FENCE_MAX = 0
     _MEMORY_UPDATE_DATE_LINE_RATIO_GUARD = 0.2
     _MEMORY_UPDATE_DATE_LINE_MIN_COUNT = 3
     _DATE_TOKEN_RE = re.compile(r"\b20\d{2}-\d{2}-\d{2}\b")
@@ -734,6 +735,8 @@ class MemoryStore:
         candidate_len = len(candidate)
         if candidate_len > cls._MEMORY_UPDATE_MAX_CHARS:
             return "candidate_too_long"
+        if candidate.count("```") > cls._MEMORY_UPDATE_CODE_FENCE_MAX:
+            return "contains_code_block"
         if current_len >= 200 and candidate_len < int(current_len * cls._MEMORY_UPDATE_SHRINK_GUARD_RATIO):
             return "excessive_shrink"
         if candidate_len >= cls._MEMORY_UPDATE_MIN_STRUCTURED_CHARS and not cls._has_structured_markers(candidate):
