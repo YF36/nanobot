@@ -38,9 +38,10 @@ def test_memory_observe_generates_three_reports(tmp_path: Path, monkeypatch) -> 
     )
     assert result.exit_code == 0
     files = sorted(p.name for p in obs_dir.glob("*-smoke.md"))
-    assert len(files) == 5
+    assert len(files) == 6
     assert any(name.endswith("audit-smoke.md") for name in files)
     assert any(name.endswith("metrics-summary-smoke.md") for name in files)
     assert any(name.endswith("guard-metrics-summary-smoke.md") for name in files)
     assert any(name.endswith("conflict-metrics-summary-smoke.md") for name in files)
     assert any(name.endswith("context-trace-summary-smoke.md") for name in files)
+    assert any(name.endswith("observability-dashboard-smoke.md") for name in files)

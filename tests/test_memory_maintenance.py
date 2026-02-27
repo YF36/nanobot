@@ -5,6 +5,7 @@ from nanobot.agent.memory_maintenance import (
     apply_conservative_cleanup,
     build_cleanup_plan,
     render_context_trace_markdown,
+    render_memory_observability_dashboard,
     render_daily_archive_dry_run_markdown,
     render_cleanup_effect_markdown,
     render_memory_conflict_metrics_markdown,
@@ -240,6 +241,25 @@ def test_render_context_trace_markdown_handles_missing_file(tmp_path: Path) -> N
     summary = summarize_context_trace(memory_dir)
     text = render_context_trace_markdown(summary)
     assert "Trace file: not found" in text
+
+
+def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
+    _write(memory_dir / "HISTORY.md", "")
+    _write(memory_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n- old\n")
+    _write(
+        memory_dir / "daily-routing-metrics.jsonl",
+        '{"date":"2026-02-27","structured_daily_ok":false,"fallback_reason":"missing"}\n',
+    )
+    _write(memory_dir / "context-trace.jsonl", '{"stage":"before_send","estimated_tokens":100,"prefix_hash":"a1"}\n')
+
+    text = render_memory_observability_dashboard(memory_dir)
+    assert "# Memory Observability Dashboard" in text
+    assert "## Quality Snapshot" in text
+    assert "## Routing" in text
+    assert "## Suggested Next Actions" in text
 
 
 def test_apply_conservative_cleanup_scopes_recent_daily_files(tmp_path: Path) -> None:

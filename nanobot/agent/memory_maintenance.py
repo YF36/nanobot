@@ -750,6 +750,59 @@ def render_context_trace_markdown(summary: ContextTraceSummary) -> str:
     return "\n".join(lines)
 
 
+def render_memory_observability_dashboard(memory_dir: Path) -> str:
+    audit = run_memory_audit(memory_dir)
+    routing = summarize_daily_routing_metrics(memory_dir)
+    guard = summarize_memory_update_guard_metrics(memory_dir)
+    conflict = summarize_memory_conflict_metrics(memory_dir)
+    trace = summarize_context_trace(memory_dir)
+
+    routing_valid = max(0, routing.total_rows - routing.parse_error_rows)
+    routing_ok_rate = (routing.structured_ok_count / routing_valid * 100.0) if routing_valid else 0.0
+
+    lines = [
+        "# Memory Observability Dashboard",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+        f"- Memory dir: `{memory_dir}`",
+        "",
+        "## Quality Snapshot",
+        f"- HISTORY long(>600): `{audit.history_long_entry_count}`",
+        f"- DAILY long bullets(>240): `{audit.daily_long_bullet_count}`",
+        f"- DAILY duplicates: `{audit.daily_duplicate_count}`",
+        "",
+        "## Routing",
+        f"- structured_daily_ok rate: `{routing_ok_rate:.1f}%` (valid=`{routing_valid}`)",
+        f"- top fallback reasons: `{', '.join(list(routing.fallback_reason_counts.keys())[:3]) if routing.fallback_reason_counts else 'none'}`",
+        "",
+        "## Guard / Conflict",
+        f"- memory_update guard events: `{max(0, guard.total_rows - guard.parse_error_rows)}`",
+        f"- memory conflict events: `{max(0, conflict.total_rows - conflict.parse_error_rows)}`",
+        "",
+        "## Context Trace",
+        f"- prefix stability ratio: `{trace.prefix_stability_ratio:.2f}`",
+        f"- trace rows(valid): `{max(0, trace.total_rows - trace.parse_error_rows)}`",
+        "",
+        "## Suggested Next Actions",
+    ]
+
+    if audit.daily_long_bullet_count > 0 or audit.daily_duplicate_count > 0:
+        lines.append("- Run controlled cleanup: `nanobot memory-audit --apply --apply-recent-days 7 --apply-skip-history`")
+    if routing.fallback_reason_counts:
+        lines.append("- Inspect fallback fix hints via: `nanobot memory-audit --metrics-summary`")
+    if max(0, guard.total_rows - guard.parse_error_rows) > 0:
+        lines.append("- Review guard reasons: `nanobot memory-audit --guard-metrics-summary`")
+    if max(0, conflict.total_rows - conflict.parse_error_rows) > 0:
+        lines.append("- Review preference conflicts: `nanobot memory-audit --conflict-metrics-summary`")
+    if trace.trace_file_exists and trace.prefix_stability_ratio < 0.85:
+        lines.append("- Prefix stability below target (0.85): inspect dynamic prompt mutations / tool catalog drift")
+    if lines[-1] == "## Suggested Next Actions":
+        lines.append("- No immediate action required; continue observing daily snapshots.")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
 def build_cleanup_plan(memory_dir: Path) -> dict[str, object]:
     audit = run_memory_audit(memory_dir)
     plan: dict[str, object] = {

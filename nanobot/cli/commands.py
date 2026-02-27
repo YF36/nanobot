@@ -435,6 +435,7 @@ def memory_observe(
     from nanobot.agent.memory_maintenance import (
         render_audit_markdown,
         render_context_trace_markdown,
+        render_memory_observability_dashboard,
         render_memory_conflict_metrics_markdown,
         render_daily_routing_metrics_markdown,
         render_memory_update_guard_metrics_markdown,
@@ -462,23 +463,27 @@ def memory_observe(
     guard_md = render_memory_update_guard_metrics_markdown(summarize_memory_update_guard_metrics(target_dir))
     conflict_md = render_memory_conflict_metrics_markdown(summarize_memory_conflict_metrics(target_dir))
     trace_md = render_context_trace_markdown(summarize_context_trace(target_dir))
+    dashboard_md = render_memory_observability_dashboard(target_dir)
 
     audit_path = output_dir / f"{date_prefix}-audit{suffix}.md"
     routing_path = output_dir / f"{date_prefix}-metrics-summary{suffix}.md"
     guard_path = output_dir / f"{date_prefix}-guard-metrics-summary{suffix}.md"
     conflict_path = output_dir / f"{date_prefix}-conflict-metrics-summary{suffix}.md"
     trace_path = output_dir / f"{date_prefix}-context-trace-summary{suffix}.md"
+    dashboard_path = output_dir / f"{date_prefix}-observability-dashboard{suffix}.md"
     audit_path.write_text(audit_md, encoding="utf-8")
     routing_path.write_text(routing_md, encoding="utf-8")
     guard_path.write_text(guard_md, encoding="utf-8")
     conflict_path.write_text(conflict_md, encoding="utf-8")
     trace_path.write_text(trace_md, encoding="utf-8")
+    dashboard_path.write_text(dashboard_md, encoding="utf-8")
 
     console.print(f"[green]✓[/green] Wrote audit: {audit_path}")
     console.print(f"[green]✓[/green] Wrote routing metrics: {routing_path}")
     console.print(f"[green]✓[/green] Wrote guard metrics: {guard_path}")
     console.print(f"[green]✓[/green] Wrote conflict metrics: {conflict_path}")
     console.print(f"[green]✓[/green] Wrote context trace: {trace_path}")
+    console.print(f"[green]✓[/green] Wrote dashboard: {dashboard_path}")
 
 
 def _make_provider(config: Config):

@@ -198,6 +198,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已实施：`nanobot memory-audit --conflict-metrics-summary` 汇总冲突 key 分布与高频会话。
 - 已实施：`nanobot memory-audit --conflict-metrics-out <path>` 可导出冲突指标汇总 Markdown。
 - 已实施：`nanobot memory-observe` 一键生成“审计 + routing 指标 + guard 指标 + conflict 指标”日快照（默认输出到 `improvement-notes/memory-observations/`）。
+- 已实施：`memory-observe` 额外输出 `observability-dashboard` 聚合报告（单文件汇总关键指标与下一步建议）。
 - 已实施：`nanobot memory-audit --archive-dry-run --archive-keep-days N` 归档试点（只输出候选文件与体量，不改文件）。
 - 已实施：`nanobot memory-audit --archive-out <path>` 可导出归档 dry-run 报告。
 
