@@ -363,6 +363,7 @@ M3 验收标准：
   - 新增观测阈值提示：`memory-observe` dashboard 会在 `drop_non_decision` 占比过高时给出窗口收敛建议，降低过清理风险。
   - 新增 apply 前预估：`memory-audit --apply-drop-preview [--apply-recent-days N]`，先输出候选删除体量（tool/non-decision）再决定是否执行 `--apply`。
   - `memory-observe` 已纳入 30d 半衰期预估摘要（dashboard + `*-cleanup-drop-preview-summary.md`），用于日常先观测再执行。
+  - 预估结果新增风险分级（`low/medium/high`），dashboard 在高风险时提示先缩小范围（如 recent-days 灰度）再全量 apply。
 
 6. 约束优先级裁决（冲突处理模板）
 

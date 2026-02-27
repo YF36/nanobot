@@ -338,10 +338,12 @@ def test_summarize_cleanup_drop_preview_counts_candidates(tmp_path: Path) -> Non
     assert summary.scoped_daily_files == 1
     assert summary.drop_tool_activity_candidates == 1
     assert summary.drop_non_decision_candidates == 2
+    assert summary.risk_level == "low"
     assert summary.by_file[f"{old_day}.md"]["drop_non_decision"] == 2
     text = render_cleanup_drop_preview_markdown(summary)
     assert "Cleanup Drop Preview" in text
     assert "drop_non_decision_candidates" in text
+    assert "Risk level" in text
 
 
 def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path) -> None:
@@ -363,6 +365,7 @@ def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path)
     assert "## Pruning Stage Distribution" in text
     assert "## Cleanup Conversion Traceability" in text
     assert "## Half-Life Drop Preview (30d)" in text
+    assert "preview risk level" in text
     assert "## Suggested Next Actions" in text
 
 

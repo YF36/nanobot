@@ -133,6 +133,7 @@ class CleanupDropPreviewSummary:
     skipped_daily_files: int
     drop_tool_activity_candidates: int
     drop_non_decision_candidates: int
+    risk_level: str
     by_file: dict[str, dict[str, int]]
 
 
@@ -564,11 +565,20 @@ def summarize_cleanup_drop_preview(
                 "drop_non_decision": file_non_decision,
             }
 
+    total_candidates = tool_candidates + non_decision_candidates
+    if non_decision_candidates >= 50 or total_candidates >= 80:
+        risk_level = "high"
+    elif non_decision_candidates >= 20 or total_candidates >= 30:
+        risk_level = "medium"
+    else:
+        risk_level = "low"
+
     return CleanupDropPreviewSummary(
         scoped_daily_files=len(daily_files),
         skipped_daily_files=max(0, len(all_daily_files) - len(daily_files)),
         drop_tool_activity_candidates=tool_candidates,
         drop_non_decision_candidates=non_decision_candidates,
+        risk_level=risk_level,
         by_file=dict(sorted(by_file.items())),
     )
 
@@ -579,6 +589,7 @@ def render_cleanup_drop_preview_markdown(summary: CleanupDropPreviewSummary) -> 
         "",
         f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
         f"- Scoped daily files: `{summary.scoped_daily_files}` (skipped=`{summary.skipped_daily_files}`)",
+        f"- Risk level: `{summary.risk_level}`",
         "",
         "## Candidate Counts",
         f"- drop_tool_activity_candidates: `{summary.drop_tool_activity_candidates}`",
@@ -1272,6 +1283,7 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         "## Half-Life Drop Preview (30d)",
         f"- tool_activity candidates: `{cleanup_preview.drop_tool_activity_candidates}`",
         f"- non_decision candidates: `{cleanup_preview.drop_non_decision_candidates}`",
+        f"- preview risk level: `{cleanup_preview.risk_level}`",
         "",
         "## Suggested Next Actions",
     ]
@@ -1306,6 +1318,8 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         lines.append(
             "- Use preview before apply: `nanobot memory-audit --apply-drop-preview --drop-tool-activity-older-than-days 30 --drop-non-decision-older-than-days 30`"
         )
+    if cleanup_preview.risk_level == "high":
+        lines.append("- Half-life preview risk is high; run on recent-days scope first and sample-check before full apply.")
     if cleanup_preview.drop_non_decision_candidates >= 50:
         lines.append("- Preview shows high non-decision drops; consider narrowing `--drop-non-decision-older-than-days` first.")
     if lines[-1] == "## Suggested Next Actions":
