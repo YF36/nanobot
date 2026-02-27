@@ -414,6 +414,7 @@ def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path)
     assert "## Half-Life Drop Preview (30d)" in text
     assert "preview risk level" in text
     assert "preview dominant driver" in text
+    assert "preview top candidate files" in text
     assert "Low-risk rollout" in text
     assert "## Suggested Next Actions" in text
 

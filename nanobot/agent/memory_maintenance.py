@@ -1288,6 +1288,10 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         drop_tool_activity_older_than_days=30,
         drop_non_decision_older_than_days=30,
     )
+    preview_top_files: list[str] = []
+    for name, counts in list(cleanup_preview.by_file.items())[:3]:
+        total = int(counts.get("drop_tool_activity", 0)) + int(counts.get("drop_non_decision", 0))
+        preview_top_files.append(f"{name}:{total}")
 
     routing_valid = max(0, routing.total_rows - routing.parse_error_rows)
     routing_ok_rate = (routing.structured_ok_count / routing_valid * 100.0) if routing_valid else 0.0
@@ -1338,6 +1342,7 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         f"- non_decision candidates: `{cleanup_preview.drop_non_decision_candidates}`",
         f"- preview risk level: `{cleanup_preview.risk_level}`",
         f"- preview dominant driver: `{cleanup_preview.dominant_driver}`",
+        f"- preview top candidate files: `{', '.join(preview_top_files) if preview_top_files else 'none'}`",
         "",
         "## Suggested Next Actions",
     ]
