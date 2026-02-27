@@ -264,7 +264,7 @@ def memory_audit(
     sanitize_focus_filter: str = typer.Option(
         "",
         "--sanitize-focus-filter",
-        help="Optional sanitize focus filter: recent_topic or transient_status",
+        help="Optional sanitize focus filter: recent_topic, transient_status, or duplicate_bullets",
     ),
     conflict_metrics_summary: bool = typer.Option(
         False,

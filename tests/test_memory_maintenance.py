@@ -679,6 +679,21 @@ def test_render_memory_observability_dashboard_warns_on_high_duplicate_bullets_s
     assert "Duplicate-bullets sanitize volume is high" in text
 
 
+def test_render_memory_observability_dashboard_warns_on_very_high_duplicate_bullets_sanitize_volume(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
+    _write(memory_dir / "HISTORY.md", "")
+    _write(memory_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n")
+    _write(
+        _obs_file(memory_dir, "memory-update-sanitize-metrics.jsonl"),
+        '{"session_key":"s1","removed_recent_topic_section_count":0,"removed_transient_status_line_count":0,"removed_duplicate_bullet_count":21}\n',
+    )
+
+    text = render_memory_observability_dashboard(memory_dir)
+    assert "Duplicate-bullets sanitize volume is very high" in text
+
+
 def test_render_memory_observability_dashboard_warns_on_oversized_guard_candidates(tmp_path: Path) -> None:
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
