@@ -297,6 +297,15 @@ def memory_audit(
         "",
         help="Optional daily archive dry-run markdown output path",
     ),
+    apply_drop_preview: bool = typer.Option(
+        False,
+        "--apply-drop-preview",
+        help="Show drop candidate preview for apply half-life options (no file changes)",
+    ),
+    apply_drop_preview_out: str = typer.Option(
+        "",
+        help="Optional apply drop preview markdown output path",
+    ),
     apply: bool = typer.Option(False, "--apply", help="Apply conservative cleanup with automatic backup"),
     apply_recent_days: int = typer.Option(
         0,
@@ -326,6 +335,7 @@ def memory_audit(
         apply_conservative_cleanup,
         build_cleanup_plan,
         render_daily_archive_dry_run_markdown,
+        render_cleanup_drop_preview_markdown,
         render_cleanup_stage_metrics_markdown,
         render_cleanup_effect_markdown,
         render_cleanup_conversion_index_markdown,
@@ -336,6 +346,7 @@ def memory_audit(
         render_audit_markdown,
         run_memory_audit,
         summarize_daily_archive_dry_run,
+        summarize_cleanup_drop_preview,
         summarize_cleanup_stage_metrics,
         summarize_cleanup_conversion_index,
         summarize_context_trace,
@@ -439,6 +450,26 @@ def memory_audit(
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(dry_md, encoding="utf-8")
             console.print(f"[green]✓[/green] Wrote archive dry-run summary: {out}")
+
+    if apply_drop_preview or apply_drop_preview_out:
+        preview = summarize_cleanup_drop_preview(
+            target_dir,
+            daily_recent_days=(apply_recent_days if apply_recent_days > 0 else None),
+            drop_tool_activity_older_than_days=(
+                drop_tool_activity_older_than_days if drop_tool_activity_older_than_days > 0 else None
+            ),
+            drop_non_decision_older_than_days=(
+                drop_non_decision_older_than_days if drop_non_decision_older_than_days > 0 else None
+            ),
+        )
+        preview_md = render_cleanup_drop_preview_markdown(preview)
+        if apply_drop_preview:
+            console.print(Markdown(preview_md))
+        if apply_drop_preview_out:
+            out = Path(apply_drop_preview_out).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(preview_md, encoding="utf-8")
+            console.print(f"[green]✓[/green] Wrote apply drop preview: {out}")
 
     if apply:
         before = run_memory_audit(target_dir)

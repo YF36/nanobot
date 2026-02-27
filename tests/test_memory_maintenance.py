@@ -5,6 +5,7 @@ from nanobot.agent.memory_maintenance import (
     apply_conservative_cleanup,
     build_cleanup_plan,
     render_cleanup_conversion_index_markdown,
+    render_cleanup_drop_preview_markdown,
     render_cleanup_stage_metrics_markdown,
     render_context_trace_markdown,
     render_memory_observability_dashboard,
@@ -18,6 +19,7 @@ from nanobot.agent.memory_maintenance import (
     summarize_daily_archive_dry_run,
     summarize_cleanup_stage_metrics,
     summarize_cleanup_conversion_index,
+    summarize_cleanup_drop_preview,
     summarize_memory_conflict_metrics,
     summarize_memory_update_guard_metrics,
     summarize_daily_routing_metrics,
@@ -312,6 +314,34 @@ def test_summarize_cleanup_conversion_index_counts_actions(tmp_path: Path) -> No
     text = render_cleanup_conversion_index_markdown(summary)
     assert "Cleanup Conversion Index Summary" in text
     assert "## Actions" in text
+
+
+def test_summarize_cleanup_drop_preview_counts_candidates(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    old_day = (datetime.now() - timedelta(days=40)).strftime("%Y-%m-%d")
+    _write(
+        memory_dir / f"{old_day}.md",
+        (
+            f"# {old_day}\n\n"
+            "## Topics\n\n- old topic\n\n"
+            "## Decisions\n\n- keep decision\n\n"
+            "## Open Questions\n\n- old question\n\n"
+            "## Tool Activity\n\n- old cmd\n"
+        ),
+    )
+    summary = summarize_cleanup_drop_preview(
+        memory_dir,
+        drop_tool_activity_older_than_days=30,
+        drop_non_decision_older_than_days=30,
+    )
+    assert summary.scoped_daily_files == 1
+    assert summary.drop_tool_activity_candidates == 1
+    assert summary.drop_non_decision_candidates == 2
+    assert summary.by_file[f"{old_day}.md"]["drop_non_decision"] == 2
+    text = render_cleanup_drop_preview_markdown(summary)
+    assert "Cleanup Drop Preview" in text
+    assert "drop_non_decision_candidates" in text
 
 
 def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path) -> None:

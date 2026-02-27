@@ -127,6 +127,15 @@ class CleanupConversionIndexSummary:
     source_file_counts: dict[str, int]
 
 
+@dataclass
+class CleanupDropPreviewSummary:
+    scoped_daily_files: int
+    skipped_daily_files: int
+    drop_tool_activity_candidates: int
+    drop_non_decision_candidates: int
+    by_file: dict[str, dict[str, int]]
+
+
 def _iter_daily_files(memory_dir: Path) -> list[Path]:
     items: list[Path] = []
     for p in sorted(memory_dir.glob("*.md")):
@@ -486,6 +495,106 @@ def _write_cleanup_conversion_index(memory_dir: Path, rows: list[dict[str, objec
         payload.update(row)
         _append_jsonl(index_file, payload)
     return len(rows)
+
+
+def summarize_cleanup_drop_preview(
+    memory_dir: Path,
+    *,
+    daily_recent_days: int | None = None,
+    drop_tool_activity_older_than_days: int | None = None,
+    drop_non_decision_older_than_days: int | None = None,
+) -> CleanupDropPreviewSummary:
+    all_daily_files = _iter_daily_files(memory_dir)
+    if daily_recent_days is None:
+        daily_files = all_daily_files
+    else:
+        window_days = max(1, int(daily_recent_days))
+        cutoff = datetime.now().date() - timedelta(days=window_days - 1)
+        daily_files = []
+        for p in all_daily_files:
+            d = _daily_file_date(p)
+            if d is not None and d >= cutoff:
+                daily_files.append(p)
+
+    drop_tool_cutoff = None
+    if drop_tool_activity_older_than_days is not None:
+        window_days = max(1, int(drop_tool_activity_older_than_days))
+        drop_tool_cutoff = datetime.now().date() - timedelta(days=window_days - 1)
+
+    drop_non_decision_cutoff = None
+    if drop_non_decision_older_than_days is not None:
+        window_days = max(1, int(drop_non_decision_older_than_days))
+        drop_non_decision_cutoff = datetime.now().date() - timedelta(days=window_days - 1)
+
+    tool_candidates = 0
+    non_decision_candidates = 0
+    by_file: dict[str, dict[str, int]] = {}
+
+    for daily in daily_files:
+        daily_date = _daily_file_date(daily)
+        if daily_date is None:
+            continue
+        current_section = ""
+        file_tool = 0
+        file_non_decision = 0
+        for line in daily.read_text(encoding="utf-8").splitlines():
+            if line.startswith("## "):
+                current_section = line[3:].strip()
+                continue
+            if not line.startswith("- "):
+                continue
+            if (
+                drop_tool_cutoff is not None
+                and daily_date < drop_tool_cutoff
+                and current_section == "Tool Activity"
+            ):
+                tool_candidates += 1
+                file_tool += 1
+                continue
+            if (
+                drop_non_decision_cutoff is not None
+                and daily_date < drop_non_decision_cutoff
+                and current_section in {"Topics", "Open Questions"}
+            ):
+                non_decision_candidates += 1
+                file_non_decision += 1
+        if file_tool > 0 or file_non_decision > 0:
+            by_file[daily.name] = {
+                "drop_tool_activity": file_tool,
+                "drop_non_decision": file_non_decision,
+            }
+
+    return CleanupDropPreviewSummary(
+        scoped_daily_files=len(daily_files),
+        skipped_daily_files=max(0, len(all_daily_files) - len(daily_files)),
+        drop_tool_activity_candidates=tool_candidates,
+        drop_non_decision_candidates=non_decision_candidates,
+        by_file=dict(sorted(by_file.items())),
+    )
+
+
+def render_cleanup_drop_preview_markdown(summary: CleanupDropPreviewSummary) -> str:
+    lines = [
+        "# Cleanup Drop Preview",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+        f"- Scoped daily files: `{summary.scoped_daily_files}` (skipped=`{summary.skipped_daily_files}`)",
+        "",
+        "## Candidate Counts",
+        f"- drop_tool_activity_candidates: `{summary.drop_tool_activity_candidates}`",
+        f"- drop_non_decision_candidates: `{summary.drop_non_decision_candidates}`",
+        "",
+        "## Candidate Files (Top 20)",
+    ]
+    if not summary.by_file:
+        lines.append("- none")
+    else:
+        for name, counts in list(summary.by_file.items())[:20]:
+            lines.append(
+                f"- {name}: tool_activity=`{counts.get('drop_tool_activity', 0)}`, non_decision=`{counts.get('drop_non_decision', 0)}`"
+            )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def render_cleanup_effect_markdown(before: MemoryAudit, after: MemoryAudit, result: CleanupApplyResult) -> str:
