@@ -167,9 +167,9 @@ def test_summarize_memory_update_guard_metrics_counts_reasons(tmp_path: Path) ->
         memory_dir / "memory-update-guard-metrics.jsonl",
         "\n".join(
             [
-                '{"session_key":"s1","reason":"excessive_shrink"}',
-                '{"session_key":"s1","reason":"excessive_shrink"}',
-                '{"session_key":"s2","reason":"heading_retention_too_low"}',
+                '{"session_key":"s1","reason":"excessive_shrink","candidate_preview":"# Long-term Memory ..."}',
+                '{"session_key":"s1","reason":"excessive_shrink","candidate_preview":"# Long-term Memory ... v2"}',
+                '{"session_key":"s2","reason":"heading_retention_too_low","candidate_preview":"## New Section ..."}',
                 "not-json",
             ]
         )
@@ -183,9 +183,11 @@ def test_summarize_memory_update_guard_metrics_counts_reasons(tmp_path: Path) ->
     assert summary.reason_counts["heading_retention_too_low"] == 1
     assert summary.by_session["s1"] == 2
     assert summary.by_session["s2"] == 1
+    assert summary.preview_by_reason["excessive_shrink"] == "# Long-term Memory ..."
     text = render_memory_update_guard_metrics_markdown(summary)
     assert "## Suggested Fixes" in text
     assert "incremental edits" in text
+    assert "## Candidate Preview Samples" in text
 
 
 def test_render_memory_update_guard_metrics_markdown_handles_missing_file(tmp_path: Path) -> None:

@@ -86,6 +86,7 @@ class MemoryUpdateGuardMetricsSummary:
     parse_error_rows: int
     reason_counts: dict[str, int]
     by_session: dict[str, int]
+    preview_by_reason: dict[str, str]
 
 
 @dataclass
@@ -1003,12 +1004,14 @@ def summarize_memory_update_guard_metrics(memory_dir: Path) -> MemoryUpdateGuard
             parse_error_rows=0,
             reason_counts={},
             by_session={},
+            preview_by_reason={},
         )
 
     total_rows = 0
     parse_error_rows = 0
     reason_counter: Counter[str] = Counter()
     session_counter: Counter[str] = Counter()
+    preview_by_reason: dict[str, str] = {}
 
     for raw_line in metrics_file.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
@@ -1025,8 +1028,11 @@ def summarize_memory_update_guard_metrics(memory_dir: Path) -> MemoryUpdateGuard
             continue
         reason = str(item.get("reason") or "unknown")
         session_key = str(item.get("session_key") or "unknown")
+        preview = str(item.get("candidate_preview") or "").strip()
         reason_counter[reason] += 1
         session_counter[session_key] += 1
+        if preview and reason not in preview_by_reason:
+            preview_by_reason[reason] = preview
 
     return MemoryUpdateGuardMetricsSummary(
         metrics_file_exists=True,
@@ -1034,6 +1040,7 @@ def summarize_memory_update_guard_metrics(memory_dir: Path) -> MemoryUpdateGuard
         parse_error_rows=parse_error_rows,
         reason_counts=dict(sorted(reason_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         by_session=dict(sorted(session_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        preview_by_reason=preview_by_reason,
     )
 
 
@@ -1071,6 +1078,12 @@ def render_memory_update_guard_metrics_markdown(summary: MemoryUpdateGuardMetric
             hint = _GUARD_REASON_HINTS.get(reason)
             if hint:
                 lines.append(f"- {reason}: {hint}")
+    lines.extend(["", "## Candidate Preview Samples"])
+    if not summary.preview_by_reason:
+        lines.append("- none")
+    else:
+        for reason, sample in summary.preview_by_reason.items():
+            lines.append(f"- {reason}: `{sample}`")
 
     lines.extend(["", "## Sessions (Top)"])
     if not summary.by_session:

@@ -605,6 +605,7 @@ async def test_consolidate_skips_memory_update_when_guard_triggers(tmp_path: Pat
     assert len(rows) == 1
     assert rows[0]["session_key"] == "test:memory_update_guard"
     assert rows[0]["reason"] in {"excessive_shrink", "heading_retention_too_low"}
+    assert rows[0]["candidate_preview"]
 
 
 @pytest.mark.asyncio

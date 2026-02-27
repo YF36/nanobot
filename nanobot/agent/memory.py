@@ -182,6 +182,7 @@ class MemoryStore:
         reason: str,
         current_memory_chars: int,
         returned_memory_chars: int,
+        candidate_preview: str,
     ) -> None:
         row = {
             "ts": datetime.now().isoformat(timespec="seconds"),
@@ -189,6 +190,7 @@ class MemoryStore:
             "reason": reason,
             "current_memory_chars": current_memory_chars,
             "returned_memory_chars": returned_memory_chars,
+            "candidate_preview": candidate_preview,
         }
         try:
             with open(self.memory_update_guard_metrics_file, "a", encoding="utf-8") as f:
@@ -1018,6 +1020,7 @@ class MemoryStore:
                                     reason=guard_reason,
                                     current_memory_chars=len(current_memory),
                                     returned_memory_chars=len(update),
+                                    candidate_preview=self._truncate_log_sample(update),
                                 )
                             else:
                                 conflicts = self._detect_preference_conflicts(current_memory, update)
