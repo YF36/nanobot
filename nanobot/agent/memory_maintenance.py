@@ -28,6 +28,7 @@ _FALLBACK_REASON_HINTS = {
 _GUARD_REASON_HINTS = {
     "contains_code_block": "Candidate contains code blocks/raw output; keep executable snippets and logs in history/daily, not long-term memory.",
     "url_line_overflow": "Candidate contains too many URL lines; keep source links in history/daily and retain only durable conclusions in long-term memory.",
+    "duplicate_line_overflow": "Candidate repeats the same content too many times; deduplicate repetitive bullets and keep one durable statement.",
     "candidate_too_long": "Candidate memory_update is too large; reduce scope and keep only durable, compact facts.",
     "excessive_shrink": "Candidate update shrank too much vs current memory; keep prior headings/facts and apply incremental edits.",
     "heading_retention_too_low": "Too many existing H2 headings were dropped; preserve durable sections and only patch changed parts.",
@@ -1609,12 +1610,15 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
     unstructured_count = int(guard.reason_counts.get("unstructured_candidate", 0))
     date_overflow_count = int(guard.reason_counts.get("date_line_overflow", 0))
     url_overflow_count = int(guard.reason_counts.get("url_line_overflow", 0))
+    duplicate_overflow_count = int(guard.reason_counts.get("duplicate_line_overflow", 0))
     if unstructured_count >= 3:
         lines.append("- Guard shows repeated unstructured candidates; enforce markdown section/bullet structure in consolidation output.")
     if date_overflow_count >= 3:
         lines.append("- Guard shows repeated dated-line overflow; keep timeline-like entries in daily/history rather than long-term memory.")
     if url_overflow_count >= 3:
         lines.append("- Guard shows repeated URL-line overflow; keep source link lists in daily/history and retain only durable conclusions.")
+    if duplicate_overflow_count >= 3:
+        lines.append("- Guard shows repeated duplicate-line overflow; deduplicate repetitive bullets before writing long-term memory.")
     if guard.avg_current_memory_chars > 0 and guard.avg_returned_memory_chars > int(guard.avg_current_memory_chars * 1.6):
         lines.append("- Guard shows oversized candidate trend; tighten consolidation prompt to return concise long-term memory updates.")
     if max(0, sanitize.total_rows - sanitize.parse_error_rows) > 0:

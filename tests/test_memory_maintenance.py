@@ -197,6 +197,19 @@ def test_summarize_memory_update_guard_metrics_counts_reasons(tmp_path: Path) ->
     assert "## Candidate Preview Samples" in text
 
 
+def test_render_memory_update_guard_metrics_markdown_includes_duplicate_line_hint(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(
+        memory_dir / "memory-update-guard-metrics.jsonl",
+        '{"session_key":"s1","reason":"duplicate_line_overflow","candidate_preview":"- repeated fact"}\n',
+    )
+    summary = summarize_memory_update_guard_metrics(memory_dir)
+    text = render_memory_update_guard_metrics_markdown(summary)
+    assert "duplicate_line_overflow" in text
+    assert "deduplicate repetitive bullets" in text
+
+
 def test_render_memory_update_guard_metrics_priority_focus_limits_to_top2(tmp_path: Path) -> None:
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()

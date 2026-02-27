@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -94,6 +95,8 @@ class MemoryStore:
     _MEMORY_UPDATE_URL_LINE_RATIO_GUARD = 0.2
     _MEMORY_UPDATE_DATE_LINE_RATIO_GUARD = 0.2
     _MEMORY_UPDATE_DATE_LINE_MIN_COUNT = 3
+    _MEMORY_UPDATE_DUPLICATE_LINE_MIN_COUNT = 4
+    _MEMORY_UPDATE_DUPLICATE_LINE_RATIO_GUARD = 0.4
     _DATE_TOKEN_RE = re.compile(r"\b20\d{2}-\d{2}-\d{2}\b")
     _HISTORY_ENTRY_DATE_RE = re.compile(r"^\[(20\d{2}-\d{2}-\d{2})(?:\s+\d{2}:\d{2})?\]")
     _DAILY_FILE_DATE_RE = re.compile(r"^(20\d{2}-\d{2}-\d{2})\.md$")
@@ -757,6 +760,23 @@ class MemoryStore:
                 and (url_lines / len(non_empty_lines)) >= cls._MEMORY_UPDATE_URL_LINE_RATIO_GUARD
             ):
                 return "url_line_overflow"
+            content_lines: list[str] = []
+            for line in non_empty_lines:
+                normalized = line
+                if normalized.startswith("## "):
+                    continue
+                if normalized.startswith("- "):
+                    normalized = normalized[2:].strip()
+                normalized = re.sub(r"\s+", " ", normalized).strip().lower()
+                if normalized:
+                    content_lines.append(normalized)
+            if content_lines:
+                duplicate_max = max(Counter(content_lines).values())
+                if (
+                    duplicate_max >= cls._MEMORY_UPDATE_DUPLICATE_LINE_MIN_COUNT
+                    and (duplicate_max / len(content_lines)) >= cls._MEMORY_UPDATE_DUPLICATE_LINE_RATIO_GUARD
+                ):
+                    return "duplicate_line_overflow"
 
         current_h2 = cls._extract_h2_headings(current)
         if current_h2:

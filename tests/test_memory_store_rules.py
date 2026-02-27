@@ -397,6 +397,25 @@ def test_memory_update_guard_detects_url_line_overflow() -> None:
     assert reason == "url_line_overflow"
 
 
+def test_memory_update_guard_detects_duplicate_line_overflow() -> None:
+    current = (
+        "# Long-term Memory\n\n"
+        "## Preferences\n- 中文沟通\n\n"
+        "## Project Context\n- memory roadmap\n"
+    )
+    candidate = (
+        "# Long-term Memory\n\n"
+        "## Notes\n"
+        "- Use concise technical Chinese responses.\n"
+        "- Use concise technical Chinese responses.\n"
+        "- Use concise technical Chinese responses.\n"
+        "- Use concise technical Chinese responses.\n"
+        "- Keep durable constraints only.\n"
+    )
+    reason = MemoryStore._memory_update_guard_reason(current, candidate)
+    assert reason == "duplicate_line_overflow"
+
+
 @pytest.mark.asyncio
 async def test_consolidate_accepts_json_string_tool_arguments(tmp_path: Path) -> None:
     mm = MemoryStore(workspace=tmp_path)
