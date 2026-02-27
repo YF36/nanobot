@@ -189,6 +189,8 @@ def test_summarize_memory_update_guard_metrics_counts_reasons(tmp_path: Path) ->
     text = render_memory_update_guard_metrics_markdown(summary)
     assert "## Suggested Fixes" in text
     assert "incremental edits" in text
+    assert "## Priority Focus" in text
+    assert "excessive_shrink: `2`" in text
     assert "## Candidate Preview Samples" in text
 
 
