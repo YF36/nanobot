@@ -197,6 +197,30 @@ def test_summarize_memory_update_guard_metrics_counts_reasons(tmp_path: Path) ->
     assert "## Candidate Preview Samples" in text
 
 
+def test_render_memory_update_guard_metrics_priority_focus_limits_to_top2(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(
+        memory_dir / "memory-update-guard-metrics.jsonl",
+        "\n".join(
+            [
+                '{"session_key":"s1","reason":"excessive_shrink"}',
+                '{"session_key":"s2","reason":"excessive_shrink"}',
+                '{"session_key":"s3","reason":"heading_retention_too_low"}',
+                '{"session_key":"s4","reason":"candidate_too_long"}',
+            ]
+        )
+        + "\n",
+    )
+    summary = summarize_memory_update_guard_metrics(memory_dir)
+    text = render_memory_update_guard_metrics_markdown(summary)
+    assert "## Priority Focus" in text
+    priority_section = text.split("## Priority Focus", 1)[1].split("## Candidate Preview Samples", 1)[0]
+    assert "excessive_shrink" in priority_section
+    assert "candidate_too_long" in priority_section
+    assert "heading_retention_too_low: `1`" not in priority_section
+
+
 def test_summarize_memory_update_guard_metrics_aggregates_avg_chars(tmp_path: Path) -> None:
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()

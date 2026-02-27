@@ -1117,7 +1117,7 @@ def render_memory_update_guard_metrics_markdown(summary: MemoryUpdateGuardMetric
     if not summary.reason_counts:
         lines.append("- none")
     else:
-        for reason, count in list(summary.reason_counts.items())[:3]:
+        for reason, count in list(summary.reason_counts.items())[:2]:
             hint = _GUARD_REASON_HINTS.get(reason)
             if hint:
                 lines.append(f"- {reason}: `{count}` ({hint})")
