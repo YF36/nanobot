@@ -313,6 +313,11 @@ def memory_audit(
         "--drop-tool-activity-older-than-days",
         help="When >0 and using --apply, remove Tool Activity bullets older than N days",
     ),
+    drop_non_decision_older_than_days: int = typer.Option(
+        0,
+        "--drop-non-decision-older-than-days",
+        help="When >0 and using --apply, remove Topics/Open Questions bullets older than N days while keeping Decisions",
+    ),
     apply_effect_out: str = typer.Option("", help="Optional cleanup effect markdown output path"),
 ):
     """Run memory quality audit; optionally apply conservative cleanup with backups."""
@@ -444,6 +449,9 @@ def memory_audit(
             drop_tool_activity_older_than_days=(
                 drop_tool_activity_older_than_days if drop_tool_activity_older_than_days > 0 else None
             ),
+            drop_non_decision_older_than_days=(
+                drop_non_decision_older_than_days if drop_non_decision_older_than_days > 0 else None
+            ),
         )
         after = run_memory_audit(target_dir)
         effect_md = render_cleanup_effect_markdown(before, after, result)
@@ -455,6 +463,7 @@ def memory_audit(
                 f"daily_trimmed={result.daily_trimmed_bullets}, "
                 f"daily_dedup={result.daily_deduplicated_bullets}, "
                 f"daily_drop_tool={result.daily_dropped_tool_activity_bullets}, "
+                f"daily_drop_non_decision={result.daily_dropped_non_decision_bullets}, "
                 f"conversion_index_rows={result.conversion_index_rows}"
             )
             console.print(

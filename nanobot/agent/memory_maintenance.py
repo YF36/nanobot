@@ -55,6 +55,7 @@ class CleanupApplyResult:
     daily_trimmed_bullets: int
     daily_deduplicated_bullets: int
     daily_dropped_tool_activity_bullets: int
+    daily_dropped_non_decision_bullets: int
     conversion_index_rows: int
     scoped_daily_files: int
     skipped_daily_files: int
@@ -242,6 +243,7 @@ def apply_conservative_cleanup(
     daily_recent_days: int | None = None,
     include_history: bool = True,
     drop_tool_activity_older_than_days: int | None = None,
+    drop_non_decision_older_than_days: int | None = None,
 ) -> CleanupApplyResult:
     history_file = memory_dir / "HISTORY.md"
     all_daily_files = _iter_daily_files(memory_dir)
@@ -262,12 +264,17 @@ def apply_conservative_cleanup(
     daily_trimmed_bullets = 0
     daily_deduplicated_bullets = 0
     daily_dropped_tool_activity_bullets = 0
+    daily_dropped_non_decision_bullets = 0
     conversion_rows: list[dict[str, object]] = []
     touched_files: list[str] = []
     drop_tool_cutoff = None
     if drop_tool_activity_older_than_days is not None:
         window_days = max(1, int(drop_tool_activity_older_than_days))
         drop_tool_cutoff = datetime.now().date() - timedelta(days=window_days - 1)
+    drop_non_decision_cutoff = None
+    if drop_non_decision_older_than_days is not None:
+        window_days = max(1, int(drop_non_decision_older_than_days))
+        drop_non_decision_cutoff = datetime.now().date() - timedelta(days=window_days - 1)
 
     if include_history and history_file.exists():
         original = history_file.read_text(encoding="utf-8")
@@ -352,6 +359,24 @@ def apply_conservative_cleanup(
                 )
                 changed = True
                 continue
+            if (
+                drop_non_decision_cutoff is not None
+                and daily_date is not None
+                and daily_date < drop_non_decision_cutoff
+                and current_section in {"Topics", "Open Questions"}
+            ):
+                daily_dropped_non_decision_bullets += 1
+                conversion_rows.append(
+                    {
+                        "scope": "daily",
+                        "source_file": daily.name,
+                        "section": current_section or "unknown",
+                        "action": "drop_non_decision",
+                        "before": line[2:].strip(),
+                    }
+                )
+                changed = True
+                continue
             bullet = line[2:].strip()
             trimmed, was_trimmed = _trim_text(" ".join(bullet.split()).strip(), 240)
             if was_trimmed:
@@ -418,6 +443,7 @@ def apply_conservative_cleanup(
         daily_trimmed_bullets=daily_trimmed_bullets,
         daily_deduplicated_bullets=daily_deduplicated_bullets,
         daily_dropped_tool_activity_bullets=daily_dropped_tool_activity_bullets,
+        daily_dropped_non_decision_bullets=daily_dropped_non_decision_bullets,
         conversion_index_rows=conversion_index_rows,
         scoped_daily_files=len(daily_files),
         skipped_daily_files=max(0, len(all_daily_files) - len(daily_files)),
@@ -433,6 +459,7 @@ def _write_cleanup_stage_metrics(memory_dir: Path, result: CleanupApplyResult) -
         "trim": int(result.history_trimmed_entries + result.daily_trimmed_bullets),
         "dedupe": int(result.history_deduplicated_entries + result.daily_deduplicated_bullets),
         "drop_tool_activity": int(result.daily_dropped_tool_activity_bullets),
+        "drop_non_decision": int(result.daily_dropped_non_decision_bullets),
     }
     _append_jsonl(
         metrics_file,
@@ -476,6 +503,7 @@ def render_cleanup_effect_markdown(before: MemoryAudit, after: MemoryAudit, resu
         f"- daily_trimmed_bullets: `{result.daily_trimmed_bullets}`",
         f"- daily_deduplicated_bullets: `{result.daily_deduplicated_bullets}`",
         f"- daily_dropped_tool_activity_bullets: `{result.daily_dropped_tool_activity_bullets}`",
+        f"- daily_dropped_non_decision_bullets: `{result.daily_dropped_non_decision_bullets}`",
         f"- conversion_index_rows: `{result.conversion_index_rows}`",
         "",
         "## Audit Delta (Before -> After)",
@@ -584,7 +612,7 @@ def summarize_cleanup_stage_metrics(memory_dir: Path) -> CleanupStageMetricsSumm
             parse_error_rows += 1
             continue
 
-        for stage in ("trim", "dedupe", "drop_tool_activity"):
+        for stage in ("trim", "dedupe", "drop_tool_activity", "drop_non_decision"):
             raw = stage_counts.get(stage, 0)
             if not isinstance(raw, int):
                 parse_error_rows += 1

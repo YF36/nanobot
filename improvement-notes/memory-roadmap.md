@@ -356,6 +356,10 @@ M3 验收标准：
   - `Tool Activity` 更短窗口，且默认不注入 recall；
   - 临时错误状态仅在观测文件保留，不进入长期记忆。
 - 价值：减少“留垃圾、丢决策”的风险。
+- 进展（2026-02-27）：
+  - 已有：`--drop-tool-activity-older-than-days N`（按窗口清理过旧 `Tool Activity`）。
+  - 新增：`--drop-non-decision-older-than-days N`（按窗口清理过旧 `Topics/Open Questions`，默认保留 `Decisions`）。
+  - 说明：两项均为 `memory-audit --apply` 下的显式开关，默认关闭，便于灰度。
 
 6. 约束优先级裁决（冲突处理模板）
 
