@@ -488,12 +488,26 @@ def memory_audit(
             ),
         )
         if auto_preview.drop_tool_activity_candidates > 0 or auto_preview.drop_non_decision_candidates > 0:
+            top_files = []
+            for name, counts in sorted(
+                auto_preview.by_file.items(),
+                key=lambda kv: (
+                    -(
+                        int(kv[1].get("drop_tool_activity", 0))
+                        + int(kv[1].get("drop_non_decision", 0))
+                    ),
+                    kv[0],
+                ),
+            )[:3]:
+                total = int(counts.get("drop_tool_activity", 0)) + int(counts.get("drop_non_decision", 0))
+                top_files.append(f"{name}:{total}")
             console.print(
                 "[yellow]Pre-apply drop preview:[/yellow] "
                 f"risk={auto_preview.risk_level}, "
                 f"tool={auto_preview.drop_tool_activity_candidates}, "
                 f"non_decision={auto_preview.drop_non_decision_candidates}, "
-                f"scope_daily_files={auto_preview.scoped_daily_files}"
+                f"scope_daily_files={auto_preview.scoped_daily_files}, "
+                f"top_files={','.join(top_files) if top_files else 'none'}"
             )
             if auto_preview.risk_level == "high":
                 console.print(
