@@ -196,6 +196,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已实施：`memory_update` sanitize 命中指标落盘：`memory/memory-update-sanitize-metrics.jsonl`（记录 recent-topic/transient-status 清洗命中量）。
 - 已实施：`nanobot memory-audit --guard-metrics-summary` 汇总 guard reason 分布与高频会话。
 - 已增强：`guard-metrics-summary` 展示各 reason 的 `candidate_preview` 样本，便于快速定位被拒写内容形态。
+- 已增强：`guard-metrics-summary` 增加平均长度指标（`avg_current_memory_chars` / `avg_returned_memory_chars`），便于判断是否存在系统性过长输出。
 - 已实施：`nanobot memory-audit --sanitize-metrics-summary` 汇总 sanitize 命中量与高频会话；`memory-observe` 产出 `*-sanitize-metrics-summary.md` 快照。
 - 已实施：`nanobot memory-audit --guard-metrics-out <path>` 可导出 guard 指标汇总 Markdown。
 - 已实施：dashboard 纳入 sanitize 指标摘要（事件数 + 清洗量），并在命中时给出 `--sanitize-metrics-summary` 排查建议。

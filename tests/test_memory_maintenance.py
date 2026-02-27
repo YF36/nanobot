@@ -184,10 +184,32 @@ def test_summarize_memory_update_guard_metrics_counts_reasons(tmp_path: Path) ->
     assert summary.by_session["s1"] == 2
     assert summary.by_session["s2"] == 1
     assert summary.preview_by_reason["excessive_shrink"] == "# Long-term Memory ..."
+    assert summary.avg_current_memory_chars == 0
+    assert summary.avg_returned_memory_chars == 0
     text = render_memory_update_guard_metrics_markdown(summary)
     assert "## Suggested Fixes" in text
     assert "incremental edits" in text
     assert "## Candidate Preview Samples" in text
+
+
+def test_summarize_memory_update_guard_metrics_aggregates_avg_chars(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(
+        memory_dir / "memory-update-guard-metrics.jsonl",
+        "\n".join(
+            [
+                '{"session_key":"s1","reason":"candidate_too_long","current_memory_chars":1000,"returned_memory_chars":5000}',
+                '{"session_key":"s2","reason":"candidate_too_long","current_memory_chars":1500,"returned_memory_chars":7000}',
+            ]
+        )
+        + "\n",
+    )
+    summary = summarize_memory_update_guard_metrics(memory_dir)
+    assert summary.avg_current_memory_chars == 1250
+    assert summary.avg_returned_memory_chars == 6000
+    text = render_memory_update_guard_metrics_markdown(summary)
+    assert "avg_current_memory_chars" in text
 
 
 def test_render_memory_update_guard_metrics_markdown_handles_missing_file(tmp_path: Path) -> None:

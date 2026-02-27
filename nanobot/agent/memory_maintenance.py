@@ -88,6 +88,8 @@ class MemoryUpdateGuardMetricsSummary:
     reason_counts: dict[str, int]
     by_session: dict[str, int]
     preview_by_reason: dict[str, str]
+    avg_current_memory_chars: int
+    avg_returned_memory_chars: int
 
 
 @dataclass
@@ -1008,6 +1010,8 @@ def summarize_memory_update_guard_metrics(memory_dir: Path) -> MemoryUpdateGuard
             reason_counts={},
             by_session={},
             preview_by_reason={},
+            avg_current_memory_chars=0,
+            avg_returned_memory_chars=0,
         )
 
     total_rows = 0
@@ -1015,6 +1019,9 @@ def summarize_memory_update_guard_metrics(memory_dir: Path) -> MemoryUpdateGuard
     reason_counter: Counter[str] = Counter()
     session_counter: Counter[str] = Counter()
     preview_by_reason: dict[str, str] = {}
+    sum_current_chars = 0
+    sum_returned_chars = 0
+    chars_count = 0
 
     for raw_line in metrics_file.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
@@ -1032,10 +1039,16 @@ def summarize_memory_update_guard_metrics(memory_dir: Path) -> MemoryUpdateGuard
         reason = str(item.get("reason") or "unknown")
         session_key = str(item.get("session_key") or "unknown")
         preview = str(item.get("candidate_preview") or "").strip()
+        current_chars = item.get("current_memory_chars")
+        returned_chars = item.get("returned_memory_chars")
         reason_counter[reason] += 1
         session_counter[session_key] += 1
         if preview and reason not in preview_by_reason:
             preview_by_reason[reason] = preview
+        if isinstance(current_chars, int) and isinstance(returned_chars, int):
+            sum_current_chars += max(0, int(current_chars))
+            sum_returned_chars += max(0, int(returned_chars))
+            chars_count += 1
 
     return MemoryUpdateGuardMetricsSummary(
         metrics_file_exists=True,
@@ -1044,6 +1057,8 @@ def summarize_memory_update_guard_metrics(memory_dir: Path) -> MemoryUpdateGuard
         reason_counts=dict(sorted(reason_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         by_session=dict(sorted(session_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         preview_by_reason=preview_by_reason,
+        avg_current_memory_chars=(int(sum_current_chars / chars_count) if chars_count > 0 else 0),
+        avg_returned_memory_chars=(int(sum_returned_chars / chars_count) if chars_count > 0 else 0),
     )
 
 
@@ -1064,6 +1079,8 @@ def render_memory_update_guard_metrics_markdown(summary: MemoryUpdateGuardMetric
             "",
             "## Overall",
             f"- Rows: `{summary.total_rows}` (valid=`{total_valid}`, parse_errors=`{summary.parse_error_rows}`)",
+            f"- avg_current_memory_chars: `{summary.avg_current_memory_chars}`",
+            f"- avg_returned_memory_chars: `{summary.avg_returned_memory_chars}`",
             "",
             "## Guard Reasons",
         ]
