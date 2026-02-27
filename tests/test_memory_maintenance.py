@@ -251,6 +251,8 @@ def test_summarize_memory_update_sanitize_metrics_counts(tmp_path: Path) -> None
     assert "removed_recent_topic_sections(total)" in text
     assert "## Suggested Fixes" in text
     assert "Recent-topic sanitize hits are non-zero" in text
+    assert "## Priority Focus" in text
+    assert "transient_status" in text
     assert "## Top Sanitized Sections" in text
 
 
@@ -272,6 +274,7 @@ def test_render_memory_update_sanitize_metrics_markdown_reports_no_adjustment_ne
     summary = summarize_memory_update_sanitize_metrics(memory_dir)
     text = render_memory_update_sanitize_metrics_markdown(summary)
     assert "No sanitize-specific prompt adjustment needed" in text
+    assert "## Priority Focus" not in text
 
 
 def test_summarize_memory_conflict_metrics_counts_keys(tmp_path: Path) -> None:

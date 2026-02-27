@@ -1229,6 +1229,20 @@ def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitize
         and summary.total_transient_status_lines_removed == 0
     ):
         lines.append("- No sanitize-specific prompt adjustment needed based on current metrics.")
+    else:
+        lines.extend(["", "## Priority Focus"])
+        focus_items = [
+            ("recent_topic", summary.total_recent_topic_sections_removed),
+            ("transient_status", summary.total_transient_status_lines_removed),
+        ]
+        focus_items.sort(key=lambda kv: (-kv[1], kv[0]))
+        for key, count in focus_items:
+            if count <= 0:
+                continue
+            if key == "recent_topic":
+                lines.append(f"- {key}: `{count}` (prioritize reducing ephemeral topic sections in memory_update)")
+            else:
+                lines.append(f"- {key}: `{count}` (prioritize filtering dated status/error lines)")
     lines.extend(["", "## Top Sanitized Sections"])
     if not summary.top_recent_topic_sections and not summary.top_transient_status_sections:
         lines.append("- none")
