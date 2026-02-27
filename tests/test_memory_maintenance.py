@@ -675,6 +675,9 @@ def test_render_memory_observability_dashboard_warns_on_unstructured_and_date_ov
                 '{"session_key":"s4","reason":"date_line_overflow"}',
                 '{"session_key":"s5","reason":"date_line_overflow"}',
                 '{"session_key":"s6","reason":"date_line_overflow"}',
+                '{"session_key":"s7","reason":"url_line_overflow"}',
+                '{"session_key":"s8","reason":"url_line_overflow"}',
+                '{"session_key":"s9","reason":"url_line_overflow"}',
             ]
         )
         + "\n",
@@ -683,6 +686,7 @@ def test_render_memory_observability_dashboard_warns_on_unstructured_and_date_ov
     text = render_memory_observability_dashboard(memory_dir)
     assert "repeated unstructured candidates" in text
     assert "repeated dated-line overflow" in text
+    assert "repeated URL-line overflow" in text
 
 
 def test_render_memory_observability_dashboard_shows_high_risk_preview_command(tmp_path: Path) -> None:
