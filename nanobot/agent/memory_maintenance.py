@@ -87,6 +87,15 @@ class DailyArchiveDryRunSummary:
     candidate_files: list[str]
 
 
+@dataclass
+class MemoryConflictMetricsSummary:
+    metrics_file_exists: bool
+    total_rows: int
+    parse_error_rows: int
+    key_counts: dict[str, int]
+    by_session: dict[str, int]
+
+
 def _iter_daily_files(memory_dir: Path) -> list[Path]:
     items: list[Path] = []
     for p in sorted(memory_dir.glob("*.md")):
@@ -545,6 +554,86 @@ def render_daily_archive_dry_run_markdown(summary: DailyArchiveDryRunSummary) ->
     else:
         for name in summary.candidate_files:
             lines.append(f"- {name}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def summarize_memory_conflict_metrics(memory_dir: Path) -> MemoryConflictMetricsSummary:
+    metrics_file = memory_dir / "memory-conflict-metrics.jsonl"
+    if not metrics_file.exists():
+        return MemoryConflictMetricsSummary(
+            metrics_file_exists=False,
+            total_rows=0,
+            parse_error_rows=0,
+            key_counts={},
+            by_session={},
+        )
+
+    total_rows = 0
+    parse_error_rows = 0
+    key_counter: Counter[str] = Counter()
+    session_counter: Counter[str] = Counter()
+
+    for raw_line in metrics_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        total_rows += 1
+        try:
+            item = json.loads(line)
+        except Exception:
+            parse_error_rows += 1
+            continue
+        if not isinstance(item, dict):
+            parse_error_rows += 1
+            continue
+        key = str(item.get("conflict_key") or "unknown")
+        session_key = str(item.get("session_key") or "unknown")
+        key_counter[key] += 1
+        session_counter[session_key] += 1
+
+    return MemoryConflictMetricsSummary(
+        metrics_file_exists=True,
+        total_rows=total_rows,
+        parse_error_rows=parse_error_rows,
+        key_counts=dict(sorted(key_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        by_session=dict(sorted(session_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+    )
+
+
+def render_memory_conflict_metrics_markdown(summary: MemoryConflictMetricsSummary) -> str:
+    lines = [
+        "# Memory Conflict Metrics Summary",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+    ]
+    if not summary.metrics_file_exists:
+        lines.extend(["- Metrics file: not found (`memory-conflict-metrics.jsonl`)", ""])
+        return "\n".join(lines)
+    total_valid = max(0, summary.total_rows - summary.parse_error_rows)
+    lines.extend(
+        [
+            "- Metrics file: found (`memory-conflict-metrics.jsonl`)",
+            "",
+            "## Overall",
+            f"- Rows: `{summary.total_rows}` (valid=`{total_valid}`, parse_errors=`{summary.parse_error_rows}`)",
+            "",
+            "## Conflict Keys",
+        ]
+    )
+    if not summary.key_counts:
+        lines.append("- none")
+    else:
+        for key, count in summary.key_counts.items():
+            lines.append(f"- {key}: `{count}`")
+    lines.extend(["", "## Sessions (Top)"])
+    if not summary.by_session:
+        lines.append("- none")
+    else:
+        for idx, (session_key, count) in enumerate(summary.by_session.items()):
+            if idx >= 10:
+                break
+            lines.append(f"- {session_key}: `{count}`")
     lines.append("")
     return "\n".join(lines)
 

@@ -189,6 +189,8 @@ def test_get_recent_daily_context_returns_recent_bullets_only(tmp_path: Path) ->
     context = mm.get_recent_daily_context(days=1, max_bullets=5, max_chars=500)
     assert "recent topic" in context
     assert "recent decision" in context
+    assert "[Topics]" in context
+    assert "[Decisions]" in context
     assert "run pytest" not in context
     assert "old topic" not in context
 
@@ -200,6 +202,7 @@ def test_get_recent_daily_context_can_include_tool_activity(tmp_path: Path) -> N
 
     context = mm.get_recent_daily_context(days=1, max_bullets=5, max_chars=500, include_tool_activity=True)
     assert "run pytest" in context
+    assert "[Tool Activity]" in context
 
 
 def test_consolidation_system_prompt_restricts_memory_update_to_long_term_facts() -> None:
@@ -563,3 +566,51 @@ async def test_consolidate_skips_memory_update_when_guard_triggers(tmp_path: Pat
     assert len(rows) == 1
     assert rows[0]["session_key"] == "test:memory_update_guard"
     assert rows[0]["reason"] in {"excessive_shrink", "heading_retention_too_low"}
+
+
+@pytest.mark.asyncio
+async def test_consolidate_records_preference_conflict_metric(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    current = (
+        "# Long-term Memory\n\n"
+        "## Preferences\n"
+        "- 语言: 中文\n"
+        "- 沟通风格: 技术讨论\n"
+    )
+    mm.write_long_term(current)
+
+    session = Session(key="test:memory_conflict")
+    for i in range(60):
+        session.add_message("user", f"msg{i}")
+
+    provider = MagicMock()
+
+    async def _fake_chat(**kwargs):
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="t1",
+                    name="save_memory",
+                    arguments={
+                        "history_entry": "[2026-02-25 10:00] Preference updated.",
+                        "memory_update": (
+                            "# Long-term Memory\n\n"
+                            "## Preferences\n"
+                            "- 语言: English\n"
+                            "- 沟通风格: 技术讨论\n"
+                        ),
+                    },
+                )
+            ],
+        )
+
+    provider.chat = _fake_chat
+    result = await mm.consolidate(session=session, provider=provider, model="test", memory_window=50)
+
+    assert result is True
+    metrics_path = mm.memory_dir / "memory-conflict-metrics.jsonl"
+    rows = [json.loads(line) for line in metrics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(rows) == 1
+    assert rows[0]["session_key"] == "test:memory_conflict"
+    assert rows[0]["conflict_key"] == "language"

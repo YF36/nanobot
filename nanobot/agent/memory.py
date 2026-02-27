@@ -116,6 +116,10 @@ class MemoryStore:
         re.compile(r"\baligns with user's established interest\b.*$", re.IGNORECASE),
         re.compile(r"\bNo new information added\b.*$", re.IGNORECASE),
     )
+    _PREFERENCE_KEY_PATTERNS = (
+        ("language", re.compile(r"(语言|language)", re.IGNORECASE)),
+        ("communication_style", re.compile(r"(沟通风格|communication style)", re.IGNORECASE)),
+    )
 
     def __init__(self, workspace: Path):
         self.memory_dir = ensure_dir(workspace / "memory")
@@ -123,6 +127,7 @@ class MemoryStore:
         self.history_file = self.memory_dir / "HISTORY.md"
         self.daily_routing_metrics_file = self.memory_dir / "daily-routing-metrics.jsonl"
         self.memory_update_guard_metrics_file = self.memory_dir / "memory-update-guard-metrics.jsonl"
+        self.memory_conflict_metrics_file = self.memory_dir / "memory-conflict-metrics.jsonl"
 
     def read_long_term(self) -> str:
         if self.memory_file.exists():
@@ -188,6 +193,71 @@ class MemoryStore:
                 "Failed to append memory_update guard metric",
                 file=str(self.memory_update_guard_metrics_file),
             )
+
+    def _append_memory_conflict_metric(
+        self,
+        *,
+        session_key: str,
+        conflict_key: str,
+        old_value: str,
+        new_value: str,
+    ) -> None:
+        row = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "session_key": session_key,
+            "conflict_key": conflict_key,
+            "old_value": old_value,
+            "new_value": new_value,
+        }
+        try:
+            with open(self.memory_conflict_metrics_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except Exception:
+            logger.warning(
+                "Failed to append memory conflict metric",
+                file=str(self.memory_conflict_metrics_file),
+            )
+
+    @classmethod
+    def _extract_preference_values(cls, text: str) -> dict[str, str]:
+        values: dict[str, str] = {}
+        in_preferences = False
+        for raw in text.splitlines():
+            line = raw.strip()
+            if line.startswith("## "):
+                in_preferences = line[3:].strip().lower() in {"preferences", "偏好", "用户偏好"}
+                continue
+            if not in_preferences or not line.startswith("-"):
+                continue
+            item = line.lstrip("-").strip()
+            for key, pat in cls._PREFERENCE_KEY_PATTERNS:
+                if pat.search(item):
+                    if ":" in item:
+                        values[key] = item.split(":", 1)[1].strip()
+                    elif "：" in item:
+                        values[key] = item.split("：", 1)[1].strip()
+                    else:
+                        values[key] = item
+        return values
+
+    @classmethod
+    def _detect_preference_conflicts(cls, current_memory: str, candidate_update: str) -> list[dict[str, str]]:
+        current_vals = cls._extract_preference_values(current_memory)
+        candidate_vals = cls._extract_preference_values(candidate_update)
+        conflicts: list[dict[str, str]] = []
+        for key, old_value in current_vals.items():
+            new_value = candidate_vals.get(key)
+            if not new_value:
+                continue
+            if old_value != new_value:
+                conflicts.append(
+                    {
+                        "conflict_key": key,
+                        "old_value": old_value,
+                        "new_value": new_value,
+                    }
+                )
+        return conflicts
 
     @classmethod
     def _history_entry_date(cls, entry: str) -> str:
@@ -439,7 +509,8 @@ class MemoryStore:
                 bullet = raw[2:].strip()
                 if not bullet:
                     continue
-                line = f"- {date_str}: {bullet}"
+                section_label = f" [{current_section}]" if current_section else ""
+                line = f"- {date_str}{section_label}: {bullet}"
                 projected = total_chars + len(line) + 1
                 if len(lines) >= bullet_budget or projected > char_budget:
                     return "\n".join(lines)
@@ -885,6 +956,20 @@ class MemoryStore:
                                     returned_memory_chars=len(update),
                                 )
                             else:
+                                conflicts = self._detect_preference_conflicts(current_memory, update)
+                                for conflict in conflicts:
+                                    logger.warning(
+                                        "Memory preference conflict detected",
+                                        key=conflict["conflict_key"],
+                                        old_value=conflict["old_value"],
+                                        new_value=conflict["new_value"],
+                                    )
+                                    self._append_memory_conflict_metric(
+                                        session_key=session.key,
+                                        conflict_key=conflict["conflict_key"],
+                                        old_value=conflict["old_value"],
+                                        new_value=conflict["new_value"],
+                                    )
                                 self.write_long_term(update)
 
                     processed_count += len(chunk)

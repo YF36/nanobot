@@ -6,10 +6,12 @@ from nanobot.agent.memory_maintenance import (
     build_cleanup_plan,
     render_daily_archive_dry_run_markdown,
     render_cleanup_effect_markdown,
+    render_memory_conflict_metrics_markdown,
     render_daily_routing_metrics_markdown,
     render_memory_update_guard_metrics_markdown,
     run_memory_audit,
     summarize_daily_archive_dry_run,
+    summarize_memory_conflict_metrics,
     summarize_memory_update_guard_metrics,
     summarize_daily_routing_metrics,
 )
@@ -166,6 +168,39 @@ def test_render_memory_update_guard_metrics_markdown_handles_missing_file(tmp_pa
     memory_dir.mkdir()
     summary = summarize_memory_update_guard_metrics(memory_dir)
     text = render_memory_update_guard_metrics_markdown(summary)
+    assert "Metrics file: not found" in text
+
+
+def test_summarize_memory_conflict_metrics_counts_keys(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(
+        memory_dir / "memory-conflict-metrics.jsonl",
+        "\n".join(
+            [
+                '{"session_key":"s1","conflict_key":"language"}',
+                '{"session_key":"s1","conflict_key":"language"}',
+                '{"session_key":"s2","conflict_key":"communication_style"}',
+                "not-json",
+            ]
+        )
+        + "\n",
+    )
+    summary = summarize_memory_conflict_metrics(memory_dir)
+    assert summary.metrics_file_exists is True
+    assert summary.total_rows == 4
+    assert summary.parse_error_rows == 1
+    assert summary.key_counts["language"] == 2
+    assert summary.key_counts["communication_style"] == 1
+    text = render_memory_conflict_metrics_markdown(summary)
+    assert "Conflict Keys" in text
+
+
+def test_render_memory_conflict_metrics_markdown_handles_missing_file(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    summary = summarize_memory_conflict_metrics(memory_dir)
+    text = render_memory_conflict_metrics_markdown(summary)
     assert "Metrics file: not found" in text
 
 

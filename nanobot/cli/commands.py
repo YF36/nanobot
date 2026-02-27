@@ -247,6 +247,15 @@ def memory_audit(
         "",
         help="Optional memory_update guard metrics markdown output path",
     ),
+    conflict_metrics_summary: bool = typer.Option(
+        False,
+        "--conflict-metrics-summary",
+        help="Show memory conflict metrics summary",
+    ),
+    conflict_metrics_out: str = typer.Option(
+        "",
+        help="Optional memory conflict metrics markdown output path",
+    ),
     archive_dry_run: bool = typer.Option(
         False,
         "--archive-dry-run",
@@ -281,11 +290,13 @@ def memory_audit(
         build_cleanup_plan,
         render_daily_archive_dry_run_markdown,
         render_cleanup_effect_markdown,
+        render_memory_conflict_metrics_markdown,
         render_daily_routing_metrics_markdown,
         render_memory_update_guard_metrics_markdown,
         render_audit_markdown,
         run_memory_audit,
         summarize_daily_archive_dry_run,
+        summarize_memory_conflict_metrics,
         summarize_memory_update_guard_metrics,
         summarize_daily_routing_metrics,
     )
@@ -330,6 +341,17 @@ def memory_audit(
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(guard_md, encoding="utf-8")
             console.print(f"[green]✓[/green] Wrote guard metrics summary: {out}")
+
+    if conflict_metrics_summary or conflict_metrics_out:
+        conflict_metrics = summarize_memory_conflict_metrics(target_dir)
+        conflict_md = render_memory_conflict_metrics_markdown(conflict_metrics)
+        if conflict_metrics_summary:
+            console.print(Markdown(conflict_md))
+        if conflict_metrics_out:
+            out = Path(conflict_metrics_out).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(conflict_md, encoding="utf-8")
+            console.print(f"[green]✓[/green] Wrote conflict metrics summary: {out}")
 
     if archive_dry_run or archive_out:
         dry = summarize_daily_archive_dry_run(target_dir, keep_days=archive_keep_days)
@@ -390,9 +412,11 @@ def memory_observe(
     from nanobot.config.loader import load_config
     from nanobot.agent.memory_maintenance import (
         render_audit_markdown,
+        render_memory_conflict_metrics_markdown,
         render_daily_routing_metrics_markdown,
         render_memory_update_guard_metrics_markdown,
         run_memory_audit,
+        summarize_memory_conflict_metrics,
         summarize_daily_routing_metrics,
         summarize_memory_update_guard_metrics,
     )
@@ -412,17 +436,21 @@ def memory_observe(
     audit_md = render_audit_markdown(run_memory_audit(target_dir))
     routing_md = render_daily_routing_metrics_markdown(summarize_daily_routing_metrics(target_dir))
     guard_md = render_memory_update_guard_metrics_markdown(summarize_memory_update_guard_metrics(target_dir))
+    conflict_md = render_memory_conflict_metrics_markdown(summarize_memory_conflict_metrics(target_dir))
 
     audit_path = output_dir / f"{date_prefix}-audit{suffix}.md"
     routing_path = output_dir / f"{date_prefix}-metrics-summary{suffix}.md"
     guard_path = output_dir / f"{date_prefix}-guard-metrics-summary{suffix}.md"
+    conflict_path = output_dir / f"{date_prefix}-conflict-metrics-summary{suffix}.md"
     audit_path.write_text(audit_md, encoding="utf-8")
     routing_path.write_text(routing_md, encoding="utf-8")
     guard_path.write_text(guard_md, encoding="utf-8")
+    conflict_path.write_text(conflict_md, encoding="utf-8")
 
     console.print(f"[green]✓[/green] Wrote audit: {audit_path}")
     console.print(f"[green]✓[/green] Wrote routing metrics: {routing_path}")
     console.print(f"[green]✓[/green] Wrote guard metrics: {guard_path}")
+    console.print(f"[green]✓[/green] Wrote conflict metrics: {conflict_path}")
 
 
 def _make_provider(config: Config):
