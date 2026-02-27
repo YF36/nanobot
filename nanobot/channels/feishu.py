@@ -38,6 +38,8 @@ try:
     )
     UpdateMessageRequest = getattr(lark_im_v1, "UpdateMessageRequest", None)
     UpdateMessageRequestBody = getattr(lark_im_v1, "UpdateMessageRequestBody", None)
+    PatchMessageRequest = getattr(lark_im_v1, "PatchMessageRequest", None)
+    PatchMessageRequestBody = getattr(lark_im_v1, "PatchMessageRequestBody", None)
     FEISHU_AVAILABLE = True
 except ImportError:
     FEISHU_AVAILABLE = False
@@ -45,6 +47,8 @@ except ImportError:
     Emoji = None
     UpdateMessageRequest = None
     UpdateMessageRequestBody = None
+    PatchMessageRequest = None
+    PatchMessageRequestBody = None
 
 # Message type display mapping
 MSG_TYPE_MAP = {
@@ -268,17 +272,22 @@ class FeishuChannel(BaseChannel):
     name = "feishu"
     supports_progress_message_editing = True
     _MAX_PROGRESS_TRACKED_MESSAGES = 512
+    _PATCH_RETRYABLE_CODES = {230020}
     
     def __init__(self, config: FeishuConfig, bus: MessageBus, rate_limiter=None):
         super().__init__(config, bus, rate_limiter=rate_limiter)
         self.config: FeishuConfig = config
-        self.supports_progress_message_editing = bool(UpdateMessageRequest and UpdateMessageRequestBody)
+        self.supports_progress_message_editing = bool(
+            (PatchMessageRequest and PatchMessageRequestBody)
+            or (UpdateMessageRequest and UpdateMessageRequestBody)
+        )
         self._client: Any = None
         self._ws_client: Any = None
         self._ws_thread: threading.Thread | None = None
         self._processed_message_ids: OrderedDict[str, None] = OrderedDict()  # Ordered dedup cache
         self._progress_message_ids: OrderedDict[tuple[str, str], str] = OrderedDict()
         self._progress_patch_state: dict[tuple[str, str], tuple[float, int]] = {}
+        self._progress_accumulated_content: dict[tuple[str, str], str] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
     
     async def start(self) -> None:
@@ -653,31 +662,76 @@ class FeishuChannel(BaseChannel):
 
     def _update_message_sync(self, message_id: str, msg_type: str, content: str) -> bool:
         """Update an existing message by message_id."""
-        if UpdateMessageRequest is None or UpdateMessageRequestBody is None:
+        if (
+            (PatchMessageRequest is None or PatchMessageRequestBody is None)
+            and (UpdateMessageRequest is None or UpdateMessageRequestBody is None)
+        ):
             return False
-        try:
-            request = UpdateMessageRequest.builder() \
-                .message_id(message_id) \
-                .request_body(
-                    UpdateMessageRequestBody.builder()
-                    .msg_type(msg_type)
-                    .content(content)
-                    .build()
-                ).build()
-            response = self._client.im.v1.message.update(request)
-            if not response.success():
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                message_api = getattr(getattr(getattr(self._client, "im", None), "v1", None), "message", None)
+                patch_fn = getattr(message_api, "patch", None) if message_api is not None else None
+                update_fn = getattr(message_api, "update", None) if message_api is not None else None
+
+                if (
+                    PatchMessageRequest is not None
+                    and PatchMessageRequestBody is not None
+                    and callable(patch_fn)
+                ):
+                    request = PatchMessageRequest.builder() \
+                        .message_id(message_id) \
+                        .request_body(
+                            PatchMessageRequestBody.builder()
+                            .content(content)
+                            .build()
+                        ).build()
+                    response = patch_fn(request)
+                elif (
+                    UpdateMessageRequest is not None
+                    and UpdateMessageRequestBody is not None
+                    and callable(update_fn)
+                ):
+                    request = UpdateMessageRequest.builder() \
+                        .message_id(message_id) \
+                        .request_body(
+                            UpdateMessageRequestBody.builder()
+                            .content(content)
+                            .build()
+                        ).build()
+                    response = update_fn(request)
+                else:
+                    return False
+                if response.success():
+                    return True
+                code_raw = getattr(response, "code", None)
+                try:
+                    code = int(code_raw)
+                except Exception:
+                    code = None
+                retryable = code in self._PATCH_RETRYABLE_CODES
+                if retryable and attempt < max_attempts:
+                    time.sleep(0.2 * attempt)
+                    continue
                 logger.warning(
                     "Failed to update Feishu message",
                     message_id=message_id,
                     msg_type=msg_type,
-                    code=response.code,
-                    msg=response.msg,
+                    code=code_raw,
+                    msg=getattr(response, "msg", ""),
+                    retryable=retryable,
+                    attempt=attempt,
                 )
                 return False
-            return True
-        except Exception as e:
-            logger.warning("Error updating Feishu message", message_id=message_id, error=str(e))
-            return False
+            except Exception as e:
+                logger.warning(
+                    "Error updating Feishu message",
+                    message_id=message_id,
+                    attempt=attempt,
+                    error=str(e),
+                )
+                return False
+        return False
 
     @staticmethod
     def _progress_key(msg: OutboundMessage) -> tuple[str, str] | None:
@@ -692,6 +746,7 @@ class FeishuChannel(BaseChannel):
         while len(self._progress_message_ids) > self._MAX_PROGRESS_TRACKED_MESSAGES:
             old_key, _ = self._progress_message_ids.popitem(last=False)
             self._progress_patch_state.pop(old_key, None)
+            self._progress_accumulated_content.pop(old_key, None)
 
     def _should_patch_progress_card(self, key: tuple[str, str], content: str, *, force: bool = False) -> bool:
         if force:
@@ -706,6 +761,12 @@ class FeishuChannel(BaseChannel):
 
     def _mark_progress_card_patched(self, key: tuple[str, str], content: str) -> None:
         self._progress_patch_state[key] = (time.monotonic(), len(content))
+
+    def _append_progress_content(self, key: tuple[str, str], chunk: str) -> str:
+        existing = self._progress_accumulated_content.get(key, "")
+        combined = f"{existing}{chunk}"
+        self._progress_accumulated_content[key] = combined
+        return combined
 
     @staticmethod
     def _build_streaming_card_content(content: str, *, final: bool) -> str:
@@ -767,9 +828,14 @@ class FeishuChannel(BaseChannel):
             if msg.content and msg.content.strip():
                 is_stream_progress = bool(msg.metadata.get("_progress_edit"))
                 is_stream_finalize = bool(msg.metadata.get("_progress_finalize_edit"))
+                render_content = msg.content
+                if progress_key and is_stream_progress:
+                    render_content = self._append_progress_content(progress_key, msg.content)
+                elif progress_key and is_stream_finalize and not msg.content:
+                    render_content = self._progress_accumulated_content.get(progress_key, "")
                 if is_stream_progress or is_stream_finalize:
                     card_content = self._build_streaming_card_content(
-                        msg.content,
+                        render_content,
                         final=is_stream_finalize,
                     )
                 else:
@@ -784,22 +850,28 @@ class FeishuChannel(BaseChannel):
 
                 if msg.metadata.get("_progress_edit") and progress_key:
                     if progress_msg_id:
-                        if not self._should_patch_progress_card(progress_key, msg.content, force=False):
+                        if not self._should_patch_progress_card(progress_key, render_content, force=False):
                             return
                         ok = await loop.run_in_executor(
                             None, self._update_message_sync,
                             progress_msg_id, "interactive", card_content,
                         )
                         if ok:
-                            self._mark_progress_card_patched(progress_key, msg.content)
-                            return
+                            self._mark_progress_card_patched(progress_key, render_content)
+                        else:
+                            logger.warning(
+                                "Skipping progress patch after update failure; keep single streaming card",
+                                chat_id=msg.chat_id,
+                                origin_message_id=progress_key[1],
+                            )
+                        return
                     sent_message_id = await loop.run_in_executor(
                         None, self._send_message_sync,
                         receive_id_type, msg.chat_id, "interactive", card_content,
                     )
                     if sent_message_id:
                         self._remember_progress_message_id(progress_key, sent_message_id)
-                        self._mark_progress_card_patched(progress_key, msg.content)
+                        self._mark_progress_card_patched(progress_key, render_content)
                         return
                     logger.warning("Progress card send failed, falling back to plain text")
                     sent_message_id = await loop.run_in_executor(
@@ -808,7 +880,7 @@ class FeishuChannel(BaseChannel):
                     )
                     if sent_message_id:
                         self._remember_progress_message_id(progress_key, sent_message_id)
-                        self._mark_progress_card_patched(progress_key, msg.content)
+                        self._mark_progress_card_patched(progress_key, render_content)
                     return
 
                 if msg.metadata.get("_progress_finalize_edit") and progress_key:
@@ -830,8 +902,11 @@ class FeishuChannel(BaseChannel):
                                 )
                         self._progress_message_ids.pop(progress_key, None)
                         self._progress_patch_state.pop(progress_key, None)
+                        self._progress_accumulated_content.pop(progress_key, None)
                         return
                     # No in-flight progress message: keep legacy behavior and send normally.
+                    self._progress_patch_state.pop(progress_key, None)
+                    self._progress_accumulated_content.pop(progress_key, None)
 
                 sent_message_id = await loop.run_in_executor(
                     None, self._send_message_sync,
