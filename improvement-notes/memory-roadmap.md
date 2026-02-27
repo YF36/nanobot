@@ -360,6 +360,7 @@ M3 验收标准：
   - 已有：`--drop-tool-activity-older-than-days N`（按窗口清理过旧 `Tool Activity`）。
   - 新增：`--drop-non-decision-older-than-days N`（按窗口清理过旧 `Topics/Open Questions`，默认保留 `Decisions`）。
   - 说明：两项均为 `memory-audit --apply` 下的显式开关，默认关闭，便于灰度。
+  - 新增观测阈值提示：`memory-observe` dashboard 会在 `drop_non_decision` 占比过高时给出窗口收敛建议，降低过清理风险。
 
 6. 约束优先级裁决（冲突处理模板）
 

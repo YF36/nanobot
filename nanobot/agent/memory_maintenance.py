@@ -1172,8 +1172,15 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         lines.append("- Cleanup stage metrics only has parse errors: inspect `cleanup-stage-metrics.jsonl` writer/format.")
     if cleanup_stage.total_stage_counts:
         tool_drop = cleanup_stage.total_stage_counts.get("drop_tool_activity", 0)
+        non_decision_drop = cleanup_stage.total_stage_counts.get("drop_non_decision", 0)
         if cleanup_total_events > 0 and (tool_drop / cleanup_total_events) > 0.5:
             lines.append("- `drop_tool_activity` dominates cleanup events; verify retention window is not too aggressive.")
+        if cleanup_total_events > 0 and (non_decision_drop / cleanup_total_events) > 0.35:
+            lines.append(
+                "- `drop_non_decision` ratio is high; review `--drop-non-decision-older-than-days` window to avoid over-pruning recall context."
+            )
+        if non_decision_drop >= 50:
+            lines.append("- `drop_non_decision` absolute count is large; sample-check archived dailies before widening rollout.")
     if lines[-1] == "## Suggested Next Actions":
         lines.append("- No immediate action required; continue observing daily snapshots.")
 
