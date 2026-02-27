@@ -1098,6 +1098,14 @@ def render_memory_update_guard_metrics_markdown(summary: MemoryUpdateGuardMetric
             hint = _GUARD_REASON_HINTS.get(reason)
             if hint:
                 lines.append(f"- {reason}: {hint}")
+        too_long_count = int(summary.reason_counts.get("candidate_too_long", 0))
+        if too_long_count >= 3 or (
+            summary.avg_current_memory_chars > 0
+            and summary.avg_returned_memory_chars > int(summary.avg_current_memory_chars * 1.8)
+        ):
+            lines.append(
+                "- candidate_too_long trend: tighten consolidator output target (compact sections + concise bullets) before writing memory_update."
+            )
     lines.extend(["", "## Candidate Preview Samples"])
     if not summary.preview_by_reason:
         lines.append("- none")

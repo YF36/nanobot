@@ -210,6 +210,7 @@ def test_summarize_memory_update_guard_metrics_aggregates_avg_chars(tmp_path: Pa
     assert summary.avg_returned_memory_chars == 6000
     text = render_memory_update_guard_metrics_markdown(summary)
     assert "avg_current_memory_chars" in text
+    assert "candidate_too_long trend" in text
 
 
 def test_render_memory_update_guard_metrics_markdown_handles_missing_file(tmp_path: Path) -> None:
