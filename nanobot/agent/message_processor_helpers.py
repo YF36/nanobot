@@ -16,6 +16,7 @@ from nanobot.agent.message_processor_types import (
     TurnEventCallback,
 )
 from nanobot.agent.turn_events import (
+    TURN_EVENT_MESSAGE_DELTA,
     TURN_EVENT_TOOL_END,
     TURN_EVENT_TOOL_START,
     TURN_EVENT_TURN_END,
@@ -110,6 +111,8 @@ class TurnEventStatsCollector:
         self.sources: set[str] = set()
         self.kinds: set[str] = set()
         self.error_tools = 0
+        self.message_delta_count = 0
+        self.streamed_text_chars = 0
 
     async def on_event(self, event: TurnEventPayload) -> None:
         turn_id = event.get("turn_id")
@@ -132,6 +135,12 @@ class TurnEventStatsCollector:
         if event_type == TURN_EVENT_TOOL_START:
             self.tool_starts += 1
             return
+        if event_type == TURN_EVENT_MESSAGE_DELTA:
+            self.message_delta_count += 1
+            delta = event.get("delta")
+            if isinstance(delta, str):
+                self.streamed_text_chars += len(delta)
+            return
         if event_type == TURN_EVENT_TOOL_END:
             self.tool_ends += 1
             if event.get("is_error"):
@@ -151,6 +160,8 @@ class TurnEventStatsCollector:
             tool_starts=self.tool_starts,
             tool_ends=self.tool_ends,
             error_tools=self.error_tools,
+            message_delta_count=self.message_delta_count,
+            streamed_text_chars=self.streamed_text_chars,
             detail_ops=sorted(self.detail_ops),
             event_kinds=sorted(self.kinds),
             turn_ids=sorted(self.turn_ids),
