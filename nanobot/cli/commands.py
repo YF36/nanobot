@@ -306,6 +306,11 @@ def memory_audit(
         "",
         help="Optional apply drop preview markdown output path",
     ),
+    apply_abort_on_high_risk: bool = typer.Option(
+        False,
+        "--apply-abort-on-high-risk",
+        help="Abort apply when pre-apply drop preview risk level is high",
+    ),
     apply: bool = typer.Option(False, "--apply", help="Apply conservative cleanup with automatic backup"),
     apply_recent_days: int = typer.Option(
         0,
@@ -495,6 +500,12 @@ def memory_audit(
                     "[yellow]Hint:[/yellow] High risk preview; consider running with "
                     "`--apply-recent-days` first for a staged rollout."
                 )
+        if apply_abort_on_high_risk and auto_preview.risk_level == "high":
+            console.print(
+                "[red]Aborted:[/red] pre-apply drop preview risk is high. "
+                "Use `--apply-recent-days` for staged rollout or disable this guard explicitly."
+            )
+            raise typer.Exit(code=2)
         before = run_memory_audit(target_dir)
         result = apply_conservative_cleanup(
             target_dir,
