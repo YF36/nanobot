@@ -287,6 +287,7 @@ def test_summarize_memory_update_sanitize_metrics_counts(tmp_path: Path) -> None
     assert summary.total_duplicate_bullets_removed == 3
     assert summary.dominant_focus == "transient_status"
     assert summary.sessions_with_sanitize_hits == 2
+    assert summary.sessions_with_effective_sanitize_hits == 2
     assert summary.by_session["s1"] == 2
     assert summary.by_session["s2"] == 1
     assert summary.top_recent_topic_sections["今天讨论的主题"] == 2
@@ -295,6 +296,7 @@ def test_summarize_memory_update_sanitize_metrics_counts(tmp_path: Path) -> None
     text = render_memory_update_sanitize_metrics_markdown(summary)
     assert "Memory Update Sanitize Metrics Summary" in text
     assert "sessions_with_sanitize_hits: `2`" in text
+    assert "sessions_with_effective_sanitize_hits: `2`" in text
     assert "removed_recent_topic_sections(total)" in text
     assert "removed_duplicate_bullets(total)" in text
     assert "## Suggested Fixes" in text
@@ -323,6 +325,7 @@ def test_render_memory_update_sanitize_metrics_markdown_reports_no_adjustment_ne
     summary = summarize_memory_update_sanitize_metrics(memory_dir)
     assert summary.dominant_focus == "none"
     assert summary.sessions_with_sanitize_hits == 1
+    assert summary.sessions_with_effective_sanitize_hits == 0
     text = render_memory_update_sanitize_metrics_markdown(summary)
     assert "No sanitize-specific prompt adjustment needed" in text
     assert "## Priority Focus" not in text
@@ -586,6 +589,7 @@ def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path)
     assert "guard avg_returned_memory_chars" in text
     assert "memory_update sanitize events" in text
     assert "sessions_with_sanitize_hits" in text
+    assert "sessions_with_effective_sanitize_hits" in text
     assert "sanitize dominant_focus" in text
     assert "preview risk level" in text
     assert "preview dominant driver" in text

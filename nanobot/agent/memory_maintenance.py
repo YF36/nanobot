@@ -106,6 +106,7 @@ class MemoryUpdateSanitizeMetricsSummary:
     total_duplicate_bullets_removed: int
     dominant_focus: str
     sessions_with_sanitize_hits: int
+    sessions_with_effective_sanitize_hits: int
     by_session: dict[str, int]
     top_recent_topic_sections: dict[str, int]
     top_transient_status_sections: dict[str, int]
@@ -1159,6 +1160,7 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
             total_duplicate_bullets_removed=0,
             dominant_focus="none",
             sessions_with_sanitize_hits=0,
+            sessions_with_effective_sanitize_hits=0,
             by_session={},
             top_recent_topic_sections={},
             top_transient_status_sections={},
@@ -1171,6 +1173,7 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
     transient_lines_removed = 0
     duplicate_bullets_removed = 0
     session_counter: Counter[str] = Counter()
+    effective_session_counter: Counter[str] = Counter()
     recent_section_counter: Counter[str] = Counter()
     transient_section_counter: Counter[str] = Counter()
     duplicate_section_counter: Counter[str] = Counter()
@@ -1214,6 +1217,8 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
                 if isinstance(sec, str) and sec.strip():
                     duplicate_section_counter[sec.strip()] += 1
         session_counter[session_key] += 1
+        if (max(0, int(rcount)) + max(0, int(tcount)) + max(0, int(dcount))) > 0:
+            effective_session_counter[session_key] += 1
 
     if recent_topic_removed > transient_lines_removed and recent_topic_removed >= duplicate_bullets_removed:
         dominant_focus = "recent_topic"
@@ -1235,6 +1240,7 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
         total_duplicate_bullets_removed=duplicate_bullets_removed,
         dominant_focus=dominant_focus,
         sessions_with_sanitize_hits=len(session_counter),
+        sessions_with_effective_sanitize_hits=len(effective_session_counter),
         by_session=dict(sorted(session_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         top_recent_topic_sections=dict(sorted(recent_section_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         top_transient_status_sections=dict(sorted(transient_section_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
@@ -1260,6 +1266,7 @@ def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitize
             "## Overall",
             f"- Rows: `{summary.total_rows}` (valid=`{total_valid}`, parse_errors=`{summary.parse_error_rows}`)",
             f"- sessions_with_sanitize_hits: `{summary.sessions_with_sanitize_hits}`",
+            f"- sessions_with_effective_sanitize_hits: `{summary.sessions_with_effective_sanitize_hits}`",
             f"- removed_recent_topic_sections(total): `{summary.total_recent_topic_sections_removed}`",
             f"- removed_transient_status_lines(total): `{summary.total_transient_status_lines_removed}`",
             f"- removed_duplicate_bullets(total): `{summary.total_duplicate_bullets_removed}`",
@@ -1597,8 +1604,10 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         f"- guard avg_returned_memory_chars: `{guard.avg_returned_memory_chars}`",
         f"- memory_update sanitize events: `{max(0, sanitize.total_rows - sanitize.parse_error_rows)}`",
         f"- sessions_with_sanitize_hits: `{sanitize.sessions_with_sanitize_hits}`",
+        f"- sessions_with_effective_sanitize_hits: `{sanitize.sessions_with_effective_sanitize_hits}`",
         f"- sanitize removed_recent_topic_sections(total): `{sanitize.total_recent_topic_sections_removed}`",
         f"- sanitize removed_transient_status_lines(total): `{sanitize.total_transient_status_lines_removed}`",
+        f"- sanitize removed_duplicate_bullets(total): `{sanitize.total_duplicate_bullets_removed}`",
         f"- sanitize dominant_focus: `{sanitize.dominant_focus}`",
         f"- memory conflict events: `{max(0, conflict.total_rows - conflict.parse_error_rows)}`",
         "",

@@ -458,13 +458,16 @@ def memory_audit(
                     parse_error_rows=sanitize_metrics.parse_error_rows,
                     total_recent_topic_sections_removed=sanitize_metrics.total_recent_topic_sections_removed,
                     total_transient_status_lines_removed=0,
+                    total_duplicate_bullets_removed=0,
                     dominant_focus=(
                         "recent_topic" if sanitize_metrics.total_recent_topic_sections_removed > 0 else "none"
                     ),
                     sessions_with_sanitize_hits=sanitize_metrics.sessions_with_sanitize_hits,
+                    sessions_with_effective_sanitize_hits=sanitize_metrics.sessions_with_effective_sanitize_hits,
                     by_session=sanitize_metrics.by_session,
                     top_recent_topic_sections=sanitize_metrics.top_recent_topic_sections,
                     top_transient_status_sections={},
+                    top_duplicate_bullet_sections={},
                 )
             elif focus == "transient_status":
                 sanitize_metrics = type(sanitize_metrics)(
@@ -473,18 +476,39 @@ def memory_audit(
                     parse_error_rows=sanitize_metrics.parse_error_rows,
                     total_recent_topic_sections_removed=0,
                     total_transient_status_lines_removed=sanitize_metrics.total_transient_status_lines_removed,
+                    total_duplicate_bullets_removed=0,
                     dominant_focus=(
                         "transient_status" if sanitize_metrics.total_transient_status_lines_removed > 0 else "none"
                     ),
                     sessions_with_sanitize_hits=sanitize_metrics.sessions_with_sanitize_hits,
+                    sessions_with_effective_sanitize_hits=sanitize_metrics.sessions_with_effective_sanitize_hits,
                     by_session=sanitize_metrics.by_session,
                     top_recent_topic_sections={},
                     top_transient_status_sections=sanitize_metrics.top_transient_status_sections,
+                    top_duplicate_bullet_sections={},
+                )
+            elif focus == "duplicate_bullets":
+                sanitize_metrics = type(sanitize_metrics)(
+                    metrics_file_exists=sanitize_metrics.metrics_file_exists,
+                    total_rows=sanitize_metrics.total_rows,
+                    parse_error_rows=sanitize_metrics.parse_error_rows,
+                    total_recent_topic_sections_removed=0,
+                    total_transient_status_lines_removed=0,
+                    total_duplicate_bullets_removed=sanitize_metrics.total_duplicate_bullets_removed,
+                    dominant_focus=(
+                        "duplicate_bullets" if sanitize_metrics.total_duplicate_bullets_removed > 0 else "none"
+                    ),
+                    sessions_with_sanitize_hits=sanitize_metrics.sessions_with_sanitize_hits,
+                    sessions_with_effective_sanitize_hits=sanitize_metrics.sessions_with_effective_sanitize_hits,
+                    by_session=sanitize_metrics.by_session,
+                    top_recent_topic_sections={},
+                    top_transient_status_sections={},
+                    top_duplicate_bullet_sections=sanitize_metrics.top_duplicate_bullet_sections,
                 )
             else:
                 console.print(
                     f"[yellow]Unsupported sanitize focus filter:[/yellow] {sanitize_focus_filter} "
-                    "(allowed: recent_topic, transient_status)"
+                    "(allowed: recent_topic, transient_status, duplicate_bullets)"
                 )
         sanitize_md = render_memory_update_sanitize_metrics_markdown(sanitize_metrics)
         if sanitize_metrics_summary:
