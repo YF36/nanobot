@@ -261,6 +261,11 @@ def memory_audit(
         "",
         help="Optional memory_update sanitize metrics markdown output path",
     ),
+    sanitize_focus_filter: str = typer.Option(
+        "",
+        "--sanitize-focus-filter",
+        help="Optional sanitize focus filter: recent_topic or transient_status",
+    ),
     conflict_metrics_summary: bool = typer.Option(
         False,
         "--conflict-metrics-summary",
@@ -442,6 +447,36 @@ def memory_audit(
 
     if sanitize_metrics_summary or sanitize_metrics_out:
         sanitize_metrics = summarize_memory_update_sanitize_metrics(target_dir)
+        if sanitize_focus_filter.strip():
+            focus = sanitize_focus_filter.strip().lower()
+            if focus == "recent_topic":
+                sanitize_metrics = type(sanitize_metrics)(
+                    metrics_file_exists=sanitize_metrics.metrics_file_exists,
+                    total_rows=sanitize_metrics.total_rows,
+                    parse_error_rows=sanitize_metrics.parse_error_rows,
+                    total_recent_topic_sections_removed=sanitize_metrics.total_recent_topic_sections_removed,
+                    total_transient_status_lines_removed=0,
+                    dominant_focus=(
+                        "recent_topic" if sanitize_metrics.total_recent_topic_sections_removed > 0 else "none"
+                    ),
+                    by_session=sanitize_metrics.by_session,
+                    top_recent_topic_sections=sanitize_metrics.top_recent_topic_sections,
+                    top_transient_status_sections={},
+                )
+            elif focus == "transient_status":
+                sanitize_metrics = type(sanitize_metrics)(
+                    metrics_file_exists=sanitize_metrics.metrics_file_exists,
+                    total_rows=sanitize_metrics.total_rows,
+                    parse_error_rows=sanitize_metrics.parse_error_rows,
+                    total_recent_topic_sections_removed=0,
+                    total_transient_status_lines_removed=sanitize_metrics.total_transient_status_lines_removed,
+                    dominant_focus=(
+                        "transient_status" if sanitize_metrics.total_transient_status_lines_removed > 0 else "none"
+                    ),
+                    by_session=sanitize_metrics.by_session,
+                    top_recent_topic_sections={},
+                    top_transient_status_sections=sanitize_metrics.top_transient_status_sections,
+                )
         sanitize_md = render_memory_update_sanitize_metrics_markdown(sanitize_metrics)
         if sanitize_metrics_summary:
             console.print(Markdown(sanitize_md))
