@@ -366,6 +366,7 @@ M3 验收标准：
   - 新增 apply 前预估：`memory-audit --apply-drop-preview [--apply-recent-days N]`，先输出候选删除体量（tool/non-decision）再决定是否执行 `--apply`。
   - 新增守卫开关：`memory-audit --apply --apply-abort-on-high-risk`，当预估风险为 `high` 时中止执行，避免误全量清理。
   - `memory-observe` 已纳入 30d 半衰期预估摘要（dashboard + `*-cleanup-drop-preview-summary.md`），用于日常先观测再执行。
+  - `memory-observe` 的 drop preview 快照顶部增加风险统计行（risk level + total candidates），便于快速扫读。
   - 预估结果新增风险分级（`low/medium/high`），dashboard 在高风险时提示先缩小范围（如 recent-days 灰度）再全量 apply。
   - 预估报告新增“Recommended Next Command”，按风险级别给出建议命令，减少人工拼参数。
   - 当直接执行 `memory-audit --apply` 且存在半衰期候选删除时，CLI 会先打印自动预估摘要（risk/tool/non-decision/scope），高风险时给出灰度提示。
