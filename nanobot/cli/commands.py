@@ -578,6 +578,7 @@ def memory_observe(
     ),
     tag: str = typer.Option("", help="Optional suffix tag, e.g. pre-cleanup"),
     preview_top: int = typer.Option(3, "--preview-top", help="Top N candidate files shown in cleanup drop preview"),
+    preview_days: int = typer.Option(30, "--preview-days", help="Half-life preview window in days"),
 ):
     """Generate a daily observation snapshot (audit + routing metrics + guard metrics)."""
     from datetime import datetime
@@ -621,12 +622,14 @@ def memory_observe(
     trace_md = render_context_trace_markdown(summarize_context_trace(target_dir))
     cleanup_stage_md = render_cleanup_stage_metrics_markdown(summarize_cleanup_stage_metrics(target_dir))
     cleanup_conversion_md = render_cleanup_conversion_index_markdown(summarize_cleanup_conversion_index(target_dir))
+    window_days = max(1, int(preview_days))
     cleanup_preview = summarize_cleanup_drop_preview(
         target_dir,
-        drop_tool_activity_older_than_days=30,
-        drop_non_decision_older_than_days=30,
+        drop_tool_activity_older_than_days=window_days,
+        drop_non_decision_older_than_days=window_days,
     )
     cleanup_preview_md = (
+        f"- Snapshot preview window days: `{window_days}`\n"
         f"- Snapshot risk level: `{cleanup_preview.risk_level}`\n"
         f"- Snapshot total candidates: `{cleanup_preview.drop_tool_activity_candidates + cleanup_preview.drop_non_decision_candidates}`\n\n"
         + render_cleanup_drop_preview_markdown(cleanup_preview, top_limit=max(1, int(preview_top)))
