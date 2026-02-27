@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from nanobot.agent.memory_maintenance import build_cleanup_plan, run_memory_audit
+from nanobot.agent.memory_maintenance import apply_conservative_cleanup, build_cleanup_plan, run_memory_audit
 
 
 def _write(path: Path, text: str) -> None:
@@ -47,3 +47,35 @@ def test_build_cleanup_plan_contains_expected_actions(tmp_path: Path) -> None:
     assert "history_trim_long_entries" in actions
     assert "daily_trim_long_bullets" in actions
     assert "memory_remove_timestamp_like_lines" in actions
+
+
+def test_apply_conservative_cleanup_trims_and_deduplicates_with_backup(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+
+    _write(
+        memory_dir / "HISTORY.md",
+        "[2026-02-27 10:00] " + ("x" * 620) + "\n\n"
+        "[2026-02-27 10:00] repeat\n\n"
+        "[2026-02-27 10:00] repeat\n\n",
+    )
+    _write(
+        memory_dir / "2026-02-27.md",
+        "# 2026-02-27\n\n## Topics\n\n- repeat\n- repeat\n- " + ("y" * 260) + "\n",
+    )
+
+    result = apply_conservative_cleanup(memory_dir)
+    assert result.touched_files == ["2026-02-27.md", "HISTORY.md"]
+    assert result.history_trimmed_entries == 1
+    assert result.history_deduplicated_entries == 1
+    assert result.daily_trimmed_bullets == 1
+    assert result.daily_deduplicated_bullets == 1
+
+    history_after = (memory_dir / "HISTORY.md").read_text(encoding="utf-8")
+    assert history_after.count("repeat") == 1
+    daily_after = (memory_dir / "2026-02-27.md").read_text(encoding="utf-8")
+    assert daily_after.count("- repeat") == 1
+
+    assert result.backup_dir.exists()
+    assert (result.backup_dir / "HISTORY.md").exists()
+    assert (result.backup_dir / "2026-02-27.md").exists()

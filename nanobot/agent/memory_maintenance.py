@@ -1,4 +1,4 @@
-"""Read-only memory audit and optional cleanup planning utilities."""
+"""Memory audit and conservative cleanup utilities."""
 
 from __future__ import annotations
 
@@ -33,6 +33,17 @@ class MemoryAudit:
     daily_orphan_files: list[str]
 
 
+@dataclass
+class CleanupApplyResult:
+    memory_dir: Path
+    backup_dir: Path
+    history_trimmed_entries: int
+    history_deduplicated_entries: int
+    daily_trimmed_bullets: int
+    daily_deduplicated_bullets: int
+    touched_files: list[str]
+
+
 def _iter_daily_files(memory_dir: Path) -> list[Path]:
     items: list[Path] = []
     for p in sorted(memory_dir.glob("*.md")):
@@ -56,6 +67,11 @@ def _parse_history_entries(history_text: str) -> list[str]:
     if cur:
         entries.append(" ".join(cur).strip())
     return entries
+
+
+def _backup_file(src: Path, backup_dir: Path) -> None:
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    (backup_dir / src.name).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
 
 def _extract_history_dates(entries: list[str]) -> set[str]:
@@ -113,6 +129,93 @@ def run_memory_audit(memory_dir: Path) -> MemoryAudit:
         daily_duplicate_count=daily_duplicate_count,
         daily_timestamp_bullet_count=daily_timestamp_bullet_count,
         daily_orphan_files=sorted(daily_orphan_files),
+    )
+
+
+def _trim_text(value: str, max_chars: int) -> tuple[str, bool]:
+    if len(value) <= max_chars:
+        return value, False
+    return value[: max_chars - 3].rstrip() + "...", True
+
+
+def apply_conservative_cleanup(memory_dir: Path) -> CleanupApplyResult:
+    history_file = memory_dir / "HISTORY.md"
+    daily_files = _iter_daily_files(memory_dir)
+    backup_dir = memory_dir / f"_cleanup_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    history_trimmed_entries = 0
+    history_deduplicated_entries = 0
+    daily_trimmed_bullets = 0
+    daily_deduplicated_bullets = 0
+    touched_files: list[str] = []
+
+    if history_file.exists():
+        original = history_file.read_text(encoding="utf-8")
+        entries = _parse_history_entries(original)
+        seen: set[str] = set()
+        cleaned: list[str] = []
+        for e in entries:
+            trimmed, changed = _trim_text(" ".join(e.split()).strip(), 600)
+            if changed:
+                history_trimmed_entries += 1
+            if not trimmed:
+                continue
+            if trimmed in seen:
+                history_deduplicated_entries += 1
+                continue
+            seen.add(trimmed)
+            cleaned.append(trimmed)
+        new_content = ("\n\n".join(cleaned).rstrip() + "\n") if cleaned else ""
+        if new_content != original:
+            _backup_file(history_file, backup_dir)
+            history_file.write_text(new_content, encoding="utf-8")
+            touched_files.append(history_file.name)
+
+    for daily in daily_files:
+        original = daily.read_text(encoding="utf-8")
+        lines = original.splitlines()
+        seen_bullets: set[str] = set()
+        changed = False
+        new_lines: list[str] = []
+        for line in lines:
+            if not line.startswith("- "):
+                new_lines.append(line)
+                continue
+            bullet = line[2:].strip()
+            trimmed, was_trimmed = _trim_text(" ".join(bullet.split()).strip(), 240)
+            if was_trimmed:
+                daily_trimmed_bullets += 1
+                changed = True
+            if not trimmed:
+                changed = True
+                continue
+            if trimmed in seen_bullets:
+                daily_deduplicated_bullets += 1
+                changed = True
+                continue
+            seen_bullets.add(trimmed)
+            if trimmed != bullet:
+                changed = True
+            new_lines.append(f"- {trimmed}")
+        new_content = "\n".join(new_lines)
+        if original.endswith("\n"):
+            new_content += "\n"
+        if changed and new_content != original:
+            _backup_file(daily, backup_dir)
+            daily.write_text(new_content, encoding="utf-8")
+            touched_files.append(daily.name)
+
+    if not touched_files and backup_dir.exists():
+        backup_dir.rmdir()
+
+    return CleanupApplyResult(
+        memory_dir=memory_dir,
+        backup_dir=backup_dir,
+        history_trimmed_entries=history_trimmed_entries,
+        history_deduplicated_entries=history_deduplicated_entries,
+        daily_trimmed_bullets=daily_trimmed_bullets,
+        daily_deduplicated_bullets=daily_deduplicated_bullets,
+        touched_files=sorted(touched_files),
     )
 
 

@@ -236,10 +236,16 @@ def memory_audit(
     memory_dir: str = typer.Option("", help="Memory directory path; defaults to <workspace>/memory from config"),
     report_out: str = typer.Option("", help="Optional markdown report output path"),
     plan_out: str = typer.Option("", help="Optional cleanup plan JSON output path (dry-run actions only)"),
+    apply: bool = typer.Option(False, "--apply", help="Apply conservative cleanup with automatic backup"),
 ):
-    """Run read-only memory quality audit and generate optional dry-run cleanup plan."""
+    """Run memory quality audit; optionally apply conservative cleanup with backups."""
     from nanobot.config.loader import load_config
-    from nanobot.agent.memory_maintenance import build_cleanup_plan, render_audit_markdown, run_memory_audit
+    from nanobot.agent.memory_maintenance import (
+        apply_conservative_cleanup,
+        build_cleanup_plan,
+        render_audit_markdown,
+        run_memory_audit,
+    )
 
     config = load_config()
     target_dir = Path(memory_dir).expanduser() if memory_dir else (config.workspace_path / "memory")
@@ -259,6 +265,21 @@ def memory_audit(
         plan = build_cleanup_plan(target_dir)
         out.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
         console.print(f"[green]✓[/green] Wrote dry-run cleanup plan: {out}")
+
+    if apply:
+        result = apply_conservative_cleanup(target_dir)
+        if result.touched_files:
+            console.print(
+                "[green]✓[/green] Applied conservative cleanup: "
+                f"history_trimmed={result.history_trimmed_entries}, "
+                f"history_dedup={result.history_deduplicated_entries}, "
+                f"daily_trimmed={result.daily_trimmed_bullets}, "
+                f"daily_dedup={result.daily_deduplicated_bullets}"
+            )
+            console.print(f"[green]✓[/green] Backup dir: {result.backup_dir}")
+            console.print(f"[green]✓[/green] Touched files: {', '.join(result.touched_files)}")
+        else:
+            console.print("[yellow]No cleanup changes applied.[/yellow]")
 
 
 def _make_provider(config: Config):
