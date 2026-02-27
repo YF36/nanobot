@@ -165,6 +165,9 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已实施（step1）：daily 分栏路由 debug 日志（含 section 与短样例）用于观察命中质量。
 - 已实施（step2，兼容版）：`save_memory` 工具 schema 支持可选 `daily_sections`（`topics/decisions/tool_activity/open_questions`）。
 - 已实施（step2，兼容版）：`consolidate()` 优先写入结构化 daily sections；结构非法或缺失时回退到启发式分栏。
+- 已实施（step2+，2026-02-27）：daily 写入去噪增强：
+  - fallback（`history_entry`）写入 daily 时仅写正文，不再带时间戳前缀；
+  - 同一 daily section 内完全相同 bullet 自动去重（结构化写入与 fallback 均生效）。
 - 保持兼容：`history_entry` / `memory_update` 仍为必填主路径，旧模型输出不受影响。
 
 当前策略决策（阶段性，2026-02-26）：
@@ -222,3 +225,10 @@ M3 验收标准：
 - 归档后关键信息不丢失（抽样验证）。
 - 若引入 TTL：过期清理可回放、可审计（备份/归档留痕）。
 
+### M3 辅助工具现状（2026-02-27）
+
+- 已有只读体检命令：`nanobot memory-audit`
+  - 输出记忆质量报告与 dry-run 清理计划（JSON）。
+- 已有保守清理开关：`nanobot memory-audit --apply`
+  - 行为：仅做“裁剪超长 + 同文件去重”，并自动创建时间戳备份目录；
+  - 定位：用于低风险收口，不涉及 TTL/抽象层/检索层策略变更。

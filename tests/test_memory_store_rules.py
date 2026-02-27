@@ -23,8 +23,8 @@ def test_append_daily_history_entry_creates_template_and_appends_topics(tmp_path
     assert "## Decisions" in content
     assert "## Tool Activity" in content
     assert "## Open Questions" in content
-    assert "- [2026-02-25 10:00] First summary." in content
-    assert "- [2026-02-25 11:00] Second summary." in content
+    assert "- First summary." in content
+    assert "- Second summary." in content
 
 
 def test_append_daily_history_entry_routes_to_sections_by_simple_heuristics(tmp_path: Path) -> None:
@@ -51,6 +51,16 @@ def test_append_daily_history_entry_keeps_legacy_entries_file_compatible(tmp_pat
     content = legacy.read_text(encoding="utf-8")
     assert "## Entries" in content
     assert "Legacy append path works." in content
+
+
+def test_append_daily_history_entry_deduplicates_exact_bullets_within_section(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+
+    mm.append_daily_history_entry("[2026-02-25 10:00] Duplicate summary.")
+    mm.append_daily_history_entry("[2026-02-25 10:05] Duplicate summary.")
+
+    content = (mm.memory_dir / "2026-02-25.md").read_text(encoding="utf-8")
+    assert content.count("- Duplicate summary.") == 1
 
 
 def test_normalize_daily_sections_detailed_reports_quality_reasons() -> None:
@@ -127,6 +137,24 @@ def test_append_daily_sections_writes_structured_bullets(tmp_path: Path) -> None
     assert "- 先做 M2-min 再做 M2-full" in content
     assert "- 运行 pytest 验证" in content
     assert "- 是否引入 TTL" in content
+
+
+def test_append_daily_sections_deduplicates_exact_bullets(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+
+    path, ok, details = mm.append_daily_sections_detailed(
+        "2026-02-25",
+        {
+            "topics": ["same bullet", "same bullet"],
+            "tool_activity": ["run pytest", "run pytest"],
+        },
+    )
+
+    assert ok is True
+    assert details["bullet_count"] == 2
+    content = path.read_text(encoding="utf-8")
+    assert content.count("- same bullet") == 1
+    assert content.count("- run pytest") == 1
 
 
 def test_consolidation_system_prompt_restricts_memory_update_to_long_term_facts() -> None:

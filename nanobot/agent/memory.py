@@ -151,7 +151,7 @@ class MemoryStore:
         return "Topics"
 
     @staticmethod
-    def _append_bullet_to_daily_section(daily_file: Path, section: str, bullet: str) -> None:
+    def _append_bullet_to_daily_section(daily_file: Path, section: str, bullet: str) -> bool:
         text = daily_file.read_text(encoding="utf-8")
         target = f"## {section}"
         idx = text.find(target)
@@ -161,16 +161,20 @@ class MemoryStore:
         if idx == -1:
             with open(daily_file, "a", encoding="utf-8") as f:
                 f.write(f"\n## Entries\n\n- {bullet}\n")
-            return
+            return True
         insert_at = text.find("\n## ", idx + len(target))
         if insert_at == -1:
             insert_at = len(text)
         prefix = text[:insert_at]
         suffix = text[insert_at:]
+        section_body = text[idx:insert_at]
+        if f"\n- {bullet}\n" in section_body or section_body.endswith(f"\n- {bullet}"):
+            return False
         if not prefix.endswith("\n"):
             prefix += "\n"
         new_text = prefix + f"- {bullet}\n" + suffix
         daily_file.write_text(new_text, encoding="utf-8")
+        return True
 
     @classmethod
     def _normalize_history_entry(cls, entry: object) -> tuple[str | None, str]:
@@ -250,8 +254,8 @@ class MemoryStore:
         wrote = 0
         for schema_key, section_name in self._DAILY_SECTIONS_SCHEMA_MAP.items():
             for bullet in normalized.get(schema_key, []):
-                self._append_bullet_to_daily_section(daily_file, section_name, bullet)
-                wrote += 1
+                if self._append_bullet_to_daily_section(daily_file, section_name, bullet):
+                    wrote += 1
         details = {
             "reason": "ok",
             "keys": sorted(normalized.keys()),
@@ -280,12 +284,13 @@ class MemoryStore:
             daily_file.write_text(self._daily_memory_template(date_str), encoding="utf-8")
             created = True
         section = self._daily_section_for_history_entry(entry)
-        self._append_bullet_to_daily_section(daily_file, section, entry.rstrip())
+        wrote = self._append_bullet_to_daily_section(daily_file, section, self._history_entry_body(entry))
         logger.debug(
             "Memory daily entry appended",
             date=date_str,
             section=section,
             created=created,
+            wrote=wrote,
             file=str(daily_file),
             sample=self._truncate_log_sample(self._history_entry_body(entry)),
         )
