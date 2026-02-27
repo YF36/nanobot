@@ -1723,6 +1723,10 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         lines.append(
             "- structured_daily_ok rate is below target; prioritize consolidation prompt tuning for stable `daily_sections` output."
         )
+    if routing.sessions_with_fallback_events >= 5:
+        lines.append(
+            "- Fallback has spread across many sessions; prioritize serializer/schema fix before per-session prompt tuning."
+        )
     if max(0, guard.total_rows - guard.parse_error_rows) > 0:
         lines.append("- Review guard reasons: `nanobot memory-audit --guard-metrics-summary`")
     unstructured_count = int(guard.reason_counts.get("unstructured_candidate", 0))
