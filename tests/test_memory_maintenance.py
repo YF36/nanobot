@@ -183,6 +183,7 @@ def test_summarize_memory_update_guard_metrics_counts_reasons(tmp_path: Path) ->
     assert summary.reason_counts["heading_retention_too_low"] == 1
     assert summary.by_session["s1"] == 2
     assert summary.by_session["s2"] == 1
+    assert summary.sessions_with_guard_hits == 2
     assert summary.preview_by_reason["excessive_shrink"] == "# Long-term Memory ..."
     assert summary.avg_current_memory_chars == 0
     assert summary.avg_returned_memory_chars == 0
@@ -192,6 +193,7 @@ def test_summarize_memory_update_guard_metrics_counts_reasons(tmp_path: Path) ->
     assert "## Priority Focus" in text
     assert "excessive_shrink: `2`" in text
     assert "dominant_reason: `excessive_shrink`" in text
+    assert "sessions_with_guard_hits: `2`" in text
     assert "## Candidate Preview Samples" in text
 
 

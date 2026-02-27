@@ -90,6 +90,7 @@ class MemoryUpdateGuardMetricsSummary:
     preview_by_reason: dict[str, str]
     avg_current_memory_chars: int
     avg_returned_memory_chars: int
+    sessions_with_guard_hits: int
 
 
 @dataclass
@@ -1013,6 +1014,7 @@ def summarize_memory_update_guard_metrics(memory_dir: Path) -> MemoryUpdateGuard
             preview_by_reason={},
             avg_current_memory_chars=0,
             avg_returned_memory_chars=0,
+            sessions_with_guard_hits=0,
         )
 
     total_rows = 0
@@ -1060,6 +1062,7 @@ def summarize_memory_update_guard_metrics(memory_dir: Path) -> MemoryUpdateGuard
         preview_by_reason=preview_by_reason,
         avg_current_memory_chars=(int(sum_current_chars / chars_count) if chars_count > 0 else 0),
         avg_returned_memory_chars=(int(sum_returned_chars / chars_count) if chars_count > 0 else 0),
+        sessions_with_guard_hits=len(session_counter),
     )
 
 
@@ -1080,6 +1083,7 @@ def render_memory_update_guard_metrics_markdown(summary: MemoryUpdateGuardMetric
             "",
             "## Overall",
             f"- Rows: `{summary.total_rows}` (valid=`{total_valid}`, parse_errors=`{summary.parse_error_rows}`)",
+            f"- sessions_with_guard_hits: `{summary.sessions_with_guard_hits}`",
             f"- avg_current_memory_chars: `{summary.avg_current_memory_chars}`",
             f"- avg_returned_memory_chars: `{summary.avg_returned_memory_chars}`",
             f"- dominant_reason: `{next(iter(summary.reason_counts.keys())) if summary.reason_counts else 'none'}`",
