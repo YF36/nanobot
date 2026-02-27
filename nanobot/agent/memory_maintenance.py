@@ -217,6 +217,20 @@ def _append_jsonl(path: Path, payload: dict[str, object]) -> None:
         fp.write(line)
 
 
+def _observability_file(memory_dir: Path, filename: str) -> Path:
+    return memory_dir / "observability" / filename
+
+
+def _metrics_file_for_write(memory_dir: Path, filename: str) -> Path:
+    target = _observability_file(memory_dir, filename)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _metrics_file_for_read(memory_dir: Path, filename: str) -> Path:
+    return _observability_file(memory_dir, filename)
+
+
 def _extract_history_dates(entries: list[str]) -> set[str]:
     dates: set[str] = set()
     for entry in entries:
@@ -498,7 +512,7 @@ def apply_conservative_cleanup(
 
 
 def _write_cleanup_stage_metrics(memory_dir: Path, result: CleanupApplyResult) -> None:
-    metrics_file = memory_dir / "cleanup-stage-metrics.jsonl"
+    metrics_file = _metrics_file_for_write(memory_dir, "cleanup-stage-metrics.jsonl")
     stage_counts = {
         "trim": int(result.history_trimmed_entries + result.daily_trimmed_bullets),
         "dedupe": int(result.history_deduplicated_entries + result.daily_deduplicated_bullets),
@@ -522,7 +536,7 @@ def _write_cleanup_stage_metrics(memory_dir: Path, result: CleanupApplyResult) -
 def _write_cleanup_conversion_index(memory_dir: Path, rows: list[dict[str, object]]) -> int:
     if not rows:
         return 0
-    index_file = memory_dir / "cleanup-conversion-index.jsonl"
+    index_file = _metrics_file_for_write(memory_dir, "cleanup-conversion-index.jsonl")
     run_id = f"cleanup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     ts = datetime.now().isoformat(timespec="seconds")
     for row in rows:
@@ -707,7 +721,7 @@ def render_cleanup_effect_markdown(before: MemoryAudit, after: MemoryAudit, resu
 
 
 def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSummary:
-    metrics_file = memory_dir / "daily-routing-metrics.jsonl"
+    metrics_file = _metrics_file_for_read(memory_dir, "daily-routing-metrics.jsonl")
     if not metrics_file.exists():
         return DailyRoutingMetricsSummary(
             metrics_file_exists=False,
@@ -768,7 +782,7 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
 
 
 def summarize_cleanup_stage_metrics(memory_dir: Path) -> CleanupStageMetricsSummary:
-    metrics_file = memory_dir / "cleanup-stage-metrics.jsonl"
+    metrics_file = _metrics_file_for_read(memory_dir, "cleanup-stage-metrics.jsonl")
     if not metrics_file.exists():
         return CleanupStageMetricsSummary(
             metrics_file_exists=False,
@@ -861,7 +875,7 @@ def render_cleanup_stage_metrics_markdown(summary: CleanupStageMetricsSummary) -
 
 
 def summarize_cleanup_conversion_index(memory_dir: Path) -> CleanupConversionIndexSummary:
-    index_file = memory_dir / "cleanup-conversion-index.jsonl"
+    index_file = _metrics_file_for_read(memory_dir, "cleanup-conversion-index.jsonl")
     if not index_file.exists():
         return CleanupConversionIndexSummary(
             index_file_exists=False,
@@ -1010,7 +1024,7 @@ def render_daily_routing_metrics_markdown(summary: DailyRoutingMetricsSummary) -
 
 
 def summarize_memory_update_guard_metrics(memory_dir: Path) -> MemoryUpdateGuardMetricsSummary:
-    metrics_file = memory_dir / "memory-update-guard-metrics.jsonl"
+    metrics_file = _metrics_file_for_read(memory_dir, "memory-update-guard-metrics.jsonl")
     if not metrics_file.exists():
         return MemoryUpdateGuardMetricsSummary(
             metrics_file_exists=False,
@@ -1149,7 +1163,7 @@ def render_memory_update_guard_metrics_markdown(summary: MemoryUpdateGuardMetric
 
 
 def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSanitizeMetricsSummary:
-    metrics_file = memory_dir / "memory-update-sanitize-metrics.jsonl"
+    metrics_file = _metrics_file_for_read(memory_dir, "memory-update-sanitize-metrics.jsonl")
     if not metrics_file.exists():
         return MemoryUpdateSanitizeMetricsSummary(
             metrics_file_exists=False,
@@ -1381,7 +1395,7 @@ def render_daily_archive_dry_run_markdown(summary: DailyArchiveDryRunSummary) ->
 
 
 def summarize_memory_conflict_metrics(memory_dir: Path) -> MemoryConflictMetricsSummary:
-    metrics_file = memory_dir / "memory-conflict-metrics.jsonl"
+    metrics_file = _metrics_file_for_read(memory_dir, "memory-conflict-metrics.jsonl")
     if not metrics_file.exists():
         return MemoryConflictMetricsSummary(
             metrics_file_exists=False,
@@ -1461,7 +1475,7 @@ def render_memory_conflict_metrics_markdown(summary: MemoryConflictMetricsSummar
 
 
 def summarize_context_trace(memory_dir: Path) -> ContextTraceSummary:
-    trace_file = memory_dir / "context-trace.jsonl"
+    trace_file = _metrics_file_for_read(memory_dir, "context-trace.jsonl")
     if not trace_file.exists():
         return ContextTraceSummary(
             trace_file_exists=False,

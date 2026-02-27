@@ -313,7 +313,7 @@ def test_build_messages_writes_context_trace_rows(tmp_path) -> None:
         {"role": "assistant", "content": "reply"},
     ]
     builder.build_messages(history=history, current_message="我们之前聊过什么？")
-    trace_file = tmp_path / "memory" / "context-trace.jsonl"
+    trace_file = tmp_path / "memory" / "observability" / "context-trace.jsonl"
     assert trace_file.exists()
     rows = [json.loads(line) for line in trace_file.read_text(encoding="utf-8").splitlines() if line.strip()]
     stages = [r["stage"] for r in rows]

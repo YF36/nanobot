@@ -511,7 +511,7 @@ async def test_consolidate_prefers_structured_daily_sections_when_present(tmp_pa
     assert "Use structured daily sections first." in daily_text
     assert "When to add TTL janitor?" in daily_text
     assert "Discussed memory migration plan." not in daily_text
-    metrics_path = mm.memory_dir / "daily-routing-metrics.jsonl"
+    metrics_path = mm.observability_dir / "daily-routing-metrics.jsonl"
     metrics = [json.loads(line) for line in metrics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(metrics) == 1
     assert metrics[0]["session_key"] == "test:daily_sections_ok"
@@ -555,7 +555,7 @@ async def test_consolidate_falls_back_when_daily_sections_invalid(tmp_path: Path
     assert result is True
     daily_text = (mm.memory_dir / "2026-02-25.md").read_text(encoding="utf-8")
     assert "Ran exec command to inspect memory files." in daily_text
-    metrics_path = mm.memory_dir / "daily-routing-metrics.jsonl"
+    metrics_path = mm.observability_dir / "daily-routing-metrics.jsonl"
     metrics = [json.loads(line) for line in metrics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(metrics) == 1
     assert metrics[0]["session_key"] == "test:daily_sections_bad"
@@ -603,7 +603,7 @@ async def test_consolidate_sanitizes_memory_update_before_write(tmp_path: Path) 
     written_memory = mm.read_long_term()
     assert "## Preferences" in written_memory
     assert "今天讨论的主题" not in written_memory
-    sanitize_metrics = mm.memory_dir / "memory-update-sanitize-metrics.jsonl"
+    sanitize_metrics = mm.observability_dir / "memory-update-sanitize-metrics.jsonl"
     rows = [json.loads(line) for line in sanitize_metrics.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(rows) == 1
     assert rows[0]["session_key"] == "test:memory_rules"
@@ -687,7 +687,7 @@ async def test_consolidate_skips_memory_update_when_guard_triggers(tmp_path: Pat
 
     assert result is True
     assert mm.read_long_term() == current
-    guard_metrics_path = mm.memory_dir / "memory-update-guard-metrics.jsonl"
+    guard_metrics_path = mm.observability_dir / "memory-update-guard-metrics.jsonl"
     rows = [json.loads(line) for line in guard_metrics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(rows) == 1
     assert rows[0]["session_key"] == "test:memory_update_guard"
@@ -736,7 +736,7 @@ async def test_consolidate_records_preference_conflict_metric(tmp_path: Path) ->
     result = await mm.consolidate(session=session, provider=provider, model="test", memory_window=50)
 
     assert result is True
-    metrics_path = mm.memory_dir / "memory-conflict-metrics.jsonl"
+    metrics_path = mm.observability_dir / "memory-conflict-metrics.jsonl"
     rows = [json.loads(line) for line in metrics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(rows) == 1
     assert rows[0]["session_key"] == "test:memory_conflict"

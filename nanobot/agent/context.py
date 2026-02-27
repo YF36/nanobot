@@ -73,7 +73,7 @@ class ContextBuilder:
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
-        self._context_trace_file = workspace / "memory" / "context-trace.jsonl"
+        self._context_trace_file = self.memory.observability_dir / "context-trace.jsonl"
         self._max_context_tokens = max_context_tokens or self._DEFAULT_MAX_CONTEXT_TOKENS
         self._tool_catalog_compact_threshold = (
             tool_catalog_compact_threshold

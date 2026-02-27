@@ -185,15 +185,15 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 
 观测增强进展（2026-02-27）：
 
-- 已实施：daily 路由结果落盘到 `memory/daily-routing-metrics.jsonl`（每次 consolidation 一行 JSON）。
+- 已实施：daily 路由结果落盘到 `memory/observability/daily-routing-metrics.jsonl`（每次 consolidation 一行 JSON）。
 - 字段覆盖：`structured_daily_ok`、`fallback_used`、`fallback_reason`、`structured_keys`、`structured_bullet_count`、`session_key`、`date`、`ts`。
 - 用途：支持对 `structured_daily_ok` 命中率和 `fallback_reason` 分布做离线统计，不改变主流程行为。
 - 已实施：`nanobot memory-audit --metrics-summary` 汇总输出（含总体命中率、fallback reason 分布、按天统计）。
 - 已实施：`nanobot memory-audit --metrics-out <path>` 可导出指标汇总 Markdown。
 - 已实施：fallback reason 纠偏建议映射（`metrics-summary` 中自动给出 top reason 对应修复建议）。
-- 已实施：`memory_update` guard 触发指标落盘：`memory/memory-update-guard-metrics.jsonl`。
+- 已实施：`memory_update` guard 触发指标落盘：`memory/observability/memory-update-guard-metrics.jsonl`。
 - 已增强：guard 指标增加 `candidate_preview`（截断样本），便于快速回溯被拒写的候选内容形态。
-- 已实施：`memory_update` sanitize 命中指标落盘：`memory/memory-update-sanitize-metrics.jsonl`（记录 recent-topic/transient-status 清洗命中量）。
+- 已实施：`memory_update` sanitize 命中指标落盘：`memory/observability/memory-update-sanitize-metrics.jsonl`（记录 recent-topic/transient-status 清洗命中量）。
 - 已实施：`memory_update` 清洗阶段在同一 section 内做重复 bullet 去重，并将命中量写入 sanitize 指标（`removed_duplicate_bullet_count`）。
 - 已实施：`nanobot memory-audit --guard-metrics-summary` 汇总 guard reason 分布与高频会话。
 - 已增强：`guard-metrics-summary` 展示各 reason 的 `candidate_preview` 样本，便于快速定位被拒写内容形态。
@@ -203,7 +203,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已增强：`guard-metrics-summary` 增加 `dominant_reason` 摘要字段，便于快速识别当前主导拒写类型。
 - 已增强：`guard-metrics-summary` 增加 `sessions_with_guard_hits`，可区分“事件集中爆发”与“多会话普遍发生”。
 - 已增强：`memory-audit --guard-metrics-summary` 支持 `--guard-reason-filter`，可聚焦单类拒写原因做定向排查。
-- 已增强：`memory-audit --sanitize-metrics-summary` 支持 `--sanitize-focus-filter`（`recent_topic` / `transient_status`）做定向排查。
+- 已增强：`memory-audit --sanitize-metrics-summary` 支持 `--sanitize-focus-filter`（`recent_topic` / `transient_status` / `duplicate_bullets`）做定向排查。
 - 已增强：以上 filter 在无匹配或非法值时会输出明确提示，降低误用与排查成本。
 - 已增强：当 `candidate_too_long` 高发或平均 returned 长度显著偏高时，`guard-metrics-summary` 给出收敛建议（压缩 consolidator 输出目标）。
 - 已增强：dashboard 同步展示 guard 平均长度指标，并在 returned 显著高于 current 时提示收敛 `memory_update` 输出规模。
@@ -220,7 +220,8 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已增强：sanitize 指标汇总增加 `dominant_focus` 摘要字段，快速判断当前主导清洗类型（recent_topic / transient_status）。
 - 已增强：sanitize 指标汇总增加 `sessions_with_sanitize_hits`，补齐“事件量 vs 受影响会话数”视角。
 - 已实施：guard 指标汇总内置 `reason -> fix hint` 建议（含 `unstructured_candidate` / `date_line_overflow`），便于快速回收写入质量问题。
-- 已实施：`memory` 偏好冲突指标落盘：`memory/memory-conflict-metrics.jsonl`（当前覆盖 language / communication_style）。
+- 已实施：`memory` 偏好冲突指标落盘：`memory/observability/memory-conflict-metrics.jsonl`（当前覆盖 language / communication_style）。
+- 已实施（2026-02-27）：观测/调优 JSONL 指标统一迁移至 `memory/observability/`，不再读取旧路径（只支持新路径）。
 - 已实施：`nanobot memory-audit --conflict-metrics-summary` 汇总冲突 key 分布与高频会话。
 - 已实施：`nanobot memory-audit --conflict-metrics-out <path>` 可导出冲突指标汇总 Markdown。
 - 已实施：`nanobot memory-observe` 一键生成“审计 + routing 指标 + guard 指标 + conflict 指标”日快照（默认输出到 `improvement-notes/memory-observations/`）。
@@ -342,7 +343,7 @@ M3 验收标准：
   - 在每次 provider 调用前记录 `prefix_hash` / `prompt_tokens` / `history_tokens`；
   - 计算并输出 `prefix_stability_ratio`（连续调用前缀不变比例）。
 - 价值：帮助判断是否存在“无意动态 system prompt”或序列化抖动导致的 cache miss。
-  - 进展（2026-02-27）：已落地最小实现（`memory/context-trace.jsonl` + `memory-audit --context-trace-summary`）。
+  - 进展（2026-02-27）：已落地最小实现（`memory/observability/context-trace.jsonl` + `memory-audit --context-trace-summary`）。
 
 2. 轻量 Context Trace（P9）
 
@@ -364,7 +365,7 @@ M3 验收标准：
   - 在 `memory-observe` 快照中增加 `pruning_stage_distribution` 摘要。
 - 价值：避免过早进入高损耗压缩，保护关键记忆。
 - 进展（2026-02-27）：
-  - 已落地最小版阶段观测：`memory-audit --apply` 追加写入 `memory/cleanup-stage-metrics.jsonl`；
+  - 已落地最小版阶段观测：`memory-audit --apply` 追加写入 `memory/observability/cleanup-stage-metrics.jsonl`；
   - 已新增汇总输出：`memory-audit --cleanup-stage-summary`；
   - 已纳入 `memory-observe` 快照：新增 `*-cleanup-stage-summary.md`，并在 dashboard 增加 `Pruning Stage Distribution` 摘要。
 
@@ -376,7 +377,7 @@ M3 验收标准：
   - 归档策略先 dry-run，再小流量 apply，始终保留回滚备份。
 - 价值：控制噪声的同时避免“静默丢记忆”。
 - 进展（2026-02-27）：
-  - 已落地最小版“转换索引”：`memory-audit --apply` 在执行 trim/dedupe/drop 时，追加写入 `memory/cleanup-conversion-index.jsonl`（保留来源文件、section、action、标准化前后信息）。
+  - 已落地最小版“转换索引”：`memory-audit --apply` 在执行 trim/dedupe/drop 时，追加写入 `memory/observability/cleanup-conversion-index.jsonl`（保留来源文件、section、action、标准化前后信息）。
   - 已新增汇总输出：`memory-audit --cleanup-conversion-summary`。
   - 汇总已增强：可显示“最近一次 cleanup run”的 `run_id` 与动作分布，便于快速判断最新一轮清理影响。
   - 已纳入 `memory-observe` 快照：新增 `*-cleanup-conversion-summary.md`，dashboard 增加 `Cleanup Conversion Traceability` 摘要（含 latest cleanup run）。

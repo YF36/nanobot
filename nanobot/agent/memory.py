@@ -134,12 +134,13 @@ class MemoryStore:
 
     def __init__(self, workspace: Path):
         self.memory_dir = ensure_dir(workspace / "memory")
+        self.observability_dir = ensure_dir(self.memory_dir / "observability")
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "HISTORY.md"
-        self.daily_routing_metrics_file = self.memory_dir / "daily-routing-metrics.jsonl"
-        self.memory_update_guard_metrics_file = self.memory_dir / "memory-update-guard-metrics.jsonl"
-        self.memory_update_sanitize_metrics_file = self.memory_dir / "memory-update-sanitize-metrics.jsonl"
-        self.memory_conflict_metrics_file = self.memory_dir / "memory-conflict-metrics.jsonl"
+        self.daily_routing_metrics_file = self.observability_dir / "daily-routing-metrics.jsonl"
+        self.memory_update_guard_metrics_file = self.observability_dir / "memory-update-guard-metrics.jsonl"
+        self.memory_update_sanitize_metrics_file = self.observability_dir / "memory-update-sanitize-metrics.jsonl"
+        self.memory_conflict_metrics_file = self.observability_dir / "memory-conflict-metrics.jsonl"
 
     def read_long_term(self) -> str:
         if self.memory_file.exists():

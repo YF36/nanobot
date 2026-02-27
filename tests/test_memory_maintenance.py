@@ -29,7 +29,12 @@ from nanobot.agent.memory_maintenance import (
 
 
 def _write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def _obs_file(memory_dir: Path, filename: str) -> Path:
+    return memory_dir / "observability" / filename
 
 
 def test_run_memory_audit_detects_long_and_duplicate_content(tmp_path: Path) -> None:
@@ -109,10 +114,10 @@ def test_apply_conservative_cleanup_trims_and_deduplicates_with_backup(tmp_path:
     assert result.backup_dir.exists()
     assert (result.backup_dir / "HISTORY.md").exists()
     assert (result.backup_dir / "2026-02-27.md").exists()
-    conversion_index_lines = (memory_dir / "cleanup-conversion-index.jsonl").read_text(encoding="utf-8").splitlines()
+    conversion_index_lines = (_obs_file(memory_dir, "cleanup-conversion-index.jsonl")).read_text(encoding="utf-8").splitlines()
     assert len(conversion_index_lines) == 4
     assert '"action":"trim"' in conversion_index_lines[0] or '"action":"dedupe"' in conversion_index_lines[0]
-    stage_metrics_lines = (memory_dir / "cleanup-stage-metrics.jsonl").read_text(encoding="utf-8").splitlines()
+    stage_metrics_lines = (_obs_file(memory_dir, "cleanup-stage-metrics.jsonl")).read_text(encoding="utf-8").splitlines()
     assert len(stage_metrics_lines) == 1
     assert '"trim":2' in stage_metrics_lines[0]
     assert '"dedupe":2' in stage_metrics_lines[0]
@@ -123,7 +128,7 @@ def test_summarize_daily_routing_metrics_counts_and_reasons(tmp_path: Path) -> N
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
     _write(
-        memory_dir / "daily-routing-metrics.jsonl",
+        _obs_file(memory_dir, "daily-routing-metrics.jsonl"),
         "\n".join(
             [
                 '{"date":"2026-02-27","structured_daily_ok":true,"fallback_reason":"ok"}',
@@ -164,7 +169,7 @@ def test_summarize_memory_update_guard_metrics_counts_reasons(tmp_path: Path) ->
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
     _write(
-        memory_dir / "memory-update-guard-metrics.jsonl",
+        _obs_file(memory_dir, "memory-update-guard-metrics.jsonl"),
         "\n".join(
             [
                 '{"session_key":"s1","reason":"excessive_shrink","candidate_preview":"# Long-term Memory ..."}',
@@ -201,7 +206,7 @@ def test_render_memory_update_guard_metrics_markdown_includes_duplicate_line_hin
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
     _write(
-        memory_dir / "memory-update-guard-metrics.jsonl",
+        _obs_file(memory_dir, "memory-update-guard-metrics.jsonl"),
         '{"session_key":"s1","reason":"duplicate_line_overflow","candidate_preview":"- repeated fact"}\n',
     )
     summary = summarize_memory_update_guard_metrics(memory_dir)
@@ -214,7 +219,7 @@ def test_render_memory_update_guard_metrics_priority_focus_limits_to_top2(tmp_pa
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
     _write(
-        memory_dir / "memory-update-guard-metrics.jsonl",
+        _obs_file(memory_dir, "memory-update-guard-metrics.jsonl"),
         "\n".join(
             [
                 '{"session_key":"s1","reason":"excessive_shrink"}',
@@ -238,7 +243,7 @@ def test_summarize_memory_update_guard_metrics_aggregates_avg_chars(tmp_path: Pa
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
     _write(
-        memory_dir / "memory-update-guard-metrics.jsonl",
+        _obs_file(memory_dir, "memory-update-guard-metrics.jsonl"),
         "\n".join(
             [
                 '{"session_key":"s1","reason":"candidate_too_long","current_memory_chars":1000,"returned_memory_chars":5000}',
@@ -267,7 +272,7 @@ def test_summarize_memory_update_sanitize_metrics_counts(tmp_path: Path) -> None
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
     _write(
-        memory_dir / "memory-update-sanitize-metrics.jsonl",
+        _obs_file(memory_dir, "memory-update-sanitize-metrics.jsonl"),
         "\n".join(
             [
                 '{"session_key":"s1","removed_recent_topic_section_count":2,"removed_transient_status_line_count":1,"removed_duplicate_bullet_count":2,"removed_recent_topic_sections":["今天讨论的主题"],"removed_transient_status_sections":["System Technical Issues"],"removed_duplicate_bullet_sections":["Preferences"]}',
@@ -319,7 +324,7 @@ def test_render_memory_update_sanitize_metrics_markdown_reports_no_adjustment_ne
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
     _write(
-        memory_dir / "memory-update-sanitize-metrics.jsonl",
+        _obs_file(memory_dir, "memory-update-sanitize-metrics.jsonl"),
         '{"session_key":"s1","removed_recent_topic_section_count":0,"removed_transient_status_line_count":0}\n',
     )
     summary = summarize_memory_update_sanitize_metrics(memory_dir)
@@ -335,7 +340,7 @@ def test_summarize_memory_conflict_metrics_counts_keys(tmp_path: Path) -> None:
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
     _write(
-        memory_dir / "memory-conflict-metrics.jsonl",
+        _obs_file(memory_dir, "memory-conflict-metrics.jsonl"),
         "\n".join(
             [
                 '{"session_key":"s1","conflict_key":"language"}',
@@ -368,7 +373,7 @@ def test_summarize_context_trace_reports_stage_counts_and_stability(tmp_path: Pa
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
     _write(
-        memory_dir / "context-trace.jsonl",
+        _obs_file(memory_dir, "context-trace.jsonl"),
         "\n".join(
             [
                 '{"stage":"before_compact","estimated_tokens":100,"prefix_hash":"a1"}',
@@ -404,7 +409,7 @@ def test_summarize_cleanup_stage_metrics_counts_distribution(tmp_path: Path) -> 
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
     _write(
-        memory_dir / "cleanup-stage-metrics.jsonl",
+        _obs_file(memory_dir, "cleanup-stage-metrics.jsonl"),
         "\n".join(
             [
                 '{"stage_counts":{"trim":2,"dedupe":1,"drop_tool_activity":0}}',
@@ -433,7 +438,7 @@ def test_summarize_cleanup_conversion_index_counts_actions(tmp_path: Path) -> No
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
     _write(
-        memory_dir / "cleanup-conversion-index.jsonl",
+        _obs_file(memory_dir, "cleanup-conversion-index.jsonl"),
         "\n".join(
             [
                 '{"run_id":"cleanup_1","action":"trim","source_file":"HISTORY.md"}',
@@ -572,10 +577,10 @@ def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path)
     _write(memory_dir / "HISTORY.md", "")
     _write(memory_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n- old\n")
     _write(
-        memory_dir / "daily-routing-metrics.jsonl",
+        _obs_file(memory_dir, "daily-routing-metrics.jsonl"),
         '{"date":"2026-02-27","structured_daily_ok":false,"fallback_reason":"missing"}\n',
     )
-    _write(memory_dir / "context-trace.jsonl", '{"stage":"before_send","estimated_tokens":100,"prefix_hash":"a1"}\n')
+    _write(_obs_file(memory_dir, "context-trace.jsonl"), '{"stage":"before_send","estimated_tokens":100,"prefix_hash":"a1"}\n')
 
     text = render_memory_observability_dashboard(memory_dir)
     assert "# Memory Observability Dashboard" in text
@@ -605,7 +610,7 @@ def test_render_memory_observability_dashboard_warns_on_high_non_decision_drop(t
     _write(memory_dir / "HISTORY.md", "")
     _write(memory_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n")
     _write(
-        memory_dir / "cleanup-stage-metrics.jsonl",
+        _obs_file(memory_dir, "cleanup-stage-metrics.jsonl"),
         '{"stage_counts":{"trim":1,"dedupe":1,"drop_tool_activity":1,"drop_non_decision":10}}\n',
     )
 
@@ -621,7 +626,7 @@ def test_render_memory_observability_dashboard_warns_on_missing_conversion_run_i
     _write(memory_dir / "HISTORY.md", "")
     _write(memory_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n")
     _write(
-        memory_dir / "cleanup-conversion-index.jsonl",
+        _obs_file(memory_dir, "cleanup-conversion-index.jsonl"),
         '{"action":"dedupe","source_file":"2020-01-01.md"}\n',
     )
 
@@ -636,7 +641,7 @@ def test_render_memory_observability_dashboard_recommends_sanitize_summary(tmp_p
     _write(memory_dir / "HISTORY.md", "")
     _write(memory_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n")
     _write(
-        memory_dir / "memory-update-sanitize-metrics.jsonl",
+        _obs_file(memory_dir, "memory-update-sanitize-metrics.jsonl"),
         '{"session_key":"s1","removed_recent_topic_section_count":1,"removed_transient_status_line_count":0}\n',
     )
 
@@ -651,7 +656,7 @@ def test_render_memory_observability_dashboard_warns_on_high_recent_topic_saniti
     _write(memory_dir / "HISTORY.md", "")
     _write(memory_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n")
     _write(
-        memory_dir / "memory-update-sanitize-metrics.jsonl",
+        _obs_file(memory_dir, "memory-update-sanitize-metrics.jsonl"),
         '{"session_key":"s1","removed_recent_topic_section_count":12,"removed_transient_status_line_count":0}\n',
     )
 
@@ -666,7 +671,7 @@ def test_render_memory_observability_dashboard_warns_on_oversized_guard_candidat
     _write(memory_dir / "HISTORY.md", "")
     _write(memory_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n")
     _write(
-        memory_dir / "memory-update-guard-metrics.jsonl",
+        _obs_file(memory_dir, "memory-update-guard-metrics.jsonl"),
         "\n".join(
             [
                 '{"session_key":"s1","reason":"candidate_too_long","current_memory_chars":1000,"returned_memory_chars":3000}',
@@ -687,7 +692,7 @@ def test_render_memory_observability_dashboard_warns_on_unstructured_and_date_ov
     _write(memory_dir / "HISTORY.md", "")
     _write(memory_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n")
     _write(
-        memory_dir / "memory-update-guard-metrics.jsonl",
+        _obs_file(memory_dir, "memory-update-guard-metrics.jsonl"),
         "\n".join(
             [
                 '{"session_key":"s1","reason":"unstructured_candidate"}',
