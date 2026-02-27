@@ -90,6 +90,8 @@ class MemoryStore:
     _MEMORY_UPDATE_MIN_STRUCTURED_CHARS = 120
     _MEMORY_UPDATE_MAX_CHARS = 12_000
     _MEMORY_UPDATE_CODE_FENCE_MAX = 0
+    _MEMORY_UPDATE_URL_LINE_MIN_COUNT = 3
+    _MEMORY_UPDATE_URL_LINE_RATIO_GUARD = 0.2
     _MEMORY_UPDATE_DATE_LINE_RATIO_GUARD = 0.2
     _MEMORY_UPDATE_DATE_LINE_MIN_COUNT = 3
     _DATE_TOKEN_RE = re.compile(r"\b20\d{2}-\d{2}-\d{2}\b")
@@ -749,6 +751,12 @@ class MemoryStore:
                 and (date_lines / len(non_empty_lines)) >= cls._MEMORY_UPDATE_DATE_LINE_RATIO_GUARD
             ):
                 return "date_line_overflow"
+            url_lines = sum(1 for ln in non_empty_lines if "http://" in ln or "https://" in ln)
+            if (
+                url_lines >= cls._MEMORY_UPDATE_URL_LINE_MIN_COUNT
+                and (url_lines / len(non_empty_lines)) >= cls._MEMORY_UPDATE_URL_LINE_RATIO_GUARD
+            ):
+                return "url_line_overflow"
 
         current_h2 = cls._extract_h2_headings(current)
         if current_h2:

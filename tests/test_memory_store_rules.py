@@ -379,6 +379,24 @@ def test_memory_update_guard_detects_code_block_content() -> None:
     assert reason == "contains_code_block"
 
 
+def test_memory_update_guard_detects_url_line_overflow() -> None:
+    current = (
+        "# Long-term Memory\n\n"
+        "## Preferences\n- 中文沟通\n\n"
+        "## Project Context\n- memory roadmap\n"
+    )
+    candidate = (
+        "# Long-term Memory\n\n"
+        "## Notes\n"
+        "- https://example.com/a\n"
+        "- https://example.com/b\n"
+        "- https://example.com/c\n"
+        "- Keep concise durable fact.\n"
+    )
+    reason = MemoryStore._memory_update_guard_reason(current, candidate)
+    assert reason == "url_line_overflow"
+
+
 @pytest.mark.asyncio
 async def test_consolidate_accepts_json_string_tool_arguments(tmp_path: Path) -> None:
     mm = MemoryStore(workspace=tmp_path)
