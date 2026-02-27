@@ -20,6 +20,7 @@ logger = get_logger(__name__)
 
 try:
     import lark_oapi as lark
+    from lark_oapi.api.im import v1 as lark_im_v1
     from lark_oapi.api.im.v1 import (
         CreateFileRequest,
         CreateFileRequestBody,
@@ -34,11 +35,15 @@ try:
         GetMessageResourceRequest,
         P2ImMessageReceiveV1,
     )
+    UpdateMessageRequest = getattr(lark_im_v1, "UpdateMessageRequest", None)
+    UpdateMessageRequestBody = getattr(lark_im_v1, "UpdateMessageRequestBody", None)
     FEISHU_AVAILABLE = True
 except ImportError:
     FEISHU_AVAILABLE = False
     lark = None
     Emoji = None
+    UpdateMessageRequest = None
+    UpdateMessageRequestBody = None
 
 # Message type display mapping
 MSG_TYPE_MAP = {
@@ -260,14 +265,17 @@ class FeishuChannel(BaseChannel):
     """
     
     name = "feishu"
+    supports_progress_message_editing = True
     
     def __init__(self, config: FeishuConfig, bus: MessageBus, rate_limiter=None):
         super().__init__(config, bus, rate_limiter=rate_limiter)
         self.config: FeishuConfig = config
+        self.supports_progress_message_editing = bool(UpdateMessageRequest and UpdateMessageRequestBody)
         self._client: Any = None
         self._ws_client: Any = None
         self._ws_thread: threading.Thread | None = None
         self._processed_message_ids: OrderedDict[str, None] = OrderedDict()  # Ordered dedup cache
+        self._progress_message_ids: dict[tuple[str, str], str] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
     
     async def start(self) -> None:
@@ -617,7 +625,7 @@ class FeishuChannel(BaseChannel):
 
         return None, f"[{msg_type}: download failed]"
 
-    def _send_message_sync(self, receive_id_type: str, receive_id: str, msg_type: str, content: str) -> bool:
+    def _send_message_sync(self, receive_id_type: str, receive_id: str, msg_type: str, content: str) -> str | None:
         """Send a single message (text/image/file/interactive) synchronously."""
         try:
             request = CreateMessageRequest.builder() \
@@ -632,12 +640,48 @@ class FeishuChannel(BaseChannel):
             response = self._client.im.v1.message.create(request)
             if not response.success():
                 logger.error("Failed to send Feishu message", msg_type=msg_type, code=response.code, msg=response.msg, log_id=response.get_log_id())
-                return False
+                return None
             logger.debug("Feishu message sent", msg_type=msg_type, receive_id=receive_id)
-            return True
+            data = getattr(response, "data", None)
+            return getattr(data, "message_id", None)
         except Exception as e:
             logger.error("Error sending Feishu message", msg_type=msg_type, error=str(e))
+            return None
+
+    def _update_message_sync(self, message_id: str, msg_type: str, content: str) -> bool:
+        """Update an existing message by message_id."""
+        if UpdateMessageRequest is None or UpdateMessageRequestBody is None:
             return False
+        try:
+            request = UpdateMessageRequest.builder() \
+                .message_id(message_id) \
+                .request_body(
+                    UpdateMessageRequestBody.builder()
+                    .msg_type(msg_type)
+                    .content(content)
+                    .build()
+                ).build()
+            response = self._client.im.v1.message.update(request)
+            if not response.success():
+                logger.warning(
+                    "Failed to update Feishu message",
+                    message_id=message_id,
+                    msg_type=msg_type,
+                    code=response.code,
+                    msg=response.msg,
+                )
+                return False
+            return True
+        except Exception as e:
+            logger.warning("Error updating Feishu message", message_id=message_id, error=str(e))
+            return False
+
+    @staticmethod
+    def _progress_key(msg: OutboundMessage) -> tuple[str, str] | None:
+        origin_message_id = str((msg.metadata or {}).get("message_id") or "").strip()
+        if not origin_message_id:
+            return None
+        return (str(msg.chat_id), origin_message_id)
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Feishu, including media (images/files) if present."""
@@ -648,6 +692,8 @@ class FeishuChannel(BaseChannel):
         try:
             receive_id_type = "chat_id" if msg.chat_id.startswith("oc_") else "open_id"
             loop = asyncio.get_running_loop()
+            progress_key = self._progress_key(msg)
+            progress_msg_id = self._progress_message_ids.get(progress_key) if progress_key else None
 
             for file_path in msg.media:
                 if not os.path.isfile(file_path):
@@ -672,11 +718,58 @@ class FeishuChannel(BaseChannel):
 
             if msg.content and msg.content.strip():
                 card = {"config": {"wide_screen_mode": True}, "elements": self._build_card_elements(msg.content)}
-                ok = await loop.run_in_executor(
+                card_content = json.dumps(card, ensure_ascii=False)
+
+                if msg.metadata.get("_progress_edit") and progress_key:
+                    if progress_msg_id:
+                        ok = await loop.run_in_executor(
+                            None, self._update_message_sync,
+                            progress_msg_id, "interactive", card_content,
+                        )
+                        if ok:
+                            return
+                    sent_message_id = await loop.run_in_executor(
+                        None, self._send_message_sync,
+                        receive_id_type, msg.chat_id, "interactive", card_content,
+                    )
+                    if sent_message_id:
+                        self._progress_message_ids[progress_key] = sent_message_id
+                        return
+                    logger.warning("Progress card send failed, falling back to plain text")
+                    sent_message_id = await loop.run_in_executor(
+                        None, self._send_message_sync,
+                        receive_id_type, msg.chat_id, "text", json.dumps({"text": msg.content}, ensure_ascii=False),
+                    )
+                    if sent_message_id:
+                        self._progress_message_ids[progress_key] = sent_message_id
+                    return
+
+                if msg.metadata.get("_progress_finalize_edit") and progress_key:
+                    if progress_msg_id:
+                        ok = await loop.run_in_executor(
+                            None, self._update_message_sync,
+                            progress_msg_id, "interactive", card_content,
+                        )
+                        if not ok:
+                            logger.warning("Finalize progress edit failed, sending as new message")
+                            sent_message_id = await loop.run_in_executor(
+                                None, self._send_message_sync,
+                                receive_id_type, msg.chat_id, "interactive", card_content,
+                            )
+                            if not sent_message_id:
+                                await loop.run_in_executor(
+                                    None, self._send_message_sync,
+                                    receive_id_type, msg.chat_id, "text", json.dumps({"text": msg.content}, ensure_ascii=False),
+                                )
+                        self._progress_message_ids.pop(progress_key, None)
+                        return
+                    # No in-flight progress message: keep legacy behavior and send normally.
+
+                sent_message_id = await loop.run_in_executor(
                     None, self._send_message_sync,
-                    receive_id_type, msg.chat_id, "interactive", json.dumps(card, ensure_ascii=False),
+                    receive_id_type, msg.chat_id, "interactive", card_content,
                 )
-                if not ok:
+                if not sent_message_id:
                     # Fallback: send as plain text when card fails (e.g. table limit)
                     logger.warning("Card send failed, falling back to plain text")
                     await loop.run_in_executor(

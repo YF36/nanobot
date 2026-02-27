@@ -226,10 +226,43 @@ class ChannelManager:
                 channel = self.channels.get(msg.channel)
                 if channel:
                     try:
+                        progress_edit_enabled = bool(
+                            getattr(self.config.channels, "progress_edit_streaming_enabled", False)
+                            and getattr(channel, "supports_progress_message_editing", False)
+                        )
+                        outbound = msg
+                        if msg.metadata.get("_progress") and not msg.metadata.get("_tool_hint") and progress_edit_enabled:
+                            meta = dict(msg.metadata or {})
+                            meta["_progress_edit"] = True
+                            outbound = OutboundMessage(
+                                channel=msg.channel,
+                                chat_id=msg.chat_id,
+                                content=msg.content,
+                                reply_to=msg.reply_to,
+                                media=list(msg.media or []),
+                                metadata=meta,
+                            )
+                        elif (
+                            not msg.metadata.get("_progress")
+                            and msg.metadata.get("_progress_done")
+                            and progress_edit_enabled
+                        ):
+                            meta = dict(msg.metadata or {})
+                            meta["_progress_finalize_edit"] = True
+                            outbound = OutboundMessage(
+                                channel=msg.channel,
+                                chat_id=msg.chat_id,
+                                content=msg.content,
+                                reply_to=msg.reply_to,
+                                media=list(msg.media or []),
+                                metadata=meta,
+                            )
+
                         if (
                             not msg.metadata.get("_progress")
                             and msg.metadata.get("_progress_done")
                             and self.config.channels.progress_done_marker_enabled
+                            and not progress_edit_enabled
                         ):
                             marker = (self.config.channels.progress_done_marker_text or "").strip()
                             if marker:
@@ -239,7 +272,7 @@ class ChannelManager:
                                     content=marker,
                                     metadata={"_progress_marker": True},
                                 ))
-                        await channel.send(msg)
+                        await channel.send(outbound)
                     except Exception as e:
                         logger.error("Error sending to channel", channel=msg.channel, error=str(e))
                 else:

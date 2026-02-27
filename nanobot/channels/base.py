@@ -24,6 +24,7 @@ class BaseChannel(ABC):
     """
 
     name: str = "base"
+    supports_progress_message_editing: bool = False
 
     def __init__(self, config: Any, bus: MessageBus, rate_limiter: RateLimiter | None = None):
         """

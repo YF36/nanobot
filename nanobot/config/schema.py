@@ -198,6 +198,7 @@ class ChannelsConfig(Base):
     progress_flush_interval_ms: int = 150  # streaming progress coalescing window
     progress_flush_min_chars: int = 80     # flush earlier once buffered chars reach this threshold
     progress_max_messages_per_turn: int = 40  # hard cap to avoid progress spam per turn
+    progress_edit_streaming_enabled: bool = False  # if channel supports it, update one progress message instead of sending many
     progress_done_marker_enabled: bool = False  # optionally send a separator before final response
     progress_done_marker_text: str = "⎯ stream done ⎯"
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
