@@ -6,7 +6,9 @@ from nanobot.agent.memory_maintenance import (
     build_cleanup_plan,
     render_cleanup_effect_markdown,
     render_daily_routing_metrics_markdown,
+    render_memory_update_guard_metrics_markdown,
     run_memory_audit,
+    summarize_memory_update_guard_metrics,
     summarize_daily_routing_metrics,
 )
 
@@ -125,6 +127,39 @@ def test_render_daily_routing_metrics_markdown_handles_missing_file(tmp_path: Pa
     memory_dir.mkdir()
     summary = summarize_daily_routing_metrics(memory_dir)
     text = render_daily_routing_metrics_markdown(summary)
+    assert "Metrics file: not found" in text
+
+
+def test_summarize_memory_update_guard_metrics_counts_reasons(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(
+        memory_dir / "memory-update-guard-metrics.jsonl",
+        "\n".join(
+            [
+                '{"session_key":"s1","reason":"excessive_shrink"}',
+                '{"session_key":"s1","reason":"excessive_shrink"}',
+                '{"session_key":"s2","reason":"heading_retention_too_low"}',
+                "not-json",
+            ]
+        )
+        + "\n",
+    )
+    summary = summarize_memory_update_guard_metrics(memory_dir)
+    assert summary.metrics_file_exists is True
+    assert summary.total_rows == 4
+    assert summary.parse_error_rows == 1
+    assert summary.reason_counts["excessive_shrink"] == 2
+    assert summary.reason_counts["heading_retention_too_low"] == 1
+    assert summary.by_session["s1"] == 2
+    assert summary.by_session["s2"] == 1
+
+
+def test_render_memory_update_guard_metrics_markdown_handles_missing_file(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    summary = summarize_memory_update_guard_metrics(memory_dir)
+    text = render_memory_update_guard_metrics_markdown(summary)
     assert "Metrics file: not found" in text
 
 

@@ -122,6 +122,7 @@ class MemoryStore:
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "HISTORY.md"
         self.daily_routing_metrics_file = self.memory_dir / "daily-routing-metrics.jsonl"
+        self.memory_update_guard_metrics_file = self.memory_dir / "memory-update-guard-metrics.jsonl"
 
     def read_long_term(self) -> str:
         if self.memory_file.exists():
@@ -162,6 +163,30 @@ class MemoryStore:
             logger.warning(
                 "Failed to append daily routing metric",
                 file=str(self.daily_routing_metrics_file),
+            )
+
+    def _append_memory_update_guard_metric(
+        self,
+        *,
+        session_key: str,
+        reason: str,
+        current_memory_chars: int,
+        returned_memory_chars: int,
+    ) -> None:
+        row = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "session_key": session_key,
+            "reason": reason,
+            "current_memory_chars": current_memory_chars,
+            "returned_memory_chars": returned_memory_chars,
+        }
+        try:
+            with open(self.memory_update_guard_metrics_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except Exception:
+            logger.warning(
+                "Failed to append memory_update guard metric",
+                file=str(self.memory_update_guard_metrics_file),
             )
 
     @classmethod
@@ -849,6 +874,12 @@ class MemoryStore:
                             if guard_reason:
                                 logger.warning(
                                     "Skipping memory_update write due to guard",
+                                    reason=guard_reason,
+                                    current_memory_chars=len(current_memory),
+                                    returned_memory_chars=len(update),
+                                )
+                                self._append_memory_update_guard_metric(
+                                    session_key=session.key,
                                     reason=guard_reason,
                                     current_memory_chars=len(current_memory),
                                     returned_memory_chars=len(update),

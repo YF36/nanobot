@@ -57,6 +57,15 @@ class DailyRoutingMetricsSummary:
     by_date: dict[str, dict[str, int]]
 
 
+@dataclass
+class MemoryUpdateGuardMetricsSummary:
+    metrics_file_exists: bool
+    total_rows: int
+    parse_error_rows: int
+    reason_counts: dict[str, int]
+    by_session: dict[str, int]
+
+
 def _iter_daily_files(memory_dir: Path) -> list[Path]:
     items: list[Path] = []
     for p in sorted(memory_dir.glob("*.md")):
@@ -387,6 +396,88 @@ def render_daily_routing_metrics_markdown(summary: DailyRoutingMetricsSummary) -
             lines.append(
                 f"- {date}: total=`{row['total']}`, structured_ok=`{row['structured_ok']}` ({ok_pct:.1f}%), fallback=`{row['fallback']}`"
             )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def summarize_memory_update_guard_metrics(memory_dir: Path) -> MemoryUpdateGuardMetricsSummary:
+    metrics_file = memory_dir / "memory-update-guard-metrics.jsonl"
+    if not metrics_file.exists():
+        return MemoryUpdateGuardMetricsSummary(
+            metrics_file_exists=False,
+            total_rows=0,
+            parse_error_rows=0,
+            reason_counts={},
+            by_session={},
+        )
+
+    total_rows = 0
+    parse_error_rows = 0
+    reason_counter: Counter[str] = Counter()
+    session_counter: Counter[str] = Counter()
+
+    for raw_line in metrics_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        total_rows += 1
+        try:
+            item = json.loads(line)
+        except Exception:
+            parse_error_rows += 1
+            continue
+        if not isinstance(item, dict):
+            parse_error_rows += 1
+            continue
+        reason = str(item.get("reason") or "unknown")
+        session_key = str(item.get("session_key") or "unknown")
+        reason_counter[reason] += 1
+        session_counter[session_key] += 1
+
+    return MemoryUpdateGuardMetricsSummary(
+        metrics_file_exists=True,
+        total_rows=total_rows,
+        parse_error_rows=parse_error_rows,
+        reason_counts=dict(sorted(reason_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        by_session=dict(sorted(session_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+    )
+
+
+def render_memory_update_guard_metrics_markdown(summary: MemoryUpdateGuardMetricsSummary) -> str:
+    lines = [
+        "# Memory Update Guard Metrics Summary",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+    ]
+    if not summary.metrics_file_exists:
+        lines.extend(["- Metrics file: not found (`memory-update-guard-metrics.jsonl`)", ""])
+        return "\n".join(lines)
+
+    total_valid = max(0, summary.total_rows - summary.parse_error_rows)
+    lines.extend(
+        [
+            "- Metrics file: found (`memory-update-guard-metrics.jsonl`)",
+            "",
+            "## Overall",
+            f"- Rows: `{summary.total_rows}` (valid=`{total_valid}`, parse_errors=`{summary.parse_error_rows}`)",
+            "",
+            "## Guard Reasons",
+        ]
+    )
+    if not summary.reason_counts:
+        lines.append("- none")
+    else:
+        for reason, count in summary.reason_counts.items():
+            lines.append(f"- {reason}: `{count}`")
+
+    lines.extend(["", "## Sessions (Top)"])
+    if not summary.by_session:
+        lines.append("- none")
+    else:
+        for idx, (session_key, count) in enumerate(summary.by_session.items()):
+            if idx >= 10:
+                break
+            lines.append(f"- {session_key}: `{count}`")
     lines.append("")
     return "\n".join(lines)
 

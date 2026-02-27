@@ -238,6 +238,15 @@ def memory_audit(
     plan_out: str = typer.Option("", help="Optional cleanup plan JSON output path (dry-run actions only)"),
     metrics_summary: bool = typer.Option(False, "--metrics-summary", help="Show daily routing metrics summary"),
     metrics_out: str = typer.Option("", help="Optional daily routing metrics markdown output path"),
+    guard_metrics_summary: bool = typer.Option(
+        False,
+        "--guard-metrics-summary",
+        help="Show memory_update guard metrics summary",
+    ),
+    guard_metrics_out: str = typer.Option(
+        "",
+        help="Optional memory_update guard metrics markdown output path",
+    ),
     apply: bool = typer.Option(False, "--apply", help="Apply conservative cleanup with automatic backup"),
     apply_recent_days: int = typer.Option(
         0,
@@ -258,8 +267,10 @@ def memory_audit(
         build_cleanup_plan,
         render_cleanup_effect_markdown,
         render_daily_routing_metrics_markdown,
+        render_memory_update_guard_metrics_markdown,
         render_audit_markdown,
         run_memory_audit,
+        summarize_memory_update_guard_metrics,
         summarize_daily_routing_metrics,
     )
 
@@ -292,6 +303,17 @@ def memory_audit(
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(metrics_md, encoding="utf-8")
             console.print(f"[green]✓[/green] Wrote metrics summary: {out}")
+
+    if guard_metrics_summary or guard_metrics_out:
+        guard_metrics = summarize_memory_update_guard_metrics(target_dir)
+        guard_md = render_memory_update_guard_metrics_markdown(guard_metrics)
+        if guard_metrics_summary:
+            console.print(Markdown(guard_md))
+        if guard_metrics_out:
+            out = Path(guard_metrics_out).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(guard_md, encoding="utf-8")
+            console.print(f"[green]✓[/green] Wrote guard metrics summary: {out}")
 
     if apply:
         before = run_memory_audit(target_dir)
