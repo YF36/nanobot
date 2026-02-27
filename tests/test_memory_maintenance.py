@@ -544,6 +544,7 @@ def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path)
     assert "guard avg_current_memory_chars" in text
     assert "guard avg_returned_memory_chars" in text
     assert "memory_update sanitize events" in text
+    assert "sessions_with_sanitize_hits" in text
     assert "sanitize dominant_focus" in text
     assert "preview risk level" in text
     assert "preview dominant driver" in text

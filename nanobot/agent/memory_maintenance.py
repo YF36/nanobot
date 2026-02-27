@@ -1562,6 +1562,7 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         f"- guard avg_current_memory_chars: `{guard.avg_current_memory_chars}`",
         f"- guard avg_returned_memory_chars: `{guard.avg_returned_memory_chars}`",
         f"- memory_update sanitize events: `{max(0, sanitize.total_rows - sanitize.parse_error_rows)}`",
+        f"- sessions_with_sanitize_hits: `{sanitize.sessions_with_sanitize_hits}`",
         f"- sanitize removed_recent_topic_sections(total): `{sanitize.total_recent_topic_sections_removed}`",
         f"- sanitize removed_transient_status_lines(total): `{sanitize.total_transient_status_lines_removed}`",
         f"- sanitize dominant_focus: `{sanitize.dominant_focus}`",

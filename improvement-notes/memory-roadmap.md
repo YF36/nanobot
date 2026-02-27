@@ -210,6 +210,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已实施：`nanobot memory-audit --guard-metrics-out <path>` 可导出 guard 指标汇总 Markdown。
 - 已实施：dashboard 纳入 sanitize 指标摘要（事件数 + 清洗量），并在命中时给出 `--sanitize-metrics-summary` 排查建议。
 - 已增强：dashboard 纳入 `sanitize dominant_focus` 与高发阈值建议（recent_topic / transient_status），便于直接判定优先收敛方向。
+- 已增强：dashboard 同步展示 `sessions_with_sanitize_hits`，补齐 sanitize 的会话影响面可观测性。
 - 已实施：sanitize 指标汇总增加 `Suggested Fixes`（按 recent-topic / transient-status 命中给 prompt/规则收敛建议）。
 - 已增强：sanitize 指标汇总增加 `Top Sanitized Sections`（高频被清洗 section 样本），便于定向优化 consolidation 输出。
 - 已增强：sanitize 指标汇总增加 `Priority Focus`（按命中量排序的优先处理方向），帮助先处理高收益噪声来源。
