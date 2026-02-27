@@ -369,6 +369,7 @@ M3 验收标准：
   - `memory-observe` 的 drop preview 快照顶部增加风险统计行（risk level + total candidates），便于快速扫读。
   - 预估结果新增风险分级（`low/medium/high`），dashboard 在高风险时提示先缩小范围（如 recent-days 灰度）再全量 apply。
   - dashboard 的“下一步建议命令”已按风险级别动态分流（low/medium/high），减少人工判断与参数拼接。
+  - 当 30d 预估无候选时，dashboard 明确输出 “No half-life cleanup candidates...” 提示，避免误判为数据缺失。
   - 预估报告新增“Recommended Next Command”，按风险级别给出建议命令，减少人工拼参数。
   - 当直接执行 `memory-audit --apply` 且存在半衰期候选删除时，CLI 会先打印自动预估摘要（risk/tool/non-decision/scope），高风险时给出灰度提示。
 

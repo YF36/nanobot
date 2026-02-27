@@ -458,6 +458,18 @@ def test_render_memory_observability_dashboard_shows_high_risk_preview_command(t
     assert "High-risk preview" in text
 
 
+def test_render_memory_observability_dashboard_shows_no_candidates_hint(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
+    _write(memory_dir / "HISTORY.md", "")
+    today = datetime.now().strftime("%Y-%m-%d")
+    _write(memory_dir / f"{today}.md", f"# {today}\n\n## Decisions\n\n- keep decision\n")
+
+    text = render_memory_observability_dashboard(memory_dir)
+    assert "No half-life cleanup candidates in 30d preview window." in text
+
+
 def test_apply_conservative_cleanup_scopes_recent_daily_files(tmp_path: Path) -> None:
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
