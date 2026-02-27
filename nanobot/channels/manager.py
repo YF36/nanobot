@@ -226,6 +226,19 @@ class ChannelManager:
                 channel = self.channels.get(msg.channel)
                 if channel:
                     try:
+                        if (
+                            not msg.metadata.get("_progress")
+                            and msg.metadata.get("_progress_done")
+                            and self.config.channels.progress_done_marker_enabled
+                        ):
+                            marker = (self.config.channels.progress_done_marker_text or "").strip()
+                            if marker:
+                                await channel.send(OutboundMessage(
+                                    channel=msg.channel,
+                                    chat_id=msg.chat_id,
+                                    content=marker,
+                                    metadata={"_progress_marker": True},
+                                ))
                         await channel.send(msg)
                     except Exception as e:
                         logger.error("Error sending to channel", channel=msg.channel, error=str(e))

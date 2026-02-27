@@ -143,7 +143,13 @@ class UserMessageHandler(BaseTurnHandler):
         self._prepare_turn(msg, session)
         initial_messages = self._build_initial_messages(msg, session)
 
-        progress_cb = on_progress or self.progress.for_message(msg)
+        progress_emitted = False
+        base_progress_cb = on_progress or self.progress.for_message(msg)
+
+        async def progress_cb(content: str, *, tool_hint: bool = False) -> None:
+            nonlocal progress_emitted
+            progress_emitted = True
+            await base_progress_cb(content, tool_hint=tool_hint)
 
         # initial_messages = [system, compacted_history..., current_user]
         # Save current_user + all LLM responses, so skip system + history.
@@ -163,7 +169,12 @@ class UserMessageHandler(BaseTurnHandler):
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
 
-        return self._finalize_response(msg, final_content)
+        response = self._finalize_response(msg, final_content)
+        if response is not None and progress_emitted:
+            meta = dict(response.metadata or {})
+            meta["_progress_done"] = True
+            response.metadata = meta
+        return response
 
 
 class MessageProcessor:
