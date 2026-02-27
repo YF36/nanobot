@@ -577,6 +577,7 @@ def memory_observe(
         help="Observation output directory; defaults to <workspace>/improvement-notes/memory-observations",
     ),
     tag: str = typer.Option("", help="Optional suffix tag, e.g. pre-cleanup"),
+    preview_top: int = typer.Option(3, "--preview-top", help="Top N candidate files shown in cleanup drop preview"),
 ):
     """Generate a daily observation snapshot (audit + routing metrics + guard metrics)."""
     from datetime import datetime
@@ -628,7 +629,7 @@ def memory_observe(
     cleanup_preview_md = (
         f"- Snapshot risk level: `{cleanup_preview.risk_level}`\n"
         f"- Snapshot total candidates: `{cleanup_preview.drop_tool_activity_candidates + cleanup_preview.drop_non_decision_candidates}`\n\n"
-        + render_cleanup_drop_preview_markdown(cleanup_preview)
+        + render_cleanup_drop_preview_markdown(cleanup_preview, top_limit=max(1, int(preview_top)))
     )
     dashboard_md = render_memory_observability_dashboard(target_dir)
 

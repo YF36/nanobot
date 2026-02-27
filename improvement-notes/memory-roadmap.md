@@ -377,6 +377,7 @@ M3 验收标准：
   - 当直接执行 `memory-audit --apply` 且存在半衰期候选删除时，CLI 会先打印自动预估摘要（risk/tool/non-decision/scope），高风险时给出灰度提示。
   - 自动预估摘要已补充 `top_files`（前 3，按影响排序），便于命令行快速判断本次 apply 的主要影响面。
   - 支持 `--apply-drop-preview-top N` 自定义 top files 展示数量（预估报告 + 自动预估提示）。
+  - `memory-observe` 支持 `--preview-top N` 自定义观测快照里 drop preview 的 top files 数量。
 
 6. 约束优先级裁决（冲突处理模板）
 
