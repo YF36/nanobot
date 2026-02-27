@@ -26,6 +26,7 @@ _FALLBACK_REASON_HINTS = {
     "invalid_type:open_questions": "`open_questions` should be `string[]`; fix serializer to always emit arrays.",
 }
 _GUARD_REASON_HINTS = {
+    "candidate_too_long": "Candidate memory_update is too large; reduce scope and keep only durable, compact facts.",
     "excessive_shrink": "Candidate update shrank too much vs current memory; keep prior headings/facts and apply incremental edits.",
     "heading_retention_too_low": "Too many existing H2 headings were dropped; preserve durable sections and only patch changed parts.",
     "unstructured_candidate": "Candidate is long but lacks markdown structure; require `##` sections and concise `-` bullets.",

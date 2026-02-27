@@ -350,6 +350,18 @@ def test_memory_update_guard_detects_date_line_overflow() -> None:
     assert reason == "date_line_overflow"
 
 
+def test_memory_update_guard_detects_candidate_too_long() -> None:
+    current = (
+        "# Long-term Memory\n\n"
+        "## Preferences\n- 中文沟通\n\n"
+        "## Project Context\n- memory roadmap\n"
+    )
+    huge_body = "x" * (MemoryStore._MEMORY_UPDATE_MAX_CHARS + 50)
+    candidate = f"# Long-term Memory\n\n## Notes\n- {huge_body}\n"
+    reason = MemoryStore._memory_update_guard_reason(current, candidate)
+    assert reason == "candidate_too_long"
+
+
 @pytest.mark.asyncio
 async def test_consolidate_accepts_json_string_tool_arguments(tmp_path: Path) -> None:
     mm = MemoryStore(workspace=tmp_path)
