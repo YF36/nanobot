@@ -1297,6 +1297,7 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         "",
         "## Cleanup Conversion Traceability",
         f"- conversion rows(valid): `{max(0, cleanup_conv.total_rows - cleanup_conv.parse_error_rows)}`",
+        f"- latest cleanup run: `{cleanup_conv.latest_run_id or 'unknown'}`",
         (
             f"- top conversion actions: "
             f"`{', '.join([f'{k}:{v}' for k, v in list(cleanup_conv.action_counts.items())[:3]]) if cleanup_conv.action_counts else 'none'}`"
@@ -1340,6 +1341,8 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         lines.append(
             "- Use preview before apply: `nanobot memory-audit --apply-drop-preview --drop-tool-activity-older-than-days 30 --drop-non-decision-older-than-days 30`"
         )
+    if max(0, cleanup_conv.total_rows - cleanup_conv.parse_error_rows) > 0 and not cleanup_conv.latest_run_id:
+        lines.append("- Conversion index rows found without `run_id`; consider regenerating via latest `memory-audit --apply`.")
     if cleanup_preview.risk_level == "high":
         lines.append("- Half-life preview risk is high; run on recent-days scope first and sample-check before full apply.")
     if cleanup_preview.drop_non_decision_candidates >= 50:
