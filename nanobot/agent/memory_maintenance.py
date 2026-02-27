@@ -125,6 +125,8 @@ class CleanupConversionIndexSummary:
     parse_error_rows: int
     action_counts: dict[str, int]
     source_file_counts: dict[str, int]
+    latest_run_id: str
+    latest_run_action_counts: dict[str, int]
 
 
 @dataclass
@@ -799,12 +801,16 @@ def summarize_cleanup_conversion_index(memory_dir: Path) -> CleanupConversionInd
             parse_error_rows=0,
             action_counts={},
             source_file_counts={},
+            latest_run_id="",
+            latest_run_action_counts={},
         )
 
     total_rows = 0
     parse_error_rows = 0
     action_counter: Counter[str] = Counter()
     source_counter: Counter[str] = Counter()
+    latest_run_id = ""
+    latest_run_action_counter: Counter[str] = Counter()
     for raw_line in index_file.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line:
@@ -820,14 +826,22 @@ def summarize_cleanup_conversion_index(memory_dir: Path) -> CleanupConversionInd
             continue
         action = str(item.get("action") or "unknown")
         source_file = str(item.get("source_file") or "unknown")
+        run_id = str(item.get("run_id") or "")
         action_counter[action] += 1
         source_counter[source_file] += 1
+        if run_id:
+            if run_id != latest_run_id:
+                latest_run_id = run_id
+                latest_run_action_counter = Counter()
+            latest_run_action_counter[action] += 1
     return CleanupConversionIndexSummary(
         index_file_exists=True,
         total_rows=total_rows,
         parse_error_rows=parse_error_rows,
         action_counts=dict(sorted(action_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         source_file_counts=dict(sorted(source_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        latest_run_id=latest_run_id,
+        latest_run_action_counts=dict(sorted(latest_run_action_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
     )
 
 
@@ -863,6 +877,14 @@ def render_cleanup_conversion_index_markdown(summary: CleanupConversionIndexSumm
     else:
         for source_file, count in list(summary.source_file_counts.items())[:10]:
             lines.append(f"- {source_file}: `{count}`")
+    lines.extend(["", "## Latest Run"])
+    if not summary.latest_run_id:
+        lines.append("- run_id: `unknown`")
+    else:
+        lines.append(f"- run_id: `{summary.latest_run_id}`")
+        if summary.latest_run_action_counts:
+            for action, count in summary.latest_run_action_counts.items():
+                lines.append(f"- {action}: `{count}`")
     lines.append("")
     return "\n".join(lines)
 

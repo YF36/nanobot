@@ -346,6 +346,7 @@ M3 验收标准：
 - 进展（2026-02-27）：
   - 已落地最小版“转换索引”：`memory-audit --apply` 在执行 trim/dedupe/drop 时，追加写入 `memory/cleanup-conversion-index.jsonl`（保留来源文件、section、action、标准化前后信息）。
   - 已新增汇总输出：`memory-audit --cleanup-conversion-summary`。
+  - 汇总已增强：可显示“最近一次 cleanup run”的 `run_id` 与动作分布，便于快速判断最新一轮清理影响。
   - 已纳入 `memory-observe` 快照：新增 `*-cleanup-conversion-summary.md`，dashboard 增加 `Cleanup Conversion Traceability` 摘要。
 
 5. 信息半衰期驱动的保留策略（C6）

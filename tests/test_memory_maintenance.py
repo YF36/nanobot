@@ -296,9 +296,9 @@ def test_summarize_cleanup_conversion_index_counts_actions(tmp_path: Path) -> No
         memory_dir / "cleanup-conversion-index.jsonl",
         "\n".join(
             [
-                '{"action":"trim","source_file":"HISTORY.md"}',
-                '{"action":"dedupe","source_file":"2026-02-27.md"}',
-                '{"action":"dedupe","source_file":"2026-02-27.md"}',
+                '{"run_id":"cleanup_1","action":"trim","source_file":"HISTORY.md"}',
+                '{"run_id":"cleanup_1","action":"dedupe","source_file":"2026-02-27.md"}',
+                '{"run_id":"cleanup_2","action":"dedupe","source_file":"2026-02-27.md"}',
                 "not-json",
             ]
         )
@@ -311,9 +311,12 @@ def test_summarize_cleanup_conversion_index_counts_actions(tmp_path: Path) -> No
     assert summary.parse_error_rows == 1
     assert summary.action_counts["dedupe"] == 2
     assert summary.source_file_counts["2026-02-27.md"] == 2
+    assert summary.latest_run_id == "cleanup_2"
+    assert summary.latest_run_action_counts["dedupe"] == 1
     text = render_cleanup_conversion_index_markdown(summary)
     assert "Cleanup Conversion Index Summary" in text
     assert "## Actions" in text
+    assert "## Latest Run" in text
 
 
 def test_summarize_cleanup_drop_preview_counts_candidates(tmp_path: Path) -> None:
