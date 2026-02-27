@@ -210,6 +210,10 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
   - `improvement-notes/memory-observations/20260227-audit-v2.md`
   - `improvement-notes/memory-observations/20260227-metrics-summary-v2.md`
   - `improvement-notes/memory-observations/20260227-cleanup-effect-v1.md`
+  - `improvement-notes/memory-observations/20260227-audit-v3.md`
+  - `improvement-notes/memory-observations/20260227-metrics-summary-v3.md`
+  - `improvement-notes/memory-observations/20260227-guard-metrics-summary-v3.md`
+  - `improvement-notes/memory-observations/20260227-conflict-metrics-summary-v3.md`
 - 路线图仅保留“可执行结论”，原始报表/计划留在归档目录，避免主文档噪声累积。
 - 该批次结论摘要：
   - 审计显示记忆质量仍有漂移（`HISTORY` 长条目、`daily` 长 bullet/重复项仍存在）；
@@ -225,6 +229,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
   - `DAILY long bullets`: `4 -> 0`
   - `DAILY duplicates`: `5 -> 0`
 - 结论：第 3 项“受控清理闭环”在真实数据上有效，且作用范围可控（仅触达近 7 天 daily）。
+- v3 快照现状：routing 指标继续可用；guard/conflict 指标文件尚未生成（说明尚未触发对应拒写/冲突事件）。
 
 M2 验收标准：
 
