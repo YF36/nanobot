@@ -151,6 +151,11 @@ class AgentLoop:
             command_handler=self._command_handler,
             consolidation=self._consolidation,
             memory_window=self.memory_window,
+            progress_max_messages_per_turn=(
+                max(1, int(getattr(self.channels_config, "progress_max_messages_per_turn", 40)))
+                if self.channels_config
+                else 40
+            ),
             hooks=MessageProcessingHooks(
                 set_tool_context=self._set_tool_context,
                 run_agent_loop=self._run_agent_loop,

@@ -77,7 +77,10 @@ class UserMessageHandler(BaseTurnHandler):
 
     def __init__(self, deps: MessageProcessorDeps) -> None:
         super().__init__(deps)
-        self.progress = ProgressPublisher(deps.bus)
+        self.progress = ProgressPublisher(
+            deps.bus,
+            max_messages_per_turn=deps.progress_max_messages_per_turn,
+        )
         self.message_tool = MessageToolTurnController(deps.tools)
 
     def _schedule_background_consolidation_if_needed(self, session: Any) -> None:
@@ -176,6 +179,7 @@ class MessageProcessor:
         command_handler: CommandHandlerProtocol,
         consolidation: ConsolidationCoordinator,
         memory_window: int,
+        progress_max_messages_per_turn: int = 40,
         hooks: MessageProcessingHooks,
     ) -> None:
         deps = MessageProcessorDeps(
@@ -186,6 +190,7 @@ class MessageProcessor:
             command_handler=command_handler,
             consolidation=consolidation,
             memory_window=memory_window,
+            progress_max_messages_per_turn=max(1, int(progress_max_messages_per_turn)),
             hooks=hooks,
         )
         self._system = SystemMessageHandler(deps)

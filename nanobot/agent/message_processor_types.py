@@ -58,4 +58,5 @@ class MessageProcessorDeps:
     command_handler: CommandHandlerProtocol
     consolidation: ConsolidationCoordinator
     memory_window: int
+    progress_max_messages_per_turn: int
     hooks: MessageProcessingHooks

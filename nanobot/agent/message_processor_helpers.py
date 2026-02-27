@@ -33,11 +33,26 @@ logger = get_logger(__name__)
 class ProgressPublisher:
     """Publish incremental progress messages to the outbound bus."""
 
-    def __init__(self, bus: MessageBus) -> None:
+    def __init__(self, bus: MessageBus, *, max_messages_per_turn: int = 40) -> None:
         self.bus = bus
+        self.max_messages_per_turn = max(1, int(max_messages_per_turn))
 
     def for_message(self, msg: InboundMessage) -> ProgressCallback:
+        sent = 0
+        dropped_logged = False
+
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
+            nonlocal sent, dropped_logged
+            if sent >= self.max_messages_per_turn:
+                if not dropped_logged:
+                    logger.warning(
+                        "progress_messages_dropped_after_cap",
+                        channel=msg.channel,
+                        chat_id=msg.chat_id,
+                        max_messages_per_turn=self.max_messages_per_turn,
+                    )
+                    dropped_logged = True
+                return
             meta = dict(msg.metadata or {})
             meta["_progress"] = True
             meta["_tool_hint"] = tool_hint
@@ -47,6 +62,7 @@ class ProgressPublisher:
                 content=content,
                 metadata=meta,
             ))
+            sent += 1
 
         return _bus_progress
 

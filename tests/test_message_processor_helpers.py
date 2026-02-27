@@ -1,6 +1,6 @@
 import pytest
 
-from nanobot.agent.message_processor_helpers import TurnEventStatsCollector
+from nanobot.agent.message_processor_helpers import ProgressPublisher, TurnEventStatsCollector
 from nanobot.agent.turn_events import (
     TURN_EVENT_KIND_MESSAGE_DELTA,
     TURN_EVENT_KIND_TOOL_END,
@@ -13,6 +13,7 @@ from nanobot.agent.turn_events import (
     TURN_EVENT_TURN_END,
     TURN_EVENT_TURN_START,
 )
+from nanobot.bus.events import InboundMessage
 
 
 def _event(event_type: str, **kwargs):
@@ -80,3 +81,25 @@ async def test_turn_event_stats_collector_tracks_stream_deltas() -> None:
     assert c.message_delta_count == 2
     assert c.streamed_text_chars == len("Hello world")
     assert c.detail_ops == {"exec"}
+
+
+class _FakeBus:
+    def __init__(self) -> None:
+        self.outbound = []
+
+    async def publish_outbound(self, msg) -> None:
+        self.outbound.append(msg)
+
+
+@pytest.mark.asyncio
+async def test_progress_publisher_respects_max_messages_per_turn() -> None:
+    bus = _FakeBus()
+    pub = ProgressPublisher(bus, max_messages_per_turn=2)
+    msg = InboundMessage(channel="cli", sender_id="u1", chat_id="c1", content="hello")
+    cb = pub.for_message(msg)
+
+    await cb("p1")
+    await cb("p2")
+    await cb("p3")
+
+    assert [m.content for m in bus.outbound] == ["p1", "p2"]

@@ -197,6 +197,7 @@ class ChannelsConfig(Base):
     send_tool_hints: bool = False  # stream tool-call hints (e.g. read_file("…"))
     progress_flush_interval_ms: int = 150  # streaming progress coalescing window
     progress_flush_min_chars: int = 80     # flush earlier once buffered chars reach this threshold
+    progress_max_messages_per_turn: int = 40  # hard cap to avoid progress spam per turn
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     discord: DiscordConfig = Field(default_factory=DiscordConfig)
