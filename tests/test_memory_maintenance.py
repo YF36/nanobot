@@ -4,10 +4,12 @@ from datetime import datetime, timedelta
 from nanobot.agent.memory_maintenance import (
     apply_conservative_cleanup,
     build_cleanup_plan,
+    render_daily_archive_dry_run_markdown,
     render_cleanup_effect_markdown,
     render_daily_routing_metrics_markdown,
     render_memory_update_guard_metrics_markdown,
     run_memory_audit,
+    summarize_daily_archive_dry_run,
     summarize_memory_update_guard_metrics,
     summarize_daily_routing_metrics,
 )
@@ -120,6 +122,10 @@ def test_summarize_daily_routing_metrics_counts_and_reasons(tmp_path: Path) -> N
     assert summary.by_date["2026-02-27"]["total"] == 2
     assert summary.by_date["2026-02-27"]["structured_ok"] == 1
     assert summary.by_date["2026-02-28"]["fallback"] == 1
+    rendered = render_daily_routing_metrics_markdown(summary)
+    assert "## Suggested Fixes" in rendered
+    assert "invalid_type:topics" in rendered
+    assert "should be `string[]`" in rendered
 
 
 def test_render_daily_routing_metrics_markdown_handles_missing_file(tmp_path: Path) -> None:
@@ -195,3 +201,20 @@ def test_render_cleanup_effect_markdown_contains_delta(tmp_path: Path) -> None:
     assert "Audit Delta (Before -> After)" in text
     assert "HISTORY long(>600)" in text
     assert "DAILY duplicates" in text
+
+
+def test_summarize_daily_archive_dry_run_respects_keep_window(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
+    _write(memory_dir / "HISTORY.md", "")
+    _write(memory_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n- old2\n")
+    today = datetime.now().strftime("%Y-%m-%d")
+    _write(memory_dir / f"{today}.md", f"# {today}\n\n## Topics\n\n- recent\n")
+
+    summary = summarize_daily_archive_dry_run(memory_dir, keep_days=30)
+    assert summary.candidate_file_count == 1
+    assert summary.candidate_bullet_count == 2
+    assert summary.candidate_files == ["2020-01-01.md"]
+    rendered = render_daily_archive_dry_run_markdown(summary)
+    assert "Candidate files: `1`" in rendered

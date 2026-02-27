@@ -247,6 +247,20 @@ def memory_audit(
         "",
         help="Optional memory_update guard metrics markdown output path",
     ),
+    archive_dry_run: bool = typer.Option(
+        False,
+        "--archive-dry-run",
+        help="Show dry-run candidates for daily archive (no file changes)",
+    ),
+    archive_keep_days: int = typer.Option(
+        30,
+        "--archive-keep-days",
+        help="Keep last N days when computing archive dry-run candidates",
+    ),
+    archive_out: str = typer.Option(
+        "",
+        help="Optional daily archive dry-run markdown output path",
+    ),
     apply: bool = typer.Option(False, "--apply", help="Apply conservative cleanup with automatic backup"),
     apply_recent_days: int = typer.Option(
         0,
@@ -265,11 +279,13 @@ def memory_audit(
     from nanobot.agent.memory_maintenance import (
         apply_conservative_cleanup,
         build_cleanup_plan,
+        render_daily_archive_dry_run_markdown,
         render_cleanup_effect_markdown,
         render_daily_routing_metrics_markdown,
         render_memory_update_guard_metrics_markdown,
         render_audit_markdown,
         run_memory_audit,
+        summarize_daily_archive_dry_run,
         summarize_memory_update_guard_metrics,
         summarize_daily_routing_metrics,
     )
@@ -314,6 +330,17 @@ def memory_audit(
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(guard_md, encoding="utf-8")
             console.print(f"[green]✓[/green] Wrote guard metrics summary: {out}")
+
+    if archive_dry_run or archive_out:
+        dry = summarize_daily_archive_dry_run(target_dir, keep_days=archive_keep_days)
+        dry_md = render_daily_archive_dry_run_markdown(dry)
+        if archive_dry_run:
+            console.print(Markdown(dry_md))
+        if archive_out:
+            out = Path(archive_out).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(dry_md, encoding="utf-8")
+            console.print(f"[green]✓[/green] Wrote archive dry-run summary: {out}")
 
     if apply:
         before = run_memory_audit(target_dir)

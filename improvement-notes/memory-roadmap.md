@@ -190,10 +190,13 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 用途：支持对 `structured_daily_ok` 命中率和 `fallback_reason` 分布做离线统计，不改变主流程行为。
 - 已实施：`nanobot memory-audit --metrics-summary` 汇总输出（含总体命中率、fallback reason 分布、按天统计）。
 - 已实施：`nanobot memory-audit --metrics-out <path>` 可导出指标汇总 Markdown。
+- 已实施：fallback reason 纠偏建议映射（`metrics-summary` 中自动给出 top reason 对应修复建议）。
 - 已实施：`memory_update` guard 触发指标落盘：`memory/memory-update-guard-metrics.jsonl`。
 - 已实施：`nanobot memory-audit --guard-metrics-summary` 汇总 guard reason 分布与高频会话。
 - 已实施：`nanobot memory-audit --guard-metrics-out <path>` 可导出 guard 指标汇总 Markdown。
 - 已实施：`nanobot memory-observe` 一键生成“审计 + routing 指标 + guard 指标”三份日快照（默认输出到 `improvement-notes/memory-observations/`）。
+- 已实施：`nanobot memory-audit --archive-dry-run --archive-keep-days N` 归档试点（只输出候选文件与体量，不改文件）。
+- 已实施：`nanobot memory-audit --archive-out <path>` 可导出归档 dry-run 报告。
 
 观测记录归档（2026-02-27）：
 
@@ -275,6 +278,8 @@ M3 最小实现进展（2026-02-27）：
 - 已实施“按需读取二次收敛”：
   - 默认仅注入 `Topics / Decisions / Open Questions`；
   - `Tool Activity` 默认排除，仅当用户问题明确在问“工具/命令/操作记录”时再注入。
+- 已实施“来源锚点增强”：
+  - recent daily 注入携带 `date + section`（如 `YYYY-MM-DD [Topics]`），提高可追溯性。
 - 目标：在不常驻增加 prompt 噪声的前提下，增强“回顾最近对话”场景的命中率。
 
 M3 验收标准：

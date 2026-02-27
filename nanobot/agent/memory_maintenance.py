@@ -12,6 +12,19 @@ from pathlib import Path
 
 _DATE_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.md$")
 _HISTORY_ENTRY_RE = re.compile(r"^\[(20\d{2}-\d{2}-\d{2})(?:\s+\d{2}:\d{2})?\]\s*(.*)$")
+_FALLBACK_REASON_HINTS = {
+    "missing": "Model did not provide `daily_sections`; consider prompt nudge to always emit structured arrays.",
+    "empty": "Structured payload was empty; ask model to include at least one concise bullet in a relevant section.",
+    "not_object": "`daily_sections` was not an object; enforce tool-call schema and retry with stricter instruction.",
+    "invalid_item:topics": "`topics` contains non-string items; require string arrays only.",
+    "invalid_item:decisions": "`decisions` contains non-string items; require string arrays only.",
+    "invalid_item:tool_activity": "`tool_activity` contains non-string items; require string arrays only.",
+    "invalid_item:open_questions": "`open_questions` contains non-string items; require string arrays only.",
+    "invalid_type:topics": "`topics` should be `string[]`; fix serializer to always emit arrays.",
+    "invalid_type:decisions": "`decisions` should be `string[]`; fix serializer to always emit arrays.",
+    "invalid_type:tool_activity": "`tool_activity` should be `string[]`; fix serializer to always emit arrays.",
+    "invalid_type:open_questions": "`open_questions` should be `string[]`; fix serializer to always emit arrays.",
+}
 
 
 @dataclass
@@ -64,6 +77,14 @@ class MemoryUpdateGuardMetricsSummary:
     parse_error_rows: int
     reason_counts: dict[str, int]
     by_session: dict[str, int]
+
+
+@dataclass
+class DailyArchiveDryRunSummary:
+    keep_days: int
+    candidate_file_count: int
+    candidate_bullet_count: int
+    candidate_files: list[str]
 
 
 def _iter_daily_files(memory_dir: Path) -> list[Path]:
@@ -385,6 +406,12 @@ def render_daily_routing_metrics_markdown(summary: DailyRoutingMetricsSummary) -
     else:
         for reason, count in summary.fallback_reason_counts.items():
             lines.append(f"- {reason}: `{count}`")
+    if summary.fallback_reason_counts:
+        lines.extend(["", "## Suggested Fixes"])
+        for reason in summary.fallback_reason_counts:
+            hint = _FALLBACK_REASON_HINTS.get(reason)
+            if hint:
+                lines.append(f"- {reason}: {hint}")
 
     lines.extend(["", "## By Date"])
     if not summary.by_date:
@@ -478,6 +505,46 @@ def render_memory_update_guard_metrics_markdown(summary: MemoryUpdateGuardMetric
             if idx >= 10:
                 break
             lines.append(f"- {session_key}: `{count}`")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def summarize_daily_archive_dry_run(memory_dir: Path, *, keep_days: int = 30) -> DailyArchiveDryRunSummary:
+    window_days = max(1, int(keep_days))
+    cutoff = datetime.now().date() - timedelta(days=window_days - 1)
+    candidates: list[str] = []
+    bullet_count = 0
+    for p in _iter_daily_files(memory_dir):
+        d = _daily_file_date(p)
+        if d is None or d >= cutoff:
+            continue
+        candidates.append(p.name)
+        text = p.read_text(encoding="utf-8")
+        bullet_count += sum(1 for line in text.splitlines() if line.startswith("- "))
+    return DailyArchiveDryRunSummary(
+        keep_days=window_days,
+        candidate_file_count=len(candidates),
+        candidate_bullet_count=bullet_count,
+        candidate_files=sorted(candidates),
+    )
+
+
+def render_daily_archive_dry_run_markdown(summary: DailyArchiveDryRunSummary) -> str:
+    lines = [
+        "# Daily Archive Dry-Run Summary",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+        f"- Keep window: last `{summary.keep_days}` day(s)",
+        f"- Candidate files: `{summary.candidate_file_count}`",
+        f"- Candidate bullets: `{summary.candidate_bullet_count}`",
+        "",
+        "## Candidate Files",
+    ]
+    if not summary.candidate_files:
+        lines.append("- none")
+    else:
+        for name in summary.candidate_files:
+            lines.append(f"- {name}")
     lines.append("")
     return "\n".join(lines)
 
