@@ -197,11 +197,24 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
   - `improvement-notes/memory-observations/20260227-audit.md`
   - `improvement-notes/memory-observations/20260227-cleanup-plan.json`
   - `improvement-notes/memory-observations/20260227-metrics-summary.md`
+  - `improvement-notes/memory-observations/20260227-audit-v2.md`
+  - `improvement-notes/memory-observations/20260227-metrics-summary-v2.md`
+  - `improvement-notes/memory-observations/20260227-cleanup-effect-v1.md`
 - 路线图仅保留“可执行结论”，原始报表/计划留在归档目录，避免主文档噪声累积。
 - 该批次结论摘要：
   - 审计显示记忆质量仍有漂移（`HISTORY` 长条目、`daily` 长 bullet/重复项仍存在）；
   - 清理计划建议优先做“裁剪超长 + 去重”（低风险）；
   - 指标汇总文件当前显示 `daily-routing-metrics.jsonl` 尚未生成，需要后续 consolidation 周期再采样。
+
+受控清理闭环实测（2026-02-27）：
+
+- 执行参数：`--apply --apply-recent-days 7 --apply-skip-history`（只清理最近 daily，跳过 HISTORY）。
+- 实测结果（见 `20260227-cleanup-effect-v1.md`）：
+  - `daily_trimmed_bullets=4`
+  - `daily_deduplicated_bullets=5`
+  - `DAILY long bullets`: `4 -> 0`
+  - `DAILY duplicates`: `5 -> 0`
+- 结论：第 3 项“受控清理闭环”在真实数据上有效，且作用范围可控（仅触达近 7 天 daily）。
 
 M2 验收标准：
 
