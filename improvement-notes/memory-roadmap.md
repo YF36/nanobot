@@ -367,6 +367,7 @@ M3 验收标准：
   - 新增守卫开关：`memory-audit --apply --apply-abort-on-high-risk`，当预估风险为 `high` 时中止执行，避免误全量清理。
   - `memory-observe` 已纳入 30d 半衰期预估摘要（dashboard + `*-cleanup-drop-preview-summary.md`），用于日常先观测再执行。
   - `memory-observe` 的 drop preview 快照顶部增加风险统计行（risk level + total candidates），便于快速扫读。
+  - drop preview 新增 `dominant driver`（`tool_activity/non_decision/mixed/none`），快速定位主要清理来源。
   - 预估结果新增风险分级（`low/medium/high`），dashboard 在高风险时提示先缩小范围（如 recent-days 灰度）再全量 apply。
   - dashboard 的“下一步建议命令”已按风险级别动态分流（low/medium/high），减少人工判断与参数拼接。
   - 当 30d 预估无候选时，dashboard 明确输出 “No half-life cleanup candidates...” 提示，避免误判为数据缺失。

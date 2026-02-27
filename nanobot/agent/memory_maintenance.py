@@ -136,6 +136,7 @@ class CleanupDropPreviewSummary:
     drop_tool_activity_candidates: int
     drop_non_decision_candidates: int
     risk_level: str
+    dominant_driver: str
     by_file: dict[str, dict[str, int]]
 
 
@@ -575,12 +576,22 @@ def summarize_cleanup_drop_preview(
     else:
         risk_level = "low"
 
+    if tool_candidates > non_decision_candidates:
+        dominant_driver = "tool_activity"
+    elif non_decision_candidates > tool_candidates:
+        dominant_driver = "non_decision"
+    elif tool_candidates == 0 and non_decision_candidates == 0:
+        dominant_driver = "none"
+    else:
+        dominant_driver = "mixed"
+
     return CleanupDropPreviewSummary(
         scoped_daily_files=len(daily_files),
         skipped_daily_files=max(0, len(all_daily_files) - len(daily_files)),
         drop_tool_activity_candidates=tool_candidates,
         drop_non_decision_candidates=non_decision_candidates,
         risk_level=risk_level,
+        dominant_driver=dominant_driver,
         by_file=dict(sorted(by_file.items())),
     )
 
@@ -592,6 +603,7 @@ def render_cleanup_drop_preview_markdown(summary: CleanupDropPreviewSummary) -> 
         f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
         f"- Scoped daily files: `{summary.scoped_daily_files}` (skipped=`{summary.skipped_daily_files}`)",
         f"- Risk level: `{summary.risk_level}`",
+        f"- Dominant driver: `{summary.dominant_driver}`",
         "",
         "## Candidate Counts",
         f"- drop_tool_activity_candidates: `{summary.drop_tool_activity_candidates}`",
@@ -1320,6 +1332,7 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         f"- tool_activity candidates: `{cleanup_preview.drop_tool_activity_candidates}`",
         f"- non_decision candidates: `{cleanup_preview.drop_non_decision_candidates}`",
         f"- preview risk level: `{cleanup_preview.risk_level}`",
+        f"- preview dominant driver: `{cleanup_preview.dominant_driver}`",
         "",
         "## Suggested Next Actions",
     ]

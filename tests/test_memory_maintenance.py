@@ -342,11 +342,13 @@ def test_summarize_cleanup_drop_preview_counts_candidates(tmp_path: Path) -> Non
     assert summary.drop_tool_activity_candidates == 1
     assert summary.drop_non_decision_candidates == 2
     assert summary.risk_level == "low"
+    assert summary.dominant_driver == "non_decision"
     assert summary.by_file[f"{old_day}.md"]["drop_non_decision"] == 2
     text = render_cleanup_drop_preview_markdown(summary)
     assert "Cleanup Drop Preview" in text
     assert "drop_non_decision_candidates" in text
     assert "Risk level" in text
+    assert "Dominant driver" in text
     assert "Recommended Next Command" in text
 
 
@@ -369,6 +371,7 @@ def test_summarize_cleanup_drop_preview_reports_high_risk(tmp_path: Path) -> Non
     )
     assert summary.drop_non_decision_candidates == 55
     assert summary.risk_level == "high"
+    assert summary.dominant_driver == "non_decision"
     text = render_cleanup_drop_preview_markdown(summary)
     assert "--apply-drop-preview --apply-recent-days 7" in text
 
@@ -409,6 +412,7 @@ def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path)
     assert "latest cleanup run" in text
     assert "## Half-Life Drop Preview (30d)" in text
     assert "preview risk level" in text
+    assert "preview dominant driver" in text
     assert "Low-risk rollout" in text
     assert "## Suggested Next Actions" in text
 
