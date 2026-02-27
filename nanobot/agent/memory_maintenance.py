@@ -1351,9 +1351,18 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         cleanup_preview.drop_tool_activity_candidates + cleanup_preview.drop_non_decision_candidates
     )
     if total_preview_candidates > 0:
-        lines.append(
-            "- Use preview before apply: `nanobot memory-audit --apply-drop-preview --drop-tool-activity-older-than-days 30 --drop-non-decision-older-than-days 30`"
-        )
+        if cleanup_preview.risk_level == "high":
+            lines.append(
+                "- High-risk preview: `nanobot memory-audit --apply-drop-preview --apply-recent-days 7 --drop-tool-activity-older-than-days 30 --drop-non-decision-older-than-days 30`"
+            )
+        elif cleanup_preview.risk_level == "medium":
+            lines.append(
+                "- Medium-risk rollout: `nanobot memory-audit --apply --apply-recent-days 7 --drop-tool-activity-older-than-days 30 --drop-non-decision-older-than-days 30 --apply-abort-on-high-risk`"
+            )
+        else:
+            lines.append(
+                "- Low-risk rollout: `nanobot memory-audit --apply --drop-tool-activity-older-than-days 30 --drop-non-decision-older-than-days 30 --apply-abort-on-high-risk`"
+            )
     if max(0, cleanup_conv.total_rows - cleanup_conv.parse_error_rows) > 0 and not cleanup_conv.latest_run_id:
         lines.append("- Conversion index rows found without `run_id`; consider regenerating via latest `memory-audit --apply`.")
     if cleanup_preview.risk_level == "high":

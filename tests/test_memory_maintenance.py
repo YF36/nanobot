@@ -409,6 +409,7 @@ def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path)
     assert "latest cleanup run" in text
     assert "## Half-Life Drop Preview (30d)" in text
     assert "preview risk level" in text
+    assert "Low-risk rollout" in text
     assert "## Suggested Next Actions" in text
 
 
@@ -441,6 +442,20 @@ def test_render_memory_observability_dashboard_warns_on_missing_conversion_run_i
 
     text = render_memory_observability_dashboard(memory_dir)
     assert "Conversion index rows found without `run_id`" in text
+
+
+def test_render_memory_observability_dashboard_shows_high_risk_preview_command(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
+    _write(memory_dir / "HISTORY.md", "")
+    old_day = (datetime.now() - timedelta(days=40)).strftime("%Y-%m-%d")
+    bullets = "\n".join([f"- old {i}" for i in range(55)])
+    _write(memory_dir / f"{old_day}.md", f"# {old_day}\n\n## Topics\n\n{bullets}\n")
+
+    text = render_memory_observability_dashboard(memory_dir)
+    assert "preview risk level: `high`" in text
+    assert "High-risk preview" in text
 
 
 def test_apply_conservative_cleanup_scopes_recent_daily_files(tmp_path: Path) -> None:
