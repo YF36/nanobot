@@ -230,6 +230,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
   - `DAILY duplicates`: `5 -> 0`
 - 结论：第 3 项“受控清理闭环”在真实数据上有效，且作用范围可控（仅触达近 7 天 daily）。
 - v3 快照现状：routing 指标继续可用；guard/conflict 指标文件尚未生成（说明尚未触发对应拒写/冲突事件）。
+- 受控触发验证：已用临时样本目录验证 `--guard-metrics-summary` 与 `--conflict-metrics-summary` CLI 汇总路径可用，输出字段完整。
 
 M2 验收标准：
 
