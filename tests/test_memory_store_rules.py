@@ -68,6 +68,28 @@ def test_normalize_daily_sections_detailed_reports_quality_reasons() -> None:
     assert normalized == {"topics": ["A"]}
 
 
+def test_normalize_daily_sections_drops_code_block_like_bullets() -> None:
+    normalized, reason = MemoryStore._normalize_daily_sections_detailed(
+        {"topics": ["keep this", "```drop me```"]}
+    )
+    assert reason == "ok"
+    assert normalized == {"topics": ["keep this"]}
+
+
+def test_normalize_history_entry_adds_timestamp_and_trims() -> None:
+    text, reason = MemoryStore._normalize_history_entry("Discussed memory cleanup strategy.")
+    assert reason == "ok"
+    assert text is not None
+    assert text.startswith("[20")
+    assert "Discussed memory cleanup strategy." in text
+
+    long_text = "x" * 1000
+    text2, reason2 = MemoryStore._normalize_history_entry(long_text)
+    assert reason2 == "ok"
+    assert text2 is not None
+    assert len(text2) <= MemoryStore._HISTORY_ENTRY_MAX_CHARS + 32
+
+
 def test_append_daily_sections_detailed_returns_observability_details(tmp_path: Path) -> None:
     mm = MemoryStore(workspace=tmp_path)
 
@@ -347,3 +369,37 @@ async def test_consolidate_sanitizes_memory_update_before_write(tmp_path: Path) 
     daily_text = (mm.memory_dir / "2026-02-25.md").read_text(encoding="utf-8")
     assert "## Topics" in daily_text
     assert "Discussed anime topics and preferences" in daily_text
+
+
+@pytest.mark.asyncio
+async def test_consolidate_skips_history_entry_when_quality_gate_rejects(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    mm.write_long_term("# Long-term Memory\n\n## Preferences\n- 中文沟通\n")
+
+    session = Session(key="test:history_gate")
+    for i in range(60):
+        session.add_message("user", f"msg{i}")
+
+    provider = MagicMock()
+
+    async def _fake_chat(**kwargs):
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="t1",
+                    name="save_memory",
+                    arguments={
+                        "history_entry": "```raw dump```",
+                        "memory_update": "# Long-term Memory\n\n## Preferences\n- 中文沟通\n",
+                    },
+                )
+            ],
+        )
+
+    provider.chat = _fake_chat
+    result = await mm.consolidate(session=session, provider=provider, model="test", memory_window=50)
+
+    assert result is True
+    history_text = mm.history_file.read_text(encoding="utf-8") if mm.history_file.exists() else ""
+    assert history_text.strip() == ""

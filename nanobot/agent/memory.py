@@ -98,6 +98,8 @@ class MemoryStore:
         "tool_activity": "Tool Activity",
         "open_questions": "Open Questions",
     }
+    _HISTORY_ENTRY_MAX_CHARS = 600
+    _DAILY_BULLET_MAX_CHARS = 240
 
     def __init__(self, workspace: Path):
         self.memory_dir = ensure_dir(workspace / "memory")
@@ -171,6 +173,36 @@ class MemoryStore:
         daily_file.write_text(new_text, encoding="utf-8")
 
     @classmethod
+    def _normalize_history_entry(cls, entry: object) -> tuple[str | None, str]:
+        if entry is None:
+            return None, "missing"
+        if not isinstance(entry, str):
+            return None, "invalid_type"
+        text = " ".join(entry.split()).strip()
+        if not text:
+            return None, "empty"
+        if "```" in text:
+            return None, "contains_code_block"
+        if len(text) > cls._HISTORY_ENTRY_MAX_CHARS:
+            text = text[: cls._HISTORY_ENTRY_MAX_CHARS - 3].rstrip() + "..."
+        if not cls._HISTORY_ENTRY_DATE_RE.match(text):
+            text = f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}] {text}"
+        return text, "ok"
+
+    @classmethod
+    def _sanitize_daily_bullet(cls, item: object) -> tuple[str | None, str]:
+        if not isinstance(item, str):
+            return None, "invalid_item"
+        text = " ".join(item.split()).strip()
+        if not text:
+            return None, "empty_item"
+        if "```" in text:
+            return None, "contains_code_block"
+        if len(text) > cls._DAILY_BULLET_MAX_CHARS:
+            text = text[: cls._DAILY_BULLET_MAX_CHARS - 3].rstrip() + "..."
+        return text, "ok"
+
+    @classmethod
     def _normalize_daily_sections_detailed(cls, value: object) -> tuple[dict[str, list[str]] | None, str]:
         if value is None:
             return None, "missing"
@@ -185,9 +217,9 @@ class MemoryStore:
                 return None, f"invalid_type:{key}"
             items: list[str] = []
             for item in raw:
-                if not isinstance(item, str):
+                text, sanitize_reason = cls._sanitize_daily_bullet(item)
+                if sanitize_reason == "invalid_item":
                     return None, f"invalid_item:{key}"
-                text = item.strip()
                 if text:
                     items.append(text)
             if items:
@@ -597,18 +629,18 @@ class MemoryStore:
                             arguments_type=type(args).__name__,
                         )
                         return False
-                    if entry := args.get("history_entry"):
-                        if not isinstance(entry, str):
-                            entry = json.dumps(entry, ensure_ascii=False)
-                        self.append_history(entry)
-                        date_str = self._history_entry_date(entry)
+                    entry = args.get("history_entry")
+                    entry_text, entry_reason = self._normalize_history_entry(entry)
+                    if entry_text is not None:
+                        self.append_history(entry_text)
+                        date_str = self._history_entry_date(entry_text)
                         raw_daily_sections = args.get("daily_sections")
                         _, structured_daily_ok, structured_daily_details = self.append_daily_sections_detailed(
                             date_str,
                             raw_daily_sections,
                         )
                         if not structured_daily_ok:
-                            self.append_daily_history_entry(entry)
+                            self.append_daily_history_entry(entry_text)
                         logger.debug(
                             "Memory daily routing decision",
                             date=date_str,
@@ -617,6 +649,11 @@ class MemoryStore:
                             fallback_reason=structured_daily_details["reason"],
                             structured_keys=structured_daily_details["keys"],
                             structured_bullet_count=structured_daily_details["bullet_count"],
+                        )
+                    else:
+                        logger.warning(
+                            "Memory consolidation skipped history_entry due to quality gate",
+                            reason=entry_reason,
                         )
                     if update := args.get("memory_update"):
                         if not isinstance(update, str):
