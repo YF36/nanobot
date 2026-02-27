@@ -131,9 +131,9 @@ def test_summarize_daily_routing_metrics_counts_and_reasons(tmp_path: Path) -> N
         _obs_file(memory_dir, "daily-routing-metrics.jsonl"),
         "\n".join(
             [
-                '{"session_key":"s1","date":"2026-02-27","structured_daily_ok":true,"fallback_reason":"ok"}',
-                '{"session_key":"s1","date":"2026-02-27","structured_daily_ok":false,"fallback_reason":"missing"}',
-                '{"session_key":"s2","date":"2026-02-28","structured_daily_ok":false,"fallback_reason":"invalid_type:topics"}',
+                '{"session_key":"s1","date":"2026-02-27","structured_daily_ok":true,"structured_source":"model","fallback_reason":"ok"}',
+                '{"session_key":"s1","date":"2026-02-27","structured_daily_ok":false,"structured_source":"fallback_unstructured","fallback_reason":"missing"}',
+                '{"session_key":"s2","date":"2026-02-28","structured_daily_ok":false,"structured_source":"fallback_unstructured","fallback_reason":"invalid_type:topics"}',
                 "not-json",
             ]
         )
@@ -150,6 +150,8 @@ def test_summarize_daily_routing_metrics_counts_and_reasons(tmp_path: Path) -> N
     assert summary.sessions_with_fallback_events == 2
     assert summary.by_session["s1"] == 2
     assert summary.by_session["s2"] == 1
+    assert summary.structured_source_counts["fallback_unstructured"] == 2
+    assert summary.structured_source_counts["model"] == 1
     assert summary.fallback_reason_counts["missing"] == 1
     assert summary.fallback_reason_counts["invalid_type:topics"] == 1
     assert summary.fallback_sessions_by_reason["missing"] == 1
@@ -163,6 +165,8 @@ def test_summarize_daily_routing_metrics_counts_and_reasons(tmp_path: Path) -> N
     assert "sessions_with_fallback_events: `2`" in rendered
     assert "## Sessions (Top)" in rendered
     assert "s1: `2`" in rendered
+    assert "## Structured Source" in rendered
+    assert "fallback_unstructured: `2`" in rendered
     assert "invalid_type:topics: `1` (sessions=`1`)" in rendered
     assert "should be `string[]`" in rendered
 

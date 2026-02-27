@@ -195,6 +195,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已增强：routing 指标汇总新增 `by_session` Top 视图，便于快速定位命中率退化来源会话。
 - 已增强：routing 指标汇总新增 fallback 会话影响面（`sessions_with_fallback_events` + `reason -> sessions`），用于识别 fallback 是否跨会话扩散。
 - 已增强：当 fallback 事件跨会话扩散（会话数高）时，dashboard 追加“优先修 serializer/schema”建议，避免只做单会话 prompt 微调。
+- 已增强：routing 指标汇总新增 `structured_source` 分布（`model/synthesized_missing/synthesized_after_invalid/fallback_unstructured`），用于区分模型原生结构化与系统补救占比。
 - 已实施：`nanobot memory-audit --metrics-out <path>` 可导出指标汇总 Markdown。
 - 已实施：fallback reason 纠偏建议映射（`metrics-summary` 中自动给出 top reason 对应修复建议）。
 - 已增强：当 `structured_daily_ok` 命中率低于阈值（当前 60%）时，`metrics-summary` 与 dashboard 会给出 prompt/serializer 收敛建议。

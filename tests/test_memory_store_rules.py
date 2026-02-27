@@ -524,6 +524,7 @@ async def test_consolidate_prefers_structured_daily_sections_when_present(tmp_pa
     assert len(metrics) == 1
     assert metrics[0]["session_key"] == "test:daily_sections_ok"
     assert metrics[0]["structured_daily_ok"] is True
+    assert metrics[0]["structured_source"] == "model"
     assert metrics[0]["fallback_reason"] == "ok"
     assert metrics[0]["structured_bullet_count"] == 2
 
@@ -569,6 +570,7 @@ async def test_consolidate_synthesizes_structured_sections_when_daily_sections_i
     assert len(metrics) == 1
     assert metrics[0]["session_key"] == "test:daily_sections_bad"
     assert metrics[0]["structured_daily_ok"] is True
+    assert metrics[0]["structured_source"] == "synthesized_after_invalid"
     assert metrics[0]["fallback_used"] is False
     assert metrics[0]["fallback_reason"] == "ok"
 
@@ -611,6 +613,7 @@ async def test_consolidate_synthesizes_structured_daily_sections_when_missing(tm
     assert len(metrics) == 1
     assert metrics[0]["session_key"] == "test:daily_sections_missing"
     assert metrics[0]["structured_daily_ok"] is True
+    assert metrics[0]["structured_source"] == "synthesized_missing"
     assert metrics[0]["fallback_used"] is False
     assert metrics[0]["fallback_reason"] == "ok"
 

@@ -83,6 +83,7 @@ class DailyRoutingMetricsSummary:
     sessions_with_routing_events: int
     sessions_with_fallback_events: int
     by_session: dict[str, int]
+    structured_source_counts: dict[str, int]
     fallback_reason_counts: dict[str, int]
     fallback_sessions_by_reason: dict[str, int]
     by_date: dict[str, dict[str, int]]
@@ -738,6 +739,7 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
             sessions_with_routing_events=0,
             sessions_with_fallback_events=0,
             by_session={},
+            structured_source_counts={},
             fallback_reason_counts={},
             fallback_sessions_by_reason={},
             by_date={},
@@ -751,6 +753,7 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
     fallback_reason_counter: Counter[str] = Counter()
     fallback_session_counter: Counter[str] = Counter()
     fallback_sessions_by_reason: dict[str, set[str]] = {}
+    structured_source_counter: Counter[str] = Counter()
     by_date: dict[str, dict[str, int]] = {}
 
     for raw_line in metrics_file.read_text(encoding="utf-8").splitlines():
@@ -768,6 +771,9 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
             continue
         session_key = str(item.get("session_key") or "unknown")
         session_counter[session_key] += 1
+        structured_source = str(item.get("structured_source") or "")
+        if structured_source:
+            structured_source_counter[structured_source] += 1
 
         date = str(item.get("date") or "")
         if not date:
@@ -796,6 +802,7 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
         sessions_with_routing_events=len(session_counter),
         sessions_with_fallback_events=len(fallback_session_counter),
         by_session=dict(sorted(session_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        structured_source_counts=dict(sorted(structured_source_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         fallback_reason_counts=dict(sorted(fallback_reason_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         fallback_sessions_by_reason=dict(
             sorted(
@@ -1043,6 +1050,13 @@ def render_daily_routing_metrics_markdown(summary: DailyRoutingMetricsSummary) -
         lines.append(
             "- structured_daily_ok rate is low; tighten consolidation prompt to prefer non-empty `daily_sections` and validate serializer shape."
         )
+
+    lines.extend(["", "## Structured Source"])
+    if not summary.structured_source_counts:
+        lines.append("- none")
+    else:
+        for source, count in summary.structured_source_counts.items():
+            lines.append(f"- {source}: `{count}`")
 
     lines.extend(["", "## By Date"])
     if not summary.by_date:

@@ -176,6 +176,7 @@ class MemoryStore:
         fallback_reason: str,
         structured_keys: list[str],
         structured_bullet_count: int,
+        structured_source: str,
     ) -> None:
         row = {
             "ts": datetime.now().isoformat(timespec="seconds"),
@@ -186,6 +187,7 @@ class MemoryStore:
             "fallback_reason": fallback_reason,
             "structured_keys": structured_keys,
             "structured_bullet_count": structured_bullet_count,
+            "structured_source": structured_source,
         }
         try:
             with open(self.daily_routing_metrics_file, "a", encoding="utf-8") as f:
@@ -1083,10 +1085,12 @@ class MemoryStore:
             self.append_history(entry_text)
             date_str = self._history_entry_date(entry_text)
             raw_daily_sections = args.get("daily_sections")
+            structured_source = "model"
             if raw_daily_sections is None:
                 synthesized_sections = self._synthesize_daily_sections_from_entry(entry_text)
                 if synthesized_sections is not None:
                     raw_daily_sections = synthesized_sections
+                    structured_source = "synthesized_missing"
             _, structured_daily_ok, structured_daily_details = self.append_daily_sections_detailed(
                 date_str,
                 raw_daily_sections,
@@ -1098,12 +1102,16 @@ class MemoryStore:
                         date_str,
                         synthesized_sections,
                     )
+                    if structured_daily_ok:
+                        structured_source = "synthesized_after_invalid"
             if not structured_daily_ok:
+                structured_source = "fallback_unstructured"
                 self.append_daily_history_entry(entry_text)
             logger.debug(
                 "Memory daily routing decision",
                 date=date_str,
                 structured_daily_ok=structured_daily_ok,
+                structured_source=structured_source,
                 fallback_used=(not structured_daily_ok),
                 fallback_reason=structured_daily_details["reason"],
                 structured_keys=structured_daily_details["keys"],
@@ -1116,6 +1124,7 @@ class MemoryStore:
                 fallback_reason=str(structured_daily_details["reason"]),
                 structured_keys=list(structured_daily_details["keys"]),
                 structured_bullet_count=int(structured_daily_details["bullet_count"]),
+                structured_source=structured_source,
             )
         else:
             logger.warning(
