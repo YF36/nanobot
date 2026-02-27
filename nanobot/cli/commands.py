@@ -426,6 +426,8 @@ def memory_audit(
             filtered_preview_by_reason = {
                 k: v for k, v in guard_metrics.preview_by_reason.items() if needle.lower() in k.lower()
             }
+            if not filtered_reason_counts:
+                console.print(f"[yellow]No guard reasons matched filter:[/yellow] {needle}")
             guard_metrics = type(guard_metrics)(
                 metrics_file_exists=guard_metrics.metrics_file_exists,
                 total_rows=guard_metrics.total_rows,
@@ -476,6 +478,11 @@ def memory_audit(
                     by_session=sanitize_metrics.by_session,
                     top_recent_topic_sections={},
                     top_transient_status_sections=sanitize_metrics.top_transient_status_sections,
+                )
+            else:
+                console.print(
+                    f"[yellow]Unsupported sanitize focus filter:[/yellow] {sanitize_focus_filter} "
+                    "(allowed: recent_topic, transient_status)"
                 )
         sanitize_md = render_memory_update_sanitize_metrics_markdown(sanitize_metrics)
         if sanitize_metrics_summary:
