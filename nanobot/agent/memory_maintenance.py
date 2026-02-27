@@ -1681,6 +1681,8 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         lines.append("- Recent-topic sanitize volume is high; reduce transient topic sections in memory_update output.")
     if sanitize.total_transient_status_lines_removed >= 10:
         lines.append("- Transient-status sanitize volume is high; keep dated status/error lines in daily/history only.")
+    if sanitize.total_duplicate_bullets_removed >= 10:
+        lines.append("- Duplicate-bullets sanitize volume is high; deduplicate repeated bullets in memory_update before write.")
     if sanitize.total_transient_status_lines_removed >= 20:
         lines.append("- Transient-status sanitize volume is high; tighten consolidation prompt to reduce noisy memory_update output.")
     if max(0, conflict.total_rows - conflict.parse_error_rows) > 0:
