@@ -99,6 +99,7 @@ class MemoryUpdateSanitizeMetricsSummary:
     parse_error_rows: int
     total_recent_topic_sections_removed: int
     total_transient_status_lines_removed: int
+    dominant_focus: str
     by_session: dict[str, int]
     top_recent_topic_sections: dict[str, int]
     top_transient_status_sections: dict[str, int]
@@ -1145,6 +1146,7 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
             parse_error_rows=0,
             total_recent_topic_sections_removed=0,
             total_transient_status_lines_removed=0,
+            dominant_focus="none",
             by_session={},
             top_recent_topic_sections={},
             top_transient_status_sections={},
@@ -1191,12 +1193,22 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
                     transient_section_counter[sec.strip()] += 1
         session_counter[session_key] += 1
 
+    if recent_topic_removed > transient_lines_removed:
+        dominant_focus = "recent_topic"
+    elif transient_lines_removed > recent_topic_removed:
+        dominant_focus = "transient_status"
+    elif recent_topic_removed == 0 and transient_lines_removed == 0:
+        dominant_focus = "none"
+    else:
+        dominant_focus = "balanced"
+
     return MemoryUpdateSanitizeMetricsSummary(
         metrics_file_exists=True,
         total_rows=total_rows,
         parse_error_rows=parse_error_rows,
         total_recent_topic_sections_removed=recent_topic_removed,
         total_transient_status_lines_removed=transient_lines_removed,
+        dominant_focus=dominant_focus,
         by_session=dict(sorted(session_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         top_recent_topic_sections=dict(sorted(recent_section_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         top_transient_status_sections=dict(sorted(transient_section_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
@@ -1222,8 +1234,7 @@ def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitize
             f"- Rows: `{summary.total_rows}` (valid=`{total_valid}`, parse_errors=`{summary.parse_error_rows}`)",
             f"- removed_recent_topic_sections(total): `{summary.total_recent_topic_sections_removed}`",
             f"- removed_transient_status_lines(total): `{summary.total_transient_status_lines_removed}`",
-            "",
-            "## Sessions (Top)",
+            f"- dominant_focus: `{summary.dominant_focus}`",
         ]
     )
     lines.extend(["", "## Suggested Fixes"])

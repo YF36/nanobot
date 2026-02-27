@@ -245,6 +245,7 @@ def test_summarize_memory_update_sanitize_metrics_counts(tmp_path: Path) -> None
     assert summary.parse_error_rows == 1
     assert summary.total_recent_topic_sections_removed == 3
     assert summary.total_transient_status_lines_removed == 4
+    assert summary.dominant_focus == "transient_status"
     assert summary.by_session["s1"] == 2
     assert summary.by_session["s2"] == 1
     assert summary.top_recent_topic_sections["今天讨论的主题"] == 2
@@ -275,6 +276,7 @@ def test_render_memory_update_sanitize_metrics_markdown_reports_no_adjustment_ne
         '{"session_key":"s1","removed_recent_topic_section_count":0,"removed_transient_status_line_count":0}\n',
     )
     summary = summarize_memory_update_sanitize_metrics(memory_dir)
+    assert summary.dominant_focus == "none"
     text = render_memory_update_sanitize_metrics_markdown(summary)
     assert "No sanitize-specific prompt adjustment needed" in text
     assert "## Priority Focus" not in text
