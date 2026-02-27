@@ -349,6 +349,55 @@ def memory_audit(
             console.print(f"[green]✓[/green] Wrote cleanup effect: {out}")
 
 
+@app.command("memory-observe")
+def memory_observe(
+    memory_dir: str = typer.Option("", help="Memory directory path; defaults to <workspace>/memory from config"),
+    out_dir: str = typer.Option(
+        "",
+        help="Observation output directory; defaults to <workspace>/improvement-notes/memory-observations",
+    ),
+    tag: str = typer.Option("", help="Optional suffix tag, e.g. pre-cleanup"),
+):
+    """Generate a daily observation snapshot (audit + routing metrics + guard metrics)."""
+    from datetime import datetime
+    from nanobot.config.loader import load_config
+    from nanobot.agent.memory_maintenance import (
+        render_audit_markdown,
+        render_daily_routing_metrics_markdown,
+        render_memory_update_guard_metrics_markdown,
+        run_memory_audit,
+        summarize_daily_routing_metrics,
+        summarize_memory_update_guard_metrics,
+    )
+
+    config = load_config()
+    target_dir = Path(memory_dir).expanduser() if memory_dir else (config.workspace_path / "memory")
+    output_dir = (
+        Path(out_dir).expanduser()
+        if out_dir
+        else (Path.cwd() / "improvement-notes" / "memory-observations")
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    date_prefix = datetime.now().strftime("%Y%m%d")
+    suffix = f"-{tag.strip()}" if tag.strip() else ""
+
+    audit_md = render_audit_markdown(run_memory_audit(target_dir))
+    routing_md = render_daily_routing_metrics_markdown(summarize_daily_routing_metrics(target_dir))
+    guard_md = render_memory_update_guard_metrics_markdown(summarize_memory_update_guard_metrics(target_dir))
+
+    audit_path = output_dir / f"{date_prefix}-audit{suffix}.md"
+    routing_path = output_dir / f"{date_prefix}-metrics-summary{suffix}.md"
+    guard_path = output_dir / f"{date_prefix}-guard-metrics-summary{suffix}.md"
+    audit_path.write_text(audit_md, encoding="utf-8")
+    routing_path.write_text(routing_md, encoding="utf-8")
+    guard_path.write_text(guard_md, encoding="utf-8")
+
+    console.print(f"[green]✓[/green] Wrote audit: {audit_path}")
+    console.print(f"[green]✓[/green] Wrote routing metrics: {routing_path}")
+    console.print(f"[green]✓[/green] Wrote guard metrics: {guard_path}")
+
+
 def _make_provider(config: Config):
     """Create the appropriate LLM provider from config."""
     from nanobot.providers.litellm_provider import LiteLLMProvider

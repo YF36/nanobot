@@ -193,6 +193,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已实施：`memory_update` guard 触发指标落盘：`memory/memory-update-guard-metrics.jsonl`。
 - 已实施：`nanobot memory-audit --guard-metrics-summary` 汇总 guard reason 分布与高频会话。
 - 已实施：`nanobot memory-audit --guard-metrics-out <path>` 可导出 guard 指标汇总 Markdown。
+- 已实施：`nanobot memory-observe` 一键生成“审计 + routing 指标 + guard 指标”三份日快照（默认输出到 `improvement-notes/memory-observations/`）。
 
 观测记录归档（2026-02-27）：
 
