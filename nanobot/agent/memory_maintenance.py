@@ -80,6 +80,7 @@ class DailyRoutingMetricsSummary:
     parse_error_rows: int
     structured_ok_count: int
     fallback_count: int
+    sessions_with_routing_events: int
     fallback_reason_counts: dict[str, int]
     by_date: dict[str, dict[str, int]]
 
@@ -730,6 +731,7 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
             parse_error_rows=0,
             structured_ok_count=0,
             fallback_count=0,
+            sessions_with_routing_events=0,
             fallback_reason_counts={},
             by_date={},
         )
@@ -738,6 +740,7 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
     parse_error_rows = 0
     structured_ok_count = 0
     fallback_count = 0
+    session_counter: Counter[str] = Counter()
     fallback_reason_counter: Counter[str] = Counter()
     by_date: dict[str, dict[str, int]] = {}
 
@@ -754,6 +757,8 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
         if not isinstance(item, dict):
             parse_error_rows += 1
             continue
+        session_key = str(item.get("session_key") or "unknown")
+        session_counter[session_key] += 1
 
         date = str(item.get("date") or "")
         if not date:
@@ -777,6 +782,7 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
         parse_error_rows=parse_error_rows,
         structured_ok_count=structured_ok_count,
         fallback_count=fallback_count,
+        sessions_with_routing_events=len(session_counter),
         fallback_reason_counts=dict(sorted(fallback_reason_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         by_date=dict(sorted(by_date.items())),
     )
@@ -992,6 +998,7 @@ def render_daily_routing_metrics_markdown(summary: DailyRoutingMetricsSummary) -
             "",
             "## Overall",
             f"- Rows: `{summary.total_rows}` (valid=`{total_valid}`, parse_errors=`{summary.parse_error_rows}`)",
+            f"- sessions_with_routing_events: `{summary.sessions_with_routing_events}`",
             f"- Structured OK: `{summary.structured_ok_count}` ({ok_rate:.1f}%)",
             f"- Fallback: `{summary.fallback_count}` ({fallback_rate:.1f}%)",
             "",
@@ -1617,6 +1624,7 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         "",
         "## Routing",
         f"- structured_daily_ok rate: `{routing_ok_rate:.1f}%` (valid=`{routing_valid}`)",
+        f"- sessions_with_routing_events: `{routing.sessions_with_routing_events}`",
         f"- top fallback reasons: `{', '.join(list(routing.fallback_reason_counts.keys())[:3]) if routing.fallback_reason_counts else 'none'}`",
         "",
         "## Guard / Conflict",

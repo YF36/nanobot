@@ -131,9 +131,9 @@ def test_summarize_daily_routing_metrics_counts_and_reasons(tmp_path: Path) -> N
         _obs_file(memory_dir, "daily-routing-metrics.jsonl"),
         "\n".join(
             [
-                '{"date":"2026-02-27","structured_daily_ok":true,"fallback_reason":"ok"}',
-                '{"date":"2026-02-27","structured_daily_ok":false,"fallback_reason":"missing"}',
-                '{"date":"2026-02-28","structured_daily_ok":false,"fallback_reason":"invalid_type:topics"}',
+                '{"session_key":"s1","date":"2026-02-27","structured_daily_ok":true,"fallback_reason":"ok"}',
+                '{"session_key":"s1","date":"2026-02-27","structured_daily_ok":false,"fallback_reason":"missing"}',
+                '{"session_key":"s2","date":"2026-02-28","structured_daily_ok":false,"fallback_reason":"invalid_type:topics"}',
                 "not-json",
             ]
         )
@@ -146,6 +146,7 @@ def test_summarize_daily_routing_metrics_counts_and_reasons(tmp_path: Path) -> N
     assert summary.parse_error_rows == 1
     assert summary.structured_ok_count == 1
     assert summary.fallback_count == 2
+    assert summary.sessions_with_routing_events == 2
     assert summary.fallback_reason_counts["missing"] == 1
     assert summary.fallback_reason_counts["invalid_type:topics"] == 1
     assert summary.by_date["2026-02-27"]["total"] == 2
@@ -153,6 +154,7 @@ def test_summarize_daily_routing_metrics_counts_and_reasons(tmp_path: Path) -> N
     assert summary.by_date["2026-02-28"]["fallback"] == 1
     rendered = render_daily_routing_metrics_markdown(summary)
     assert "## Suggested Fixes" in rendered
+    assert "sessions_with_routing_events: `2`" in rendered
     assert "invalid_type:topics" in rendered
     assert "should be `string[]`" in rendered
 
@@ -606,6 +608,7 @@ def test_render_memory_observability_dashboard_contains_sections(tmp_path: Path)
     assert "# Memory Observability Dashboard" in text
     assert "## Quality Snapshot" in text
     assert "## Routing" in text
+    assert "sessions_with_routing_events" in text
     assert "## Pruning Stage Distribution" in text
     assert "## Cleanup Conversion Traceability" in text
     assert "latest cleanup run" in text

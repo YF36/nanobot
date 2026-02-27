@@ -189,6 +189,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 字段覆盖：`structured_daily_ok`、`fallback_used`、`fallback_reason`、`structured_keys`、`structured_bullet_count`、`session_key`、`date`、`ts`。
 - 用途：支持对 `structured_daily_ok` 命中率和 `fallback_reason` 分布做离线统计，不改变主流程行为。
 - 已实施：`nanobot memory-audit --metrics-summary` 汇总输出（含总体命中率、fallback reason 分布、按天统计）。
+- 已增强：routing 指标汇总新增 `sessions_with_routing_events`（区分“事件集中在少数会话”与“多会话普遍退化”）。
 - 已实施：`nanobot memory-audit --metrics-out <path>` 可导出指标汇总 Markdown。
 - 已实施：fallback reason 纠偏建议映射（`metrics-summary` 中自动给出 top reason 对应修复建议）。
 - 已增强：当 `structured_daily_ok` 命中率低于阈值（当前 60%）时，`metrics-summary` 与 dashboard 会给出 prompt/serializer 收敛建议。
