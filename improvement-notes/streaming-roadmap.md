@@ -10,6 +10,31 @@
 
 ---
 
+## 当前落地状态（截至 2026-02-27）
+
+- `S-Stream1`：已落地（最小版）
+  - provider 新增可选 `stream_chat()` 抽象并接入主执行链路
+  - `OpenAICodexProvider` 已支持文本增量流式输出
+  - `TurnRunner` 已支持流式消费与回退路径
+- `S-Stream2`：已落地（最小版）
+  - 内部事件模型已新增 `message_delta`
+  - turn summary 已增加流式相关统计字段（如 delta 次数/字符数）
+- `S-Stream3`：部分落地（最小版）
+  - 已支持 progress 消息限流上限（每 turn 最大消息数）
+  - 已支持可选“流式结束标记”消息（默认关闭）
+  - 渠道“单条消息编辑式流式”尚未落地
+
+代表性提交（streaming 主线）：
+
+- `9c38a78`：S-Stream1 provider/runner 最小流式闭环
+- `fc92176`：流式 progress flush 行为可配置
+- `b808dde`：引入 `message_delta` 事件
+- `30c6558`：summary 增加 message delta 统计
+- `2538aa9`：每 turn progress 消息上限
+- `6f9d791`：可选 stream done marker
+
+---
+
 ## 当前状态（基线）
 
 ### 已有能力（可复用）
@@ -88,9 +113,9 @@
 
 ---
 
-## Phase S-Stream1（最小可用）
+## Phase S-Stream1（最小可用，已落地）
 
-### S-Stream1 目标
+### S-Stream1 目标（状态：已落地，最小版）
 
 - 新增 provider 流式抽象（可选）
 - `OpenAICodexProvider` 实现 `stream_chat()`
@@ -222,9 +247,9 @@
 
 ---
 
-## Phase S-Stream2（事件模型增强）
+## Phase S-Stream2（事件模型增强，已落地）
 
-### S-Stream2 目标
+### S-Stream2 目标（状态：已落地，最小版）
 
 - 把“流式文本输出”纳入内部事件模型（不再只靠 `on_progress`）
 - 保持现有 turn/tool 事件兼容
@@ -255,9 +280,9 @@
 
 ---
 
-## Phase S-Stream3（渠道体验优化）
+## Phase S-Stream3（渠道体验优化，部分落地）
 
-### S-Stream3 目标
+### S-Stream3 目标（状态：部分落地，最小版）
 
 - 在不改变核心流式语义的前提下，提升渠道端体验
 - 按渠道能力差异做分层实现
@@ -267,12 +292,14 @@
 1. 默认路径（兼容）
 - 继续发送 progress 多条消息
 - 所有渠道可用，成本最低
+- 已补充每 turn 最大 progress 消息数限制，避免刷屏
 
 2. 增强路径（按渠道）
 - 支持消息编辑/替换的渠道：
   - 用“单条消息不断更新”实现更像 ChatGPT 的体验
 - 不支持编辑的渠道：
   - 保持 progress 多条 + 最终完整答案
+- 当前已落地可选 stream done marker（默认关闭），用于在不改消息编辑能力前提供可感知的流式收尾
 
 3. 节流与合并策略
 - 渠道层可配置：
