@@ -1507,6 +1507,8 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         "",
         "## Guard / Conflict",
         f"- memory_update guard events: `{max(0, guard.total_rows - guard.parse_error_rows)}`",
+        f"- guard avg_current_memory_chars: `{guard.avg_current_memory_chars}`",
+        f"- guard avg_returned_memory_chars: `{guard.avg_returned_memory_chars}`",
         f"- memory_update sanitize events: `{max(0, sanitize.total_rows - sanitize.parse_error_rows)}`",
         f"- sanitize removed_recent_topic_sections(total): `{sanitize.total_recent_topic_sections_removed}`",
         f"- sanitize removed_transient_status_lines(total): `{sanitize.total_transient_status_lines_removed}`",
@@ -1548,6 +1550,8 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         lines.append("- Inspect fallback fix hints via: `nanobot memory-audit --metrics-summary`")
     if max(0, guard.total_rows - guard.parse_error_rows) > 0:
         lines.append("- Review guard reasons: `nanobot memory-audit --guard-metrics-summary`")
+    if guard.avg_current_memory_chars > 0 and guard.avg_returned_memory_chars > int(guard.avg_current_memory_chars * 1.6):
+        lines.append("- Guard shows oversized candidate trend; tighten consolidation prompt to return concise long-term memory updates.")
     if max(0, sanitize.total_rows - sanitize.parse_error_rows) > 0:
         lines.append("- Review sanitize hits: `nanobot memory-audit --sanitize-metrics-summary`")
     if sanitize.total_transient_status_lines_removed >= 20:
