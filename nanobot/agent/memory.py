@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -131,6 +132,12 @@ class MemoryStore:
         ("language", re.compile(r"(语言|language)", re.IGNORECASE)),
         ("communication_style", re.compile(r"(沟通风格|communication style)", re.IGNORECASE)),
     )
+
+    @dataclass
+    class _ChunkProcessResult:
+        status: str  # processed | retry_smaller | fatal
+        processed_count: int = 0
+        next_chunk: list[dict] | None = None
 
     def __init__(self, workspace: Path):
         self.memory_dir = ensure_dir(workspace / "memory")
@@ -606,7 +613,8 @@ class MemoryStore:
             "Do NOT copy recent discussion topics, knowledge-answer content, long summaries, tables, or tool outputs into memory_update; "
             "those belong in history_entry only. Temporary system/API error statuses, one-off incidents, and dated operational notes "
             "should usually stay out of memory_update (or be reduced to a durable configuration fact only). "
-            "Optionally include daily_sections with concise bullets for Topics/Decisions/Tool Activity/Open Questions."
+            "Prefer including daily_sections with concise bullets for Topics/Decisions/Tool Activity/Open Questions "
+            "whenever history_entry has meaningful content; only omit a section when there is truly no relevant bullet."
         )
         if not strict_tool_call:
             return base
@@ -950,190 +958,21 @@ class MemoryStore:
 
                 # Retry with smaller prefixes if provider still reports context overflow.
                 while True:
-                    lines = self._format_consolidation_lines(chunk)
-                    if not lines:
-                        # Nothing useful to summarize; just mark the messages as processed.
-                        processed_count += len(chunk)
-                        pending = pending[len(chunk):]
-                        if not archive_all:
-                            session.last_consolidated = min(target_last, start_index + processed_count)
-                        break
-
-                    prompt_memory, memory_truncated = self._fit_memory_context_by_soft_budget(current_memory, lines)
-                    if memory_truncated:
-                        logger.warning(
-                            "Memory consolidation prompt truncating long-term memory context",
-                            memory_chars=len(current_memory),
-                            prompt_memory_chars=len(prompt_memory),
-                            chunk_messages=len(chunk),
-                        )
-                    prompt = self._build_consolidation_prompt(prompt_memory, lines)
-                    response = None
-                    for attempt in range(self._CONSOLIDATION_TOOLCALL_RETRIES + 1):
-                        strict_retry = attempt > 0
-                        response = await provider.chat(
-                            messages=[
-                                {"role": "system", "content": self._consolidation_system_prompt(strict_tool_call=strict_retry)},
-                                {"role": "user", "content": prompt},
-                            ],
-                            tools=_SAVE_MEMORY_TOOL,
-                            model=model,
-                            temperature=0.0,
-                        )
-
-                        if response.has_tool_calls:
-                            break
-                        if getattr(response, "finish_reason", "") == "error":
-                            break
-                        if attempt < self._CONSOLIDATION_TOOLCALL_RETRIES:
-                            logger.warning(
-                                "Memory consolidation response missing save_memory tool call, retrying",
-                                retry=attempt + 1,
-                            )
-
-                    assert response is not None
-
-                    if getattr(response, "finish_reason", "") == "error" and self._is_context_length_error(response.content):
-                        if len(chunk) <= 1:
-                            logger.warning("Memory consolidation failed: prompt exceeds context even for single message")
-                            return False
-                        chunk = chunk[: max(1, len(chunk) // 2)]
+                    chunk_result = await self._process_chunk(
+                        session=session,
+                        provider=provider,
+                        model=model,
+                        chunk=chunk,
+                        current_memory=current_memory,
+                    )
+                    if chunk_result.status == "retry_smaller":
+                        chunk = chunk_result.next_chunk or chunk[: max(1, len(chunk) // 2)]
                         continue
-
-                    if not response.has_tool_calls:
-                        if getattr(response, "finish_reason", "") == "error":
-                            logger.warning("Memory consolidation LLM call failed", error=response.content or "(empty)")
-                        else:
-                            logger.warning("Memory consolidation: LLM did not call save_memory, skipping")
+                    if chunk_result.status == "fatal":
                         return False
 
-                    args = response.tool_calls[0].arguments
-                    if isinstance(args, str):
-                        try:
-                            args = json.loads(args)
-                        except Exception:
-                            logger.warning("Memory consolidation: failed to parse tool call arguments JSON")
-                            return False
-                    if not isinstance(args, dict):
-                        logger.warning(
-                            "Memory consolidation: unexpected arguments type",
-                            arguments_type=type(args).__name__,
-                        )
-                        return False
-                    entry = args.get("history_entry")
-                    entry_text, entry_reason = self._normalize_history_entry(entry)
-                    if entry_text is not None:
-                        self.append_history(entry_text)
-                        date_str = self._history_entry_date(entry_text)
-                        raw_daily_sections = args.get("daily_sections")
-                        _, structured_daily_ok, structured_daily_details = self.append_daily_sections_detailed(
-                            date_str,
-                            raw_daily_sections,
-                        )
-                        if not structured_daily_ok:
-                            self.append_daily_history_entry(entry_text)
-                        logger.debug(
-                            "Memory daily routing decision",
-                            date=date_str,
-                            structured_daily_ok=structured_daily_ok,
-                            fallback_used=(not structured_daily_ok),
-                            fallback_reason=structured_daily_details["reason"],
-                            structured_keys=structured_daily_details["keys"],
-                            structured_bullet_count=structured_daily_details["bullet_count"],
-                        )
-                        self._append_daily_routing_metric(
-                            session_key=session.key,
-                            date_str=date_str,
-                            structured_daily_ok=structured_daily_ok,
-                            fallback_reason=str(structured_daily_details["reason"]),
-                            structured_keys=list(structured_daily_details["keys"]),
-                            structured_bullet_count=int(structured_daily_details["bullet_count"]),
-                        )
-                    else:
-                        logger.warning(
-                            "Memory consolidation skipped history_entry due to quality gate",
-                            reason=entry_reason,
-                        )
-                    if update := args.get("memory_update"):
-                        if not isinstance(update, str):
-                            update = json.dumps(update, ensure_ascii=False)
-                        update, sanitize_details = self._sanitize_memory_update_detailed(update, current_memory)
-                        if (
-                            sanitize_details["removed_sections"]
-                            or sanitize_details["removed_transient_status_line_count"]
-                            or sanitize_details["removed_duplicate_bullet_count"]
-                        ):
-                            logger.warning(
-                                "Memory consolidation sanitized long-term memory update",
-                                removed_sections=sanitize_details["removed_sections"],
-                                removed_recent_topic_sections=sanitize_details["removed_recent_topic_sections"],
-                                removed_transient_status_sections=sanitize_details["removed_transient_status_sections"],
-                                removed_transient_status_line_count=sanitize_details["removed_transient_status_line_count"],
-                                removed_duplicate_bullet_count=sanitize_details["removed_duplicate_bullet_count"],
-                                recent_topic_section_samples=sanitize_details["recent_topic_section_samples"],
-                                transient_status_line_samples=sanitize_details["transient_status_line_samples"],
-                                duplicate_bullet_section_samples=sanitize_details["duplicate_bullet_section_samples"],
-                            )
-                            self._append_memory_update_sanitize_metric(
-                                session_key=session.key,
-                                removed_recent_topic_section_count=len(
-                                    list(sanitize_details["removed_recent_topic_sections"])
-                                ),
-                                removed_transient_status_line_count=int(
-                                    sanitize_details["removed_transient_status_line_count"]
-                                ),
-                                removed_duplicate_bullet_count=int(
-                                    sanitize_details["removed_duplicate_bullet_count"]
-                                ),
-                                removed_recent_topic_sections=list(sanitize_details["removed_recent_topic_sections"]),
-                                removed_transient_status_sections=list(
-                                    sanitize_details["removed_transient_status_sections"]
-                                ),
-                                removed_duplicate_bullet_sections=list(
-                                    sanitize_details["duplicate_bullet_section_samples"]
-                                ),
-                            )
-                        if memory_truncated:
-                            logger.warning(
-                                "Skipping memory_update write because long-term memory context was truncated",
-                                current_memory_chars=len(current_memory),
-                                returned_memory_chars=len(update),
-                            )
-                        elif update != current_memory:
-                            guard_reason = self._memory_update_guard_reason(current_memory, update)
-                            if guard_reason:
-                                logger.warning(
-                                    "Skipping memory_update write due to guard",
-                                    reason=guard_reason,
-                                    current_memory_chars=len(current_memory),
-                                    returned_memory_chars=len(update),
-                                )
-                                self._append_memory_update_guard_metric(
-                                    session_key=session.key,
-                                    reason=guard_reason,
-                                    current_memory_chars=len(current_memory),
-                                    returned_memory_chars=len(update),
-                                    candidate_preview=self._truncate_log_sample(update),
-                                )
-                            else:
-                                conflicts = self._detect_preference_conflicts(current_memory, update)
-                                for conflict in conflicts:
-                                    logger.warning(
-                                        "Memory preference conflict detected",
-                                        key=conflict["conflict_key"],
-                                        old_value=conflict["old_value"],
-                                        new_value=conflict["new_value"],
-                                    )
-                                    self._append_memory_conflict_metric(
-                                        session_key=session.key,
-                                        conflict_key=conflict["conflict_key"],
-                                        old_value=conflict["old_value"],
-                                        new_value=conflict["new_value"],
-                                    )
-                                self.write_long_term(update)
-
-                    processed_count += len(chunk)
-                    pending = pending[len(chunk):]
+                    processed_count += chunk_result.processed_count
+                    pending = pending[chunk_result.processed_count:]
                     if not archive_all:
                         # Process at most one chunk per normal pass to keep latency bounded.
                         session.last_consolidated = min(target_last, start_index + processed_count)
@@ -1162,3 +1001,234 @@ class MemoryStore:
         except Exception:
             logger.exception("Memory consolidation failed")
             return False
+
+    async def _call_consolidation_llm(
+        self,
+        *,
+        provider: LLMProvider,
+        model: str,
+        prompt: str,
+    ):
+        response = None
+        for attempt in range(self._CONSOLIDATION_TOOLCALL_RETRIES + 1):
+            strict_retry = attempt > 0
+            response = await provider.chat(
+                messages=[
+                    {"role": "system", "content": self._consolidation_system_prompt(strict_tool_call=strict_retry)},
+                    {"role": "user", "content": prompt},
+                ],
+                tools=_SAVE_MEMORY_TOOL,
+                model=model,
+                temperature=0.0,
+            )
+
+            if response.has_tool_calls:
+                break
+            if getattr(response, "finish_reason", "") == "error":
+                break
+            if attempt < self._CONSOLIDATION_TOOLCALL_RETRIES:
+                logger.warning(
+                    "Memory consolidation response missing save_memory tool call, retrying",
+                    retry=attempt + 1,
+                )
+
+        return response
+
+    @staticmethod
+    def _extract_save_memory_args(response) -> dict | None:
+        args = response.tool_calls[0].arguments
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                logger.warning("Memory consolidation: failed to parse tool call arguments JSON")
+                return None
+        if not isinstance(args, dict):
+            logger.warning(
+                "Memory consolidation: unexpected arguments type",
+                arguments_type=type(args).__name__,
+            )
+            return None
+        return args
+
+    def _apply_save_memory_tool_call(
+        self,
+        *,
+        session: Session,
+        args: dict,
+        current_memory: str,
+        memory_truncated: bool,
+    ) -> None:
+        entry = args.get("history_entry")
+        entry_text, entry_reason = self._normalize_history_entry(entry)
+        if entry_text is not None:
+            self.append_history(entry_text)
+            date_str = self._history_entry_date(entry_text)
+            raw_daily_sections = args.get("daily_sections")
+            _, structured_daily_ok, structured_daily_details = self.append_daily_sections_detailed(
+                date_str,
+                raw_daily_sections,
+            )
+            if not structured_daily_ok:
+                self.append_daily_history_entry(entry_text)
+            logger.debug(
+                "Memory daily routing decision",
+                date=date_str,
+                structured_daily_ok=structured_daily_ok,
+                fallback_used=(not structured_daily_ok),
+                fallback_reason=structured_daily_details["reason"],
+                structured_keys=structured_daily_details["keys"],
+                structured_bullet_count=structured_daily_details["bullet_count"],
+            )
+            self._append_daily_routing_metric(
+                session_key=session.key,
+                date_str=date_str,
+                structured_daily_ok=structured_daily_ok,
+                fallback_reason=str(structured_daily_details["reason"]),
+                structured_keys=list(structured_daily_details["keys"]),
+                structured_bullet_count=int(structured_daily_details["bullet_count"]),
+            )
+        else:
+            logger.warning(
+                "Memory consolidation skipped history_entry due to quality gate",
+                reason=entry_reason,
+            )
+
+        if not (update := args.get("memory_update")):
+            return
+        if not isinstance(update, str):
+            update = json.dumps(update, ensure_ascii=False)
+        update, sanitize_details = self._sanitize_memory_update_detailed(update, current_memory)
+        if (
+            sanitize_details["removed_sections"]
+            or sanitize_details["removed_transient_status_line_count"]
+            or sanitize_details["removed_duplicate_bullet_count"]
+        ):
+            logger.warning(
+                "Memory consolidation sanitized long-term memory update",
+                removed_sections=sanitize_details["removed_sections"],
+                removed_recent_topic_sections=sanitize_details["removed_recent_topic_sections"],
+                removed_transient_status_sections=sanitize_details["removed_transient_status_sections"],
+                removed_transient_status_line_count=sanitize_details["removed_transient_status_line_count"],
+                removed_duplicate_bullet_count=sanitize_details["removed_duplicate_bullet_count"],
+                recent_topic_section_samples=sanitize_details["recent_topic_section_samples"],
+                transient_status_line_samples=sanitize_details["transient_status_line_samples"],
+                duplicate_bullet_section_samples=sanitize_details["duplicate_bullet_section_samples"],
+            )
+            self._append_memory_update_sanitize_metric(
+                session_key=session.key,
+                removed_recent_topic_section_count=len(
+                    list(sanitize_details["removed_recent_topic_sections"])
+                ),
+                removed_transient_status_line_count=int(
+                    sanitize_details["removed_transient_status_line_count"]
+                ),
+                removed_duplicate_bullet_count=int(
+                    sanitize_details["removed_duplicate_bullet_count"]
+                ),
+                removed_recent_topic_sections=list(sanitize_details["removed_recent_topic_sections"]),
+                removed_transient_status_sections=list(
+                    sanitize_details["removed_transient_status_sections"]
+                ),
+                removed_duplicate_bullet_sections=list(
+                    sanitize_details["duplicate_bullet_section_samples"]
+                ),
+            )
+        if memory_truncated:
+            logger.warning(
+                "Skipping memory_update write because long-term memory context was truncated",
+                current_memory_chars=len(current_memory),
+                returned_memory_chars=len(update),
+            )
+            return
+        if update == current_memory:
+            return
+        guard_reason = self._memory_update_guard_reason(current_memory, update)
+        if guard_reason:
+            logger.warning(
+                "Skipping memory_update write due to guard",
+                reason=guard_reason,
+                current_memory_chars=len(current_memory),
+                returned_memory_chars=len(update),
+            )
+            self._append_memory_update_guard_metric(
+                session_key=session.key,
+                reason=guard_reason,
+                current_memory_chars=len(current_memory),
+                returned_memory_chars=len(update),
+                candidate_preview=self._truncate_log_sample(update),
+            )
+            return
+
+        conflicts = self._detect_preference_conflicts(current_memory, update)
+        for conflict in conflicts:
+            logger.warning(
+                "Memory preference conflict detected",
+                key=conflict["conflict_key"],
+                old_value=conflict["old_value"],
+                new_value=conflict["new_value"],
+            )
+            self._append_memory_conflict_metric(
+                session_key=session.key,
+                conflict_key=conflict["conflict_key"],
+                old_value=conflict["old_value"],
+                new_value=conflict["new_value"],
+            )
+        self.write_long_term(update)
+
+    async def _process_chunk(
+        self,
+        *,
+        session: Session,
+        provider: LLMProvider,
+        model: str,
+        chunk: list[dict],
+        current_memory: str,
+    ) -> _ChunkProcessResult:
+        lines = self._format_consolidation_lines(chunk)
+        if not lines:
+            # Nothing useful to summarize; just mark the messages as processed.
+            return self._ChunkProcessResult(status="processed", processed_count=len(chunk))
+
+        prompt_memory, memory_truncated = self._fit_memory_context_by_soft_budget(current_memory, lines)
+        if memory_truncated:
+            logger.warning(
+                "Memory consolidation prompt truncating long-term memory context",
+                memory_chars=len(current_memory),
+                prompt_memory_chars=len(prompt_memory),
+                chunk_messages=len(chunk),
+            )
+        prompt = self._build_consolidation_prompt(prompt_memory, lines)
+        response = await self._call_consolidation_llm(
+            provider=provider,
+            model=model,
+            prompt=prompt,
+        )
+        assert response is not None
+
+        if getattr(response, "finish_reason", "") == "error" and self._is_context_length_error(response.content):
+            if len(chunk) <= 1:
+                logger.warning("Memory consolidation failed: prompt exceeds context even for single message")
+                return self._ChunkProcessResult(status="fatal")
+            return self._ChunkProcessResult(
+                status="retry_smaller",
+                next_chunk=chunk[: max(1, len(chunk) // 2)],
+            )
+
+        if not response.has_tool_calls:
+            if getattr(response, "finish_reason", "") == "error":
+                logger.warning("Memory consolidation LLM call failed", error=response.content or "(empty)")
+            else:
+                logger.warning("Memory consolidation: LLM did not call save_memory, skipping")
+            return self._ChunkProcessResult(status="fatal")
+
+        args = self._extract_save_memory_args(response)
+        if args is None:
+            return self._ChunkProcessResult(status="fatal")
+        self._apply_save_memory_tool_call(
+            session=session,
+            args=args,
+            current_memory=current_memory,
+            memory_truncated=memory_truncated,
+        )
+        return self._ChunkProcessResult(status="processed", processed_count=len(chunk))

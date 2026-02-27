@@ -210,6 +210,7 @@ def test_consolidation_system_prompt_restricts_memory_update_to_long_term_facts(
     assert "long-term stable facts only" in prompt
     assert "Do NOT copy recent discussion topics" in prompt
     assert "history_entry only" in prompt
+    assert "Prefer including daily_sections" in prompt
 
 
 def test_save_memory_tool_schema_supports_optional_daily_sections() -> None:
