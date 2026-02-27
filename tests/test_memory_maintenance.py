@@ -389,6 +389,21 @@ def test_render_memory_observability_dashboard_warns_on_high_non_decision_drop(t
     assert "ratio is high" in text
 
 
+def test_render_memory_observability_dashboard_warns_on_missing_conversion_run_id(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
+    _write(memory_dir / "HISTORY.md", "")
+    _write(memory_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n")
+    _write(
+        memory_dir / "cleanup-conversion-index.jsonl",
+        '{"action":"dedupe","source_file":"2020-01-01.md"}\n',
+    )
+
+    text = render_memory_observability_dashboard(memory_dir)
+    assert "Conversion index rows found without `run_id`" in text
+
+
 def test_apply_conservative_cleanup_scopes_recent_daily_files(tmp_path: Path) -> None:
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
