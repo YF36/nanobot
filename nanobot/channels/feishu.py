@@ -266,6 +266,7 @@ class FeishuChannel(BaseChannel):
     
     name = "feishu"
     supports_progress_message_editing = True
+    _MAX_PROGRESS_TRACKED_MESSAGES = 512
     
     def __init__(self, config: FeishuConfig, bus: MessageBus, rate_limiter=None):
         super().__init__(config, bus, rate_limiter=rate_limiter)
@@ -275,7 +276,7 @@ class FeishuChannel(BaseChannel):
         self._ws_client: Any = None
         self._ws_thread: threading.Thread | None = None
         self._processed_message_ids: OrderedDict[str, None] = OrderedDict()  # Ordered dedup cache
-        self._progress_message_ids: dict[tuple[str, str], str] = {}
+        self._progress_message_ids: OrderedDict[tuple[str, str], str] = OrderedDict()
         self._loop: asyncio.AbstractEventLoop | None = None
     
     async def start(self) -> None:
@@ -683,6 +684,12 @@ class FeishuChannel(BaseChannel):
             return None
         return (str(msg.chat_id), origin_message_id)
 
+    def _remember_progress_message_id(self, key: tuple[str, str], message_id: str) -> None:
+        self._progress_message_ids[key] = message_id
+        self._progress_message_ids.move_to_end(key, last=True)
+        while len(self._progress_message_ids) > self._MAX_PROGRESS_TRACKED_MESSAGES:
+            self._progress_message_ids.popitem(last=False)
+
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Feishu, including media (images/files) if present."""
         if not self._client:
@@ -733,7 +740,7 @@ class FeishuChannel(BaseChannel):
                         receive_id_type, msg.chat_id, "interactive", card_content,
                     )
                     if sent_message_id:
-                        self._progress_message_ids[progress_key] = sent_message_id
+                        self._remember_progress_message_id(progress_key, sent_message_id)
                         return
                     logger.warning("Progress card send failed, falling back to plain text")
                     sent_message_id = await loop.run_in_executor(
@@ -741,7 +748,7 @@ class FeishuChannel(BaseChannel):
                         receive_id_type, msg.chat_id, "text", json.dumps({"text": msg.content}, ensure_ascii=False),
                     )
                     if sent_message_id:
-                        self._progress_message_ids[progress_key] = sent_message_id
+                        self._remember_progress_message_id(progress_key, sent_message_id)
                     return
 
                 if msg.metadata.get("_progress_finalize_edit") and progress_key:

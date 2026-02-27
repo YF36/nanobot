@@ -22,7 +22,8 @@
 - `S-Stream3`：部分落地（最小版）
   - 已支持 progress 消息限流上限（每 turn 最大消息数）
   - 已支持可选“流式结束标记”消息（默认关闭）
-  - 渠道“单条消息编辑式流式”尚未落地
+  - 已支持 Feishu 渠道最小“单条消息编辑式流式”（配置开关默认关闭）
+  - 其他渠道仍走 progress 多条消息兼容路径
 
 代表性提交（streaming 主线）：
 
@@ -32,6 +33,7 @@
 - `30c6558`：summary 增加 message delta 统计
 - `2538aa9`：每 turn progress 消息上限
 - `6f9d791`：可选 stream done marker
+- `f4894ab`：S-Stream3 渠道消息编辑流式最小实现（Feishu）
 
 ---
 
@@ -300,6 +302,9 @@
 - 不支持编辑的渠道：
   - 保持 progress 多条 + 最终完整答案
 - 当前已落地可选 stream done marker（默认关闭），用于在不改消息编辑能力前提供可感知的流式收尾
+- 当前已落地最小编辑流式路径：
+  - 配置 `channels.progress_edit_streaming_enabled=true` 且渠道声明支持编辑能力时，progress 走“首条发送 + 后续编辑 + 最终收口编辑”
+  - 当前仅 Feishu 接入该能力，其它渠道保持兼容路径
 
 3. 节流与合并策略
 - 渠道层可配置：
