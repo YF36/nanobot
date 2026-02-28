@@ -101,3 +101,6 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "golden: golden output regression fixtures for memory pipeline",
+]

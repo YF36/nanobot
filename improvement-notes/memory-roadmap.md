@@ -304,6 +304,11 @@ R0 进展（2026-02-28）：
   - `ContextBuilder` 的 `context-trace.jsonl` 追加写入
   - `memory_maintenance` 的 JSONL 追加与 cleanup 文件覆盖写入
 - 已补充基础测试：`tests/test_atomic_file_io.py`
+- 已补充 golden 回归最小样本：
+  - `tests/fixtures/memory_golden/routing_missing_daily_sections.json`
+  - `tests/fixtures/memory_golden/sanitize_recent_topic_section.json`
+  - `tests/fixtures/memory_golden/guard_heading_retention_low.json`
+  - 对应测试：`tests/test_memory_golden.py`（`pytest.mark.golden`）
 
 ### Phase R1：模块拆分 + Pipeline 抽象（行为不变）
 

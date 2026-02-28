@@ -1,0 +1,6 @@
+{
+  "name": "guard_heading_retention_low",
+  "current_memory": "# Long-term Memory\n\n## Preferences\n- 中文沟通\n\n## Project Context\n- nanobot memory refactor\n\n## Constraints\n- local-first\n",
+  "candidate_update": "# Long-term Memory\n\n## Preferences\n- 中文沟通\n",
+  "expected_guard_reason": "heading_retention_too_low"
+}

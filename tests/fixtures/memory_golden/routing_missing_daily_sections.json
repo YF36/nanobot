@@ -1,0 +1,7 @@
+{
+  "name": "routing_missing_daily_sections",
+  "entry_text": "[2026-02-25 10:00] Ran exec command to inspect logs.",
+  "raw_daily_sections": null,
+  "expected_structured_source": "synthesized_missing",
+  "expected_model_daily_sections_reason": "missing"
+}

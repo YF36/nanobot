@@ -1,0 +1,15 @@
+{
+  "name": "sanitize_recent_topic_section",
+  "current_memory": "# Long-term Memory\n\n## Preferences\n- 中文沟通\n",
+  "candidate_update": "# Long-term Memory\n\n## Preferences\n- 中文沟通\n\n## 今天讨论的主题 (2026-02-25)\n- 动漫剧情\n",
+  "expected_removed_recent_topic_section_count": 1,
+  "expected_removed_transient_status_line_count": 0,
+  "expected_removed_duplicate_bullet_count": 0,
+  "expected_output_contains": [
+    "## Preferences"
+  ],
+  "expected_output_not_contains": [
+    "今天讨论的主题",
+    "动漫剧情"
+  ]
+}
