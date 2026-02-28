@@ -275,6 +275,15 @@ def memory_audit(
         "",
         help="Optional memory conflict metrics markdown output path",
     ),
+    outcome_metrics_summary: bool = typer.Option(
+        False,
+        "--outcome-metrics-summary",
+        help="Show memory_update outcome metrics summary",
+    ),
+    outcome_metrics_out: str = typer.Option(
+        "",
+        help="Optional memory_update outcome metrics markdown output path",
+    ),
     context_trace_summary: bool = typer.Option(
         False,
         "--context-trace-summary",
@@ -443,6 +452,7 @@ def memory_audit(
         render_cleanup_conversion_index_markdown,
         render_context_trace_markdown,
         render_memory_conflict_metrics_markdown,
+        render_memory_update_outcomes_markdown,
         render_daily_routing_metrics_markdown,
         render_memory_update_guard_metrics_markdown,
         render_memory_update_sanitize_metrics_markdown,
@@ -455,6 +465,7 @@ def memory_audit(
         summarize_cleanup_conversion_index,
         summarize_context_trace,
         summarize_memory_conflict_metrics,
+        summarize_memory_update_outcomes,
         summarize_memory_update_guard_metrics,
         summarize_memory_update_sanitize_metrics,
         summarize_daily_routing_metrics,
@@ -611,6 +622,17 @@ def memory_audit(
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(conflict_md, encoding="utf-8")
             console.print(f"[green]✓[/green] Wrote conflict metrics summary: {out}")
+
+    if outcome_metrics_summary or outcome_metrics_out:
+        outcome_metrics = summarize_memory_update_outcomes(target_dir)
+        outcome_md = render_memory_update_outcomes_markdown(outcome_metrics)
+        if outcome_metrics_summary:
+            console.print(Markdown(outcome_md))
+        if outcome_metrics_out:
+            out = Path(outcome_metrics_out).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(outcome_md, encoding="utf-8")
+            console.print(f"[green]✓[/green] Wrote outcome metrics summary: {out}")
 
     if context_trace_summary or context_trace_out:
         trace_summary = summarize_context_trace(target_dir)
@@ -876,6 +898,7 @@ def memory_observe(
         render_context_trace_markdown,
         render_memory_observability_dashboard,
         render_memory_conflict_metrics_markdown,
+        render_memory_update_outcomes_markdown,
         render_daily_routing_metrics_markdown,
         render_memory_update_guard_metrics_markdown,
         render_memory_update_sanitize_metrics_markdown,
@@ -885,6 +908,7 @@ def memory_observe(
         summarize_cleanup_stage_metrics,
         summarize_context_trace,
         summarize_memory_conflict_metrics,
+        summarize_memory_update_outcomes,
         summarize_daily_routing_metrics,
         summarize_memory_update_guard_metrics,
         summarize_memory_update_sanitize_metrics,
@@ -906,6 +930,7 @@ def memory_observe(
     routing_md = render_daily_routing_metrics_markdown(summarize_daily_routing_metrics(target_dir))
     guard_md = render_memory_update_guard_metrics_markdown(summarize_memory_update_guard_metrics(target_dir))
     sanitize_md = render_memory_update_sanitize_metrics_markdown(summarize_memory_update_sanitize_metrics(target_dir))
+    outcome_md = render_memory_update_outcomes_markdown(summarize_memory_update_outcomes(target_dir))
     conflict_md = render_memory_conflict_metrics_markdown(summarize_memory_conflict_metrics(target_dir))
     trace_md = render_context_trace_markdown(summarize_context_trace(target_dir))
     cleanup_stage_md = render_cleanup_stage_metrics_markdown(summarize_cleanup_stage_metrics(target_dir))
@@ -928,6 +953,7 @@ def memory_observe(
     routing_path = output_dir / f"{date_prefix}-metrics-summary{suffix}.md"
     guard_path = output_dir / f"{date_prefix}-guard-metrics-summary{suffix}.md"
     sanitize_path = output_dir / f"{date_prefix}-sanitize-metrics-summary{suffix}.md"
+    outcome_path = output_dir / f"{date_prefix}-outcome-metrics-summary{suffix}.md"
     conflict_path = output_dir / f"{date_prefix}-conflict-metrics-summary{suffix}.md"
     trace_path = output_dir / f"{date_prefix}-context-trace-summary{suffix}.md"
     cleanup_stage_path = output_dir / f"{date_prefix}-cleanup-stage-summary{suffix}.md"
@@ -938,6 +964,7 @@ def memory_observe(
     routing_path.write_text(routing_md, encoding="utf-8")
     guard_path.write_text(guard_md, encoding="utf-8")
     sanitize_path.write_text(sanitize_md, encoding="utf-8")
+    outcome_path.write_text(outcome_md, encoding="utf-8")
     conflict_path.write_text(conflict_md, encoding="utf-8")
     trace_path.write_text(trace_md, encoding="utf-8")
     cleanup_stage_path.write_text(cleanup_stage_md, encoding="utf-8")
@@ -949,6 +976,7 @@ def memory_observe(
     console.print(f"[green]✓[/green] Wrote routing metrics: {routing_path}")
     console.print(f"[green]✓[/green] Wrote guard metrics: {guard_path}")
     console.print(f"[green]✓[/green] Wrote sanitize metrics: {sanitize_path}")
+    console.print(f"[green]✓[/green] Wrote outcome metrics: {outcome_path}")
     console.print(f"[green]✓[/green] Wrote conflict metrics: {conflict_path}")
     console.print(f"[green]✓[/green] Wrote context trace: {trace_path}")
     console.print(f"[green]✓[/green] Wrote cleanup stage summary: {cleanup_stage_path}")

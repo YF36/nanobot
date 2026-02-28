@@ -221,6 +221,16 @@ class CleanupDropPreviewSummary:
 
 
 @dataclass
+class MemoryUpdateOutcomeSummary:
+    metrics_file_exists: bool
+    total_rows: int
+    parse_error_rows: int
+    outcome_counts: dict[str, int]
+    by_session: dict[str, int]
+    guard_reason_counts: dict[str, int]
+
+
+@dataclass
 class JsonlLoadResult:
     total_rows: int
     parse_error_rows: int
@@ -250,6 +260,20 @@ class JsonlMetricsSummarizer:
                 continue
             rows.append(item)
         return JsonlLoadResult(total_rows=total_rows, parse_error_rows=parse_error_rows, rows=rows)
+
+
+def _priority_tag_for_cleanup_action(action: str) -> str:
+    if action in {"drop_empty"}:
+        return "P0"
+    if action in {"trim", "dedupe"}:
+        return "P1"
+    return "P2"
+
+
+def _priority_tag_for_stage(stage: str) -> str:
+    if stage in {"trim", "dedupe"}:
+        return "P1"
+    return "P2"
 
 
 def _iter_daily_files(memory_dir: Path) -> list[Path]:
@@ -609,6 +633,11 @@ def _write_cleanup_stage_metrics(memory_dir: Path, result: CleanupApplyResult) -
         "drop_tool_activity": int(result.daily_dropped_tool_activity_bullets),
         "drop_non_decision": int(result.daily_dropped_non_decision_bullets),
     }
+    priority_counts: Counter[str] = Counter()
+    for stage, count in stage_counts.items():
+        if count <= 0:
+            continue
+        priority_counts[_priority_tag_for_stage(stage)] += int(count)
     _append_jsonl(
         metrics_file,
         {
@@ -617,6 +646,7 @@ def _write_cleanup_stage_metrics(memory_dir: Path, result: CleanupApplyResult) -
             "scoped_daily_files": int(result.scoped_daily_files),
             "skipped_daily_files": int(result.skipped_daily_files),
             "stage_counts": stage_counts,
+            "priority_counts": dict(priority_counts),
             "conversion_index_rows": int(result.conversion_index_rows),
             "files_touched_count": int(len(result.touched_files)),
         },
@@ -632,6 +662,7 @@ def _write_cleanup_conversion_index(memory_dir: Path, rows: list[dict[str, objec
     for row in rows:
         payload = {"run_id": run_id, "timestamp": ts}
         payload.update(row)
+        payload["priority"] = _priority_tag_for_cleanup_action(str(row.get("action") or ""))
         _append_jsonl(index_file, payload)
     return len(rows)
 
@@ -1552,6 +1583,7 @@ def apply_daily_archive(
                 "source_file": src.name,
                 "archive_file": dest.name,
                 "bullet_count": bullet_count,
+                "priority": "P2",
             }
         )
 
@@ -1688,6 +1720,7 @@ def apply_daily_archive_compact(
                 "history_entry": entry,
                 "bullets_total": bullets_total,
                 "bullets_kept": bullets_kept,
+                "priority": "P2",
             }
         )
 
@@ -1806,6 +1839,7 @@ def apply_daily_ttl_janitor(
                 "source_file": name,
                 "bullet_count": bullet_count,
                 "action": "delete",
+                "priority": "P2",
             }
         )
 
@@ -1840,6 +1874,86 @@ def render_daily_ttl_apply_markdown(result: DailyTTLApplyResult) -> str:
     else:
         for name in result.deleted_files:
             lines.append(f"- {name}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def summarize_memory_update_outcomes(memory_dir: Path) -> MemoryUpdateOutcomeSummary:
+    metrics_file = _metrics_file_for_read(memory_dir, "memory-update-outcome.jsonl")
+    if not metrics_file.exists():
+        return MemoryUpdateOutcomeSummary(
+            metrics_file_exists=False,
+            total_rows=0,
+            parse_error_rows=0,
+            outcome_counts={},
+            by_session={},
+            guard_reason_counts={},
+        )
+
+    loaded = JsonlMetricsSummarizer.load_rows(metrics_file)
+    outcome_counter: Counter[str] = Counter()
+    session_counter: Counter[str] = Counter()
+    guard_reason_counter: Counter[str] = Counter()
+
+    for item in loaded.rows:
+        outcome = str(item.get("outcome") or "unknown")
+        session_key = str(item.get("session_key") or "unknown")
+        guard_reason = str(item.get("guard_reason") or "")
+        outcome_counter[outcome] += 1
+        session_counter[session_key] += 1
+        if guard_reason:
+            guard_reason_counter[guard_reason] += 1
+
+    return MemoryUpdateOutcomeSummary(
+        metrics_file_exists=True,
+        total_rows=loaded.total_rows,
+        parse_error_rows=loaded.parse_error_rows,
+        outcome_counts=dict(sorted(outcome_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        by_session=dict(sorted(session_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        guard_reason_counts=dict(sorted(guard_reason_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+    )
+
+
+def render_memory_update_outcomes_markdown(summary: MemoryUpdateOutcomeSummary) -> str:
+    lines = [
+        "# Memory Update Outcome Summary",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+    ]
+    if not summary.metrics_file_exists:
+        lines.extend(["- Metrics file: not found (`memory-update-outcome.jsonl`)", ""])
+        return "\n".join(lines)
+    valid = max(0, summary.total_rows - summary.parse_error_rows)
+    lines.extend(
+        [
+            "- Metrics file: found (`memory-update-outcome.jsonl`)",
+            "",
+            "## Overall",
+            f"- Rows: `{summary.total_rows}` (valid=`{valid}`, parse_errors=`{summary.parse_error_rows}`)",
+            "",
+            "## Outcome Distribution",
+        ]
+    )
+    if not summary.outcome_counts:
+        lines.append("- none")
+    else:
+        for outcome, count in summary.outcome_counts.items():
+            ratio = (count / valid * 100.0) if valid else 0.0
+            lines.append(f"- {outcome}: `{count}` ({ratio:.1f}%)")
+    lines.extend(["", "## Guard Reasons (From Outcome Rows)"])
+    if not summary.guard_reason_counts:
+        lines.append("- none")
+    else:
+        for reason, count in summary.guard_reason_counts.items():
+            lines.append(f"- {reason}: `{count}`")
+    lines.extend(["", "## Sessions (Top)"])
+    if not summary.by_session:
+        lines.append("- none")
+    else:
+        for idx, (session_key, count) in enumerate(summary.by_session.items()):
+            if idx >= 10:
+                break
+            lines.append(f"- {session_key}: `{count}`")
     lines.append("")
     return "\n".join(lines)
 
@@ -2031,6 +2145,7 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
     routing = summarize_daily_routing_metrics(memory_dir)
     guard = summarize_memory_update_guard_metrics(memory_dir)
     sanitize = summarize_memory_update_sanitize_metrics(memory_dir)
+    outcomes = summarize_memory_update_outcomes(memory_dir)
     conflict = summarize_memory_conflict_metrics(memory_dir)
     trace = summarize_context_trace(memory_dir)
     cleanup_stage = summarize_cleanup_stage_metrics(memory_dir)
@@ -2065,6 +2180,11 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         f"- top fallback reasons: `{', '.join(list(routing.fallback_reason_counts.keys())[:3]) if routing.fallback_reason_counts else 'none'}`",
         "",
         "## Guard / Conflict",
+        f"- memory_update outcomes(valid): `{max(0, outcomes.total_rows - outcomes.parse_error_rows)}`",
+        (
+            f"- top outcomes: "
+            f"`{', '.join([f'{k}:{v}' for k, v in list(outcomes.outcome_counts.items())[:3]]) if outcomes.outcome_counts else 'none'}`"
+        ),
         f"- memory_update guard events: `{max(0, guard.total_rows - guard.parse_error_rows)}`",
         f"- guard avg_current_memory_chars: `{guard.avg_current_memory_chars}`",
         f"- guard avg_returned_memory_chars: `{guard.avg_returned_memory_chars}`",
@@ -2121,6 +2241,8 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         )
     if max(0, guard.total_rows - guard.parse_error_rows) > 0:
         lines.append("- Review guard reasons: `nanobot memory-audit --guard-metrics-summary`")
+    if max(0, outcomes.total_rows - outcomes.parse_error_rows) > 0:
+        lines.append("- Review memory update outcomes: `nanobot memory-audit --outcome-metrics-summary`")
     unstructured_count = int(guard.reason_counts.get("unstructured_candidate", 0))
     date_overflow_count = int(guard.reason_counts.get("date_line_overflow", 0))
     url_overflow_count = int(guard.reason_counts.get("url_line_overflow", 0))

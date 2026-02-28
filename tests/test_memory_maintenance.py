@@ -18,6 +18,7 @@ from nanobot.memory.maintenance import (
     render_daily_archive_dry_run_markdown,
     render_cleanup_effect_markdown,
     render_memory_conflict_metrics_markdown,
+    render_memory_update_outcomes_markdown,
     render_daily_routing_metrics_markdown,
     render_memory_update_guard_metrics_markdown,
     render_memory_update_sanitize_metrics_markdown,
@@ -30,6 +31,7 @@ from nanobot.memory.maintenance import (
     summarize_cleanup_conversion_index,
     summarize_cleanup_drop_preview,
     summarize_memory_conflict_metrics,
+    summarize_memory_update_outcomes,
     summarize_memory_update_guard_metrics,
     summarize_memory_update_sanitize_metrics,
     summarize_daily_routing_metrics,
@@ -125,10 +127,12 @@ def test_apply_conservative_cleanup_trims_and_deduplicates_with_backup(tmp_path:
     conversion_index_lines = (_obs_file(memory_dir, "cleanup-conversion-index.jsonl")).read_text(encoding="utf-8").splitlines()
     assert len(conversion_index_lines) == 4
     assert '"action":"trim"' in conversion_index_lines[0] or '"action":"dedupe"' in conversion_index_lines[0]
+    assert '"priority":"P1"' in "\n".join(conversion_index_lines)
     stage_metrics_lines = (_obs_file(memory_dir, "cleanup-stage-metrics.jsonl")).read_text(encoding="utf-8").splitlines()
     assert len(stage_metrics_lines) == 1
     assert '"trim":2' in stage_metrics_lines[0]
     assert '"dedupe":2' in stage_metrics_lines[0]
+    assert '"priority_counts":{"P1":4}' in stage_metrics_lines[0]
     assert '"conversion_index_rows":4' in stage_metrics_lines[0]
 
 
@@ -413,6 +417,41 @@ def test_render_memory_conflict_metrics_markdown_handles_missing_file(tmp_path: 
     summary = summarize_memory_conflict_metrics(memory_dir)
     text = render_memory_conflict_metrics_markdown(summary)
     assert "Metrics file: not found" in text
+
+
+def test_summarize_memory_update_outcomes_counts_rows(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(
+        _obs_file(memory_dir, "memory-update-outcome.jsonl"),
+        "\n".join(
+            [
+                '{"session_key":"s1","outcome":"written","guard_reason":null}',
+                '{"session_key":"s1","outcome":"guard_rejected","guard_reason":"unstructured_candidate"}',
+                '{"session_key":"s2","outcome":"no_change","guard_reason":null}',
+                "not-json",
+            ]
+        )
+        + "\n",
+    )
+    summary = summarize_memory_update_outcomes(memory_dir)
+    assert summary.metrics_file_exists is True
+    assert summary.total_rows == 4
+    assert summary.parse_error_rows == 1
+    assert summary.outcome_counts["written"] == 1
+    assert summary.outcome_counts["guard_rejected"] == 1
+    assert summary.guard_reason_counts["unstructured_candidate"] == 1
+    text = render_memory_update_outcomes_markdown(summary)
+    assert "Memory Update Outcome Summary" in text
+    assert "guard_rejected" in text
+
+
+def test_render_memory_update_outcomes_markdown_handles_missing_file(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    summary = summarize_memory_update_outcomes(memory_dir)
+    text = render_memory_update_outcomes_markdown(summary)
+    assert "not found" in text
 
 
 def test_summarize_context_trace_reports_stage_counts_and_stability(tmp_path: Path) -> None:
@@ -983,6 +1022,7 @@ def test_apply_daily_archive_moves_candidates_and_writes_metrics(tmp_path: Path)
     assert len(lines) == 1
     assert '"source_file":"2020-01-01.md"' in lines[0]
     assert '"archive_file":"2020-01-01.md"' in lines[0]
+    assert '"priority":"P2"' in lines[0]
 
     rendered = render_daily_archive_apply_markdown(result)
     assert "Daily Archive Apply Result" in rendered
@@ -1024,6 +1064,7 @@ def test_apply_daily_archive_compact_writes_history_and_moves_file(tmp_path: Pat
     assert '"source_file":"2020-01-01.md"' in lines[0]
     assert '"bullets_total":3' in lines[0]
     assert '"bullets_kept":2' in lines[0]
+    assert '"priority":"P2"' in lines[0]
 
     rendered = render_daily_archive_compact_apply_markdown(result)
     assert "Daily Archive Compact Apply Result" in rendered
@@ -1056,5 +1097,6 @@ def test_daily_ttl_dry_run_and_apply_only_touch_archive(tmp_path: Path) -> None:
     metrics = _obs_file(memory_dir, "daily-ttl-metrics.jsonl").read_text(encoding="utf-8")
     assert '"source_file":"2020-01-01.md"' in metrics
     assert '"action":"delete"' in metrics
+    assert '"priority":"P2"' in metrics
     apply_md = render_daily_ttl_apply_markdown(applied)
     assert "Daily TTL Apply Result" in apply_md
