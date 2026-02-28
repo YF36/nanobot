@@ -148,6 +148,7 @@ class MemoryStore:
         ("language", re.compile(r"(语言|language)", re.IGNORECASE)),
         ("communication_style", re.compile(r"(沟通风格|communication style)", re.IGNORECASE)),
     )
+    _H2_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$")
 
     @dataclass
     class _ChunkProcessResult:
@@ -612,6 +613,134 @@ class MemoryStore:
             raw_daily_sections=raw_daily_sections,
             mode=self.daily_sections_mode,
         )
+
+    @classmethod
+    def _parse_memory_sections(cls, text: str) -> tuple[list[str], list[tuple[str, list[str]]]]:
+        preamble: list[str] = []
+        section_map: dict[str, list[str]] = {}
+        section_order: list[str] = []
+        current_heading: str | None = None
+        for raw_line in text.splitlines():
+            m = cls._H2_HEADING_RE.match(raw_line)
+            if m:
+                current_heading = m.group(1).strip()
+                if current_heading not in section_map:
+                    section_map[current_heading] = []
+                    section_order.append(current_heading)
+                continue
+            if current_heading is None:
+                preamble.append(raw_line)
+            else:
+                section_map[current_heading].append(raw_line)
+        sections = [(heading, section_map[heading]) for heading in section_order]
+        return preamble, sections
+
+    @classmethod
+    def _render_memory_sections(
+        cls,
+        preamble: list[str],
+        sections: list[tuple[str, list[str]]],
+    ) -> str:
+        parts: list[str] = []
+        preamble_text = "\n".join(preamble).strip("\n")
+        if preamble_text:
+            parts.append(preamble_text)
+        for heading, lines in sections:
+            body = "\n".join(lines).strip("\n")
+            if body:
+                parts.append(f"## {heading}\n{body}")
+            else:
+                parts.append(f"## {heading}")
+        rendered = "\n\n".join(parts).rstrip()
+        return rendered + ("\n" if rendered else "")
+
+    @staticmethod
+    def _normalize_bullet_line(line: str) -> str:
+        if not line.startswith("- "):
+            return ""
+        return re.sub(r"\s+", " ", line[2:].strip()).lower()
+
+    @classmethod
+    def _merge_section_lines(cls, current: list[str], candidate: list[str]) -> list[str]:
+        merged = list(current)
+        seen_line_keys: set[str] = {line.strip() for line in current if line.strip()}
+        seen_bullets: set[str] = set()
+        for line in current:
+            normalized = cls._normalize_bullet_line(line)
+            if normalized:
+                seen_bullets.add(normalized)
+
+        for line in candidate:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            normalized_bullet = cls._normalize_bullet_line(line)
+            if normalized_bullet:
+                if normalized_bullet in seen_bullets:
+                    continue
+                seen_bullets.add(normalized_bullet)
+            elif stripped in seen_line_keys:
+                continue
+            seen_line_keys.add(stripped)
+            merged.append(line)
+        return merged
+
+    @classmethod
+    def _merge_memory_update_with_current(
+        cls,
+        current_memory: str,
+        candidate_update: str,
+    ) -> tuple[str, dict[str, object]]:
+        if not current_memory.strip() or not candidate_update.strip():
+            return candidate_update, {
+                "applied": False,
+                "reason": "empty_input",
+                "added_sections": [],
+                "merged_sections": [],
+            }
+
+        cur_preamble, cur_sections = cls._parse_memory_sections(current_memory)
+        cand_preamble, cand_sections = cls._parse_memory_sections(candidate_update)
+        if not cur_sections or not cand_sections:
+            return candidate_update, {
+                "applied": False,
+                "reason": "unstructured",
+                "added_sections": [],
+                "merged_sections": [],
+            }
+
+        merged_map: dict[str, list[str]] = {heading: list(lines) for heading, lines in cur_sections}
+        merged_order: list[str] = [heading for heading, _ in cur_sections]
+        added_sections: list[str] = []
+        merged_sections: list[str] = []
+
+        for heading, cand_lines in cand_sections:
+            if heading in merged_map:
+                before = list(merged_map[heading])
+                merged_map[heading] = cls._merge_section_lines(before, cand_lines)
+                if merged_map[heading] != before:
+                    merged_sections.append(heading)
+            else:
+                merged_map[heading] = list(cand_lines)
+                merged_order.append(heading)
+                added_sections.append(heading)
+
+        out_preamble = cur_preamble if any(line.strip() for line in cur_preamble) else cand_preamble
+        merged_sections_list = [(heading, merged_map[heading]) for heading in merged_order]
+        merged_text = cls._render_memory_sections(out_preamble, merged_sections_list)
+        if not merged_text:
+            return candidate_update, {
+                "applied": False,
+                "reason": "render_empty",
+                "added_sections": [],
+                "merged_sections": [],
+            }
+        return merged_text, {
+            "applied": True,
+            "reason": "ok",
+            "added_sections": added_sections,
+            "merged_sections": merged_sections,
+        }
 
     def get_memory_context(self) -> str:
         long_term = self.read_long_term()

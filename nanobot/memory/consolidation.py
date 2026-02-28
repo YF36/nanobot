@@ -159,6 +159,15 @@ class ConsolidationPipeline:
                 returned_memory_chars=len(update),
             )
             return
+
+        update, merge_details = self.store._merge_memory_update_with_current(ctx.current_memory, update)
+        if merge_details.get("applied"):
+            logger.debug(
+                "Memory section merge applied before guard",
+                merged_sections=merge_details.get("merged_sections", []),
+                added_sections=merge_details.get("added_sections", []),
+            )
+
         if update == ctx.current_memory:
             return
         guard_reason = self.store._memory_update_guard_reason(ctx.current_memory, update)

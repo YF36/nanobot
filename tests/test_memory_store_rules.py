@@ -983,7 +983,7 @@ async def test_consolidate_skips_history_entry_when_quality_gate_rejects(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_consolidate_skips_memory_update_when_guard_triggers(tmp_path: Path) -> None:
+async def test_consolidate_repairs_heading_drop_with_section_merge(tmp_path: Path) -> None:
     mm = MemoryStore(workspace=tmp_path)
     current = (
         "# Long-term Memory\n\n"
@@ -1020,11 +1020,7 @@ async def test_consolidate_skips_memory_update_when_guard_triggers(tmp_path: Pat
     assert result is True
     assert mm.read_long_term() == current
     guard_metrics_path = mm.observability_dir / "memory-update-guard-metrics.jsonl"
-    rows = [json.loads(line) for line in guard_metrics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    assert len(rows) == 1
-    assert rows[0]["session_key"] == "test:memory_update_guard"
-    assert rows[0]["reason"] in {"excessive_shrink", "heading_retention_too_low"}
-    assert rows[0]["candidate_preview"]
+    assert guard_metrics_path.exists() is False
 
 
 @pytest.mark.asyncio
