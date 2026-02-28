@@ -216,19 +216,32 @@ class ConsolidationPipeline:
             return
 
         conflicts = self.store._detect_preference_conflicts(ctx.current_memory, update)
+        resolution = getattr(self.store, "preference_conflict_strategy", "keep_new")
         for conflict in conflicts:
             logger.warning(
                 "Memory preference conflict detected",
                 key=conflict["conflict_key"],
                 old_value=conflict["old_value"],
                 new_value=conflict["new_value"],
+                resolution=resolution,
             )
             self.store._append_memory_conflict_metric(
                 session_key=ctx.session.key,
                 conflict_key=conflict["conflict_key"],
                 old_value=conflict["old_value"],
                 new_value=conflict["new_value"],
+                resolution=resolution,
             )
+        if conflicts and resolution in {"keep_old", "ask_user"}:
+            self.store._append_memory_update_outcome_metric(
+                session_key=ctx.session.key,
+                outcome="guard_rejected",
+                guard_reason=f"preference_conflict_{resolution}",
+                sanitize_changes=sanitize_changes,
+                merge_applied=merge_applied,
+                conflict_count=len(conflicts),
+            )
+            return
         self.store.write_long_term(update)
         self.store._append_memory_update_outcome_metric(
             session_key=ctx.session.key,

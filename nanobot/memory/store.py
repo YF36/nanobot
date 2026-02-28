@@ -147,7 +147,11 @@ class MemoryStore:
     _PREFERENCE_KEY_PATTERNS = (
         ("language", re.compile(r"(语言|language)", re.IGNORECASE)),
         ("communication_style", re.compile(r"(沟通风格|communication style)", re.IGNORECASE)),
+        ("timezone", re.compile(r"(时区|time ?zone)", re.IGNORECASE)),
+        ("output_format", re.compile(r"(输出格式|格式|output format)", re.IGNORECASE)),
+        ("tone", re.compile(r"(语气|tone)", re.IGNORECASE)),
     )
+    _PREFERENCE_CONFLICT_STRATEGIES = {"keep_new", "keep_old", "ask_user", "merge"}
     _H2_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$")
 
     @dataclass
@@ -185,7 +189,14 @@ class MemoryStore:
         snapshot_len: int
         processed_count: int
 
-    def __init__(self, workspace: Path, *, daily_sections_mode: str = "compatible"):
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        daily_sections_mode: str = "compatible",
+        preference_conflict_strategy: str = "keep_new",
+        preference_conflict_keys: tuple[str, ...] | None = None,
+    ):
         self.memory_dir = ensure_dir(workspace / "memory")
         self.observability_dir = ensure_dir(self.memory_dir / "observability")
         self.memory_file = self.memory_dir / "MEMORY.md"
@@ -200,6 +211,14 @@ class MemoryStore:
         if mode not in {"compatible", "preferred", "required"}:
             mode = "compatible"
         self.daily_sections_mode = mode
+        strategy = (preference_conflict_strategy or "keep_new").strip().lower()
+        if strategy not in self._PREFERENCE_CONFLICT_STRATEGIES:
+            strategy = "keep_new"
+        self.preference_conflict_strategy = strategy
+        configured_keys = tuple(
+            k.strip().lower() for k in (preference_conflict_keys or ("language", "communication_style")) if k.strip()
+        )
+        self.preference_conflict_keys = configured_keys or ("language", "communication_style")
         self._io = MemoryIO()
         self._routing_policy = DailyRoutingPolicy(
             normalize_daily_sections_detailed=self._normalize_daily_sections_detailed,
@@ -297,6 +316,7 @@ class MemoryStore:
         conflict_key: str,
         old_value: str,
         new_value: str,
+        resolution: str = "keep_new",
     ) -> None:
         row = {
             "ts": datetime.now().isoformat(timespec="seconds"),
@@ -304,6 +324,7 @@ class MemoryStore:
             "conflict_key": conflict_key,
             "old_value": old_value,
             "new_value": new_value,
+            "resolution": resolution,
         }
         try:
             self._io.append_text(
@@ -475,11 +496,21 @@ class MemoryStore:
 
     @classmethod
     def _extract_preference_values(cls, text: str) -> dict[str, str]:
-        return MemoryGuardPolicy.extract_preference_values(text)
+        return MemoryGuardPolicy.extract_preference_values(
+            text,
+            key_patterns=list(cls._PREFERENCE_KEY_PATTERNS),
+        )
 
-    @classmethod
-    def _detect_preference_conflicts(cls, current_memory: str, candidate_update: str) -> list[dict[str, str]]:
-        return MemoryGuardPolicy.detect_preference_conflicts(current_memory, candidate_update)
+    def _detect_preference_conflicts(self, current_memory: str, candidate_update: str) -> list[dict[str, str]]:
+        active_keys = set(self.preference_conflict_keys)
+        key_patterns = [(k, p) for k, p in self._PREFERENCE_KEY_PATTERNS if k in active_keys]
+        if not key_patterns:
+            key_patterns = list(self._PREFERENCE_KEY_PATTERNS)
+        return MemoryGuardPolicy.detect_preference_conflicts(
+            current_memory,
+            candidate_update,
+            key_patterns=key_patterns,
+        )
 
     @classmethod
     def _history_entry_date(cls, entry: str) -> str:

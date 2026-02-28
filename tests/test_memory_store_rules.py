@@ -1172,3 +1172,106 @@ async def test_consolidate_records_preference_conflict_metric(tmp_path: Path) ->
     assert len(rows) == 1
     assert rows[0]["session_key"] == "test:memory_conflict"
     assert rows[0]["conflict_key"] == "language"
+    assert rows[0]["resolution"] == "keep_new"
+
+
+@pytest.mark.asyncio
+async def test_consolidate_preference_conflict_keep_old_skips_write(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path, preference_conflict_strategy="keep_old")
+    current = (
+        "# Long-term Memory\n\n"
+        "## Preferences\n"
+        "- 语言: 中文\n"
+        "- 沟通风格: 技术讨论\n"
+    )
+    mm.write_long_term(current)
+
+    session = Session(key="test:memory_conflict_keep_old")
+    for i in range(60):
+        session.add_message("user", f"msg{i}")
+
+    provider = MagicMock()
+
+    async def _fake_chat(**kwargs):
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="t1",
+                    name="save_memory",
+                    arguments={
+                        "history_entry": "[2026-02-25 10:00] Preference updated.",
+                        "memory_update": (
+                            "# Long-term Memory\n\n"
+                            "## Preferences\n"
+                            "- 语言: English\n"
+                            "- 沟通风格: 技术讨论\n"
+                        ),
+                    },
+                )
+            ],
+        )
+
+    provider.chat = _fake_chat
+    result = await mm.consolidate(session=session, provider=provider, model="test", memory_window=50)
+
+    assert result is True
+    assert mm.read_long_term() == current
+    outcome_rows = [
+        json.loads(line)
+        for line in (mm.observability_dir / "memory-update-outcome.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(outcome_rows) == 1
+    assert outcome_rows[0]["outcome"] == "guard_rejected"
+    assert outcome_rows[0]["guard_reason"] == "preference_conflict_keep_old"
+
+
+@pytest.mark.asyncio
+async def test_consolidate_preference_conflict_supports_configured_keys(tmp_path: Path) -> None:
+    mm = MemoryStore(
+        workspace=tmp_path,
+        preference_conflict_keys=("timezone",),
+    )
+    current = (
+        "# Long-term Memory\n\n"
+        "## Preferences\n"
+        "- Time zone: Asia/Shanghai\n"
+    )
+    mm.write_long_term(current)
+
+    session = Session(key="test:memory_conflict_timezone")
+    for i in range(60):
+        session.add_message("user", f"msg{i}")
+
+    provider = MagicMock()
+
+    async def _fake_chat(**kwargs):
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="t1",
+                    name="save_memory",
+                    arguments={
+                        "history_entry": "[2026-02-25 10:00] tz update.",
+                        "memory_update": (
+                            "# Long-term Memory\n\n"
+                            "## Preferences\n"
+                            "- Time zone: UTC\n"
+                        ),
+                    },
+                )
+            ],
+        )
+
+    provider.chat = _fake_chat
+    result = await mm.consolidate(session=session, provider=provider, model="test", memory_window=50)
+    assert result is True
+    rows = [
+        json.loads(line)
+        for line in (mm.observability_dir / "memory-conflict-metrics.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(rows) == 1
+    assert rows[0]["conflict_key"] == "timezone"

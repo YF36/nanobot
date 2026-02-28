@@ -40,9 +40,12 @@ class MemoryGuardPolicy:
     _MEMORY_UPDATE_DUPLICATE_LINE_MIN_COUNT = 4
     _MEMORY_UPDATE_DUPLICATE_LINE_RATIO_GUARD = 0.4
     _DATE_TOKEN_RE = re.compile(r"\b20\d{2}-\d{2}-\d{2}\b")
-    _PREFERENCE_KEY_PATTERNS = (
+    _DEFAULT_PREFERENCE_KEY_PATTERNS = (
         ("language", re.compile(r"\b(language|语言)\b", re.IGNORECASE)),
         ("communication_style", re.compile(r"\b(communication style|沟通风格)\b", re.IGNORECASE)),
+        ("timezone", re.compile(r"\b(time ?zone|时区)\b", re.IGNORECASE)),
+        ("output_format", re.compile(r"\b(output format|格式|输出格式)\b", re.IGNORECASE)),
+        ("tone", re.compile(r"\b(tone|语气)\b", re.IGNORECASE)),
     )
 
     @classmethod
@@ -259,7 +262,13 @@ class MemoryGuardPolicy:
         return None
 
     @classmethod
-    def extract_preference_values(cls, text: str) -> dict[str, str]:
+    def extract_preference_values(
+        cls,
+        text: str,
+        *,
+        key_patterns: list[tuple[str, re.Pattern[str]]] | None = None,
+    ) -> dict[str, str]:
+        patterns = key_patterns or list(cls._DEFAULT_PREFERENCE_KEY_PATTERNS)
         values: dict[str, str] = {}
         in_preferences = False
         for raw in text.splitlines():
@@ -270,7 +279,7 @@ class MemoryGuardPolicy:
             if not in_preferences or not line.startswith("-"):
                 continue
             item = line.lstrip("-").strip()
-            for key, pat in cls._PREFERENCE_KEY_PATTERNS:
+            for key, pat in patterns:
                 if pat.search(item):
                     if ":" in item:
                         values[key] = item.split(":", 1)[1].strip()
@@ -281,9 +290,15 @@ class MemoryGuardPolicy:
         return values
 
     @classmethod
-    def detect_preference_conflicts(cls, current_memory: str, candidate_update: str) -> list[dict[str, str]]:
-        current_vals = cls.extract_preference_values(current_memory)
-        candidate_vals = cls.extract_preference_values(candidate_update)
+    def detect_preference_conflicts(
+        cls,
+        current_memory: str,
+        candidate_update: str,
+        *,
+        key_patterns: list[tuple[str, re.Pattern[str]]] | None = None,
+    ) -> list[dict[str, str]]:
+        current_vals = cls.extract_preference_values(current_memory, key_patterns=key_patterns)
+        candidate_vals = cls.extract_preference_values(candidate_update, key_patterns=key_patterns)
         conflicts: list[dict[str, str]] = []
         for key, old_value in current_vals.items():
             new_value = candidate_vals.get(key)
