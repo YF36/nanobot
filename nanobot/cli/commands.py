@@ -349,6 +349,34 @@ def memory_audit(
         "",
         help="Optional daily archive compact apply markdown output path",
     ),
+    daily_ttl_dry_run: bool = typer.Option(
+        False,
+        "--daily-ttl-dry-run",
+        help="Show TTL janitor candidates in memory/archive (no file changes)",
+    ),
+    daily_ttl_days: int = typer.Option(
+        90,
+        "--daily-ttl-days",
+        help="Keep last N days in memory/archive for daily TTL janitor",
+    ),
+    daily_ttl_out: str = typer.Option(
+        "",
+        help="Optional daily TTL dry-run markdown output path",
+    ),
+    daily_ttl_apply: bool = typer.Option(
+        False,
+        "--daily-ttl-apply",
+        help="Delete TTL-expired files from memory/archive and append observability metrics",
+    ),
+    daily_ttl_max_files: int = typer.Option(
+        0,
+        "--daily-ttl-max-files",
+        help="When >0, limit TTL apply to first N candidate files",
+    ),
+    daily_ttl_apply_out: str = typer.Option(
+        "",
+        help="Optional daily TTL apply markdown output path",
+    ),
     apply_drop_preview: bool = typer.Option(
         False,
         "--apply-drop-preview",
@@ -402,9 +430,12 @@ def memory_audit(
         apply_conservative_cleanup,
         apply_daily_archive_compact,
         apply_daily_archive,
+        apply_daily_ttl_janitor,
         build_cleanup_plan,
         render_daily_archive_compact_apply_markdown,
         render_daily_archive_apply_markdown,
+        render_daily_ttl_apply_markdown,
+        render_daily_ttl_dry_run_markdown,
         render_daily_archive_dry_run_markdown,
         render_cleanup_drop_preview_markdown,
         render_cleanup_stage_metrics_markdown,
@@ -418,6 +449,7 @@ def memory_audit(
         render_audit_markdown,
         run_memory_audit,
         summarize_daily_archive_dry_run,
+        summarize_daily_ttl_dry_run,
         summarize_cleanup_drop_preview,
         summarize_cleanup_stage_metrics,
         summarize_cleanup_conversion_index,
@@ -666,6 +698,38 @@ def memory_audit(
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(archive_compact_md, encoding="utf-8")
             console.print(f"[green]✓[/green] Wrote archive compact summary: {out}")
+
+    if daily_ttl_dry_run or daily_ttl_out:
+        ttl_dry = summarize_daily_ttl_dry_run(target_dir, ttl_days=max(1, int(daily_ttl_days)))
+        ttl_dry_md = render_daily_ttl_dry_run_markdown(ttl_dry)
+        if daily_ttl_dry_run:
+            console.print(Markdown(ttl_dry_md))
+        if daily_ttl_out:
+            out = Path(daily_ttl_out).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(ttl_dry_md, encoding="utf-8")
+            console.print(f"[green]✓[/green] Wrote daily TTL dry-run summary: {out}")
+
+    if daily_ttl_apply or daily_ttl_apply_out:
+        ttl_apply = apply_daily_ttl_janitor(
+            target_dir,
+            ttl_days=max(1, int(daily_ttl_days)),
+            max_files=(daily_ttl_max_files if daily_ttl_max_files > 0 else None),
+        )
+        ttl_apply_md = render_daily_ttl_apply_markdown(ttl_apply)
+        if daily_ttl_apply:
+            console.print(
+                "[green]✓[/green] Applied daily TTL janitor: "
+                f"deleted_files={ttl_apply.deleted_file_count}, "
+                f"deleted_bullets={ttl_apply.deleted_bullet_count}, "
+                f"metrics_rows={ttl_apply.metrics_rows}"
+            )
+            console.print(Markdown(ttl_apply_md))
+        if daily_ttl_apply_out:
+            out = Path(daily_ttl_apply_out).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(ttl_apply_md, encoding="utf-8")
+            console.print(f"[green]✓[/green] Wrote daily TTL apply summary: {out}")
 
     if apply_drop_preview or apply_drop_preview_out:
         top_n = max(1, int(apply_drop_preview_top))

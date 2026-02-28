@@ -7,6 +7,8 @@ from nanobot.agent.memory_maintenance import (
     apply_conservative_cleanup,
     render_daily_archive_compact_apply_markdown,
     render_daily_archive_apply_markdown,
+    render_daily_ttl_apply_markdown,
+    render_daily_ttl_dry_run_markdown,
     build_cleanup_plan,
     render_cleanup_conversion_index_markdown,
     render_cleanup_drop_preview_markdown,
@@ -22,6 +24,8 @@ from nanobot.agent.memory_maintenance import (
     run_memory_audit,
     summarize_context_trace,
     summarize_daily_archive_dry_run,
+    summarize_daily_ttl_dry_run,
+    apply_daily_ttl_janitor,
     summarize_cleanup_stage_metrics,
     summarize_cleanup_conversion_index,
     summarize_cleanup_drop_preview,
@@ -1024,3 +1028,33 @@ def test_apply_daily_archive_compact_writes_history_and_moves_file(tmp_path: Pat
     rendered = render_daily_archive_compact_apply_markdown(result)
     assert "Daily Archive Compact Apply Result" in rendered
     assert "Compacted files: `1`" in rendered
+
+
+def test_daily_ttl_dry_run_and_apply_only_touch_archive(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    archive_dir = memory_dir / "archive"
+    archive_dir.mkdir(parents=True)
+    _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
+    _write(memory_dir / "HISTORY.md", "")
+    _write(archive_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n- old2\n")
+    today = datetime.now().strftime("%Y-%m-%d")
+    _write(archive_dir / f"{today}.md", f"# {today}\n\n## Topics\n\n- recent\n")
+
+    dry = summarize_daily_ttl_dry_run(memory_dir, ttl_days=30)
+    assert dry.candidate_file_count == 1
+    assert dry.candidate_bullet_count == 2
+    assert dry.candidate_files == ["2020-01-01.md"]
+    dry_md = render_daily_ttl_dry_run_markdown(dry)
+    assert "Daily TTL Dry-Run Summary" in dry_md
+
+    applied = apply_daily_ttl_janitor(memory_dir, ttl_days=30)
+    assert applied.deleted_file_count == 1
+    assert applied.deleted_bullet_count == 2
+    assert applied.deleted_files == ["2020-01-01.md"]
+    assert not (archive_dir / "2020-01-01.md").exists()
+    assert (archive_dir / f"{today}.md").exists()
+    metrics = _obs_file(memory_dir, "daily-ttl-metrics.jsonl").read_text(encoding="utf-8")
+    assert '"source_file":"2020-01-01.md"' in metrics
+    assert '"action":"delete"' in metrics
+    apply_md = render_daily_ttl_apply_markdown(applied)
+    assert "Daily TTL Apply Result" in apply_md

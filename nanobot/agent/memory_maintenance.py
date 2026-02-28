@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 _DATE_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.md$")
+_ARCHIVE_DATE_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:\..+)?\.md$")
 _HISTORY_ENTRY_RE = re.compile(r"^\[(20\d{2}-\d{2}-\d{2})(?:\s+\d{2}:\d{2})?\]\s*(.*)$")
 _FALLBACK_REASON_HINTS = {
     "missing": "Model did not provide `daily_sections`; consider prompt nudge to always emit structured arrays.",
@@ -150,6 +151,23 @@ class DailyArchiveCompactApplyResult:
 
 
 @dataclass
+class DailyTTLDryRunSummary:
+    ttl_days: int
+    candidate_file_count: int
+    candidate_bullet_count: int
+    candidate_files: list[str]
+
+
+@dataclass
+class DailyTTLApplyResult:
+    ttl_days: int
+    deleted_file_count: int
+    deleted_bullet_count: int
+    deleted_files: list[str]
+    metrics_rows: int
+
+
+@dataclass
 class MemoryConflictMetricsSummary:
     metrics_file_exists: bool
     total_rows: int
@@ -211,6 +229,16 @@ def _iter_daily_files(memory_dir: Path) -> list[Path]:
 
 def _daily_file_date(path: Path) -> date | None:
     m = _DATE_FILE_RE.match(path.name)
+    if not m:
+        return None
+    try:
+        return datetime.strptime(m.group(1), "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _archive_daily_file_date(path: Path) -> date | None:
+    m = _ARCHIVE_DATE_FILE_RE.match(path.name)
     if not m:
         return None
     try:
@@ -1701,6 +1729,121 @@ def render_daily_archive_compact_apply_markdown(result: DailyArchiveCompactApply
         lines.append("- none")
     else:
         for name in result.compacted_files:
+            lines.append(f"- {name}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def summarize_daily_ttl_dry_run(
+    memory_dir: Path,
+    *,
+    ttl_days: int = 90,
+) -> DailyTTLDryRunSummary:
+    window_days = max(1, int(ttl_days))
+    cutoff = datetime.now().date() - timedelta(days=window_days - 1)
+    archive_dir = memory_dir / "archive"
+    candidates: list[str] = []
+    bullet_count = 0
+    if archive_dir.exists():
+        for p in sorted(archive_dir.glob("*.md")):
+            d = _archive_daily_file_date(p)
+            if d is None or d >= cutoff:
+                continue
+            candidates.append(p.name)
+            bullet_count += sum(1 for line in p.read_text(encoding="utf-8").splitlines() if line.startswith("- "))
+    return DailyTTLDryRunSummary(
+        ttl_days=window_days,
+        candidate_file_count=len(candidates),
+        candidate_bullet_count=bullet_count,
+        candidate_files=candidates,
+    )
+
+
+def render_daily_ttl_dry_run_markdown(summary: DailyTTLDryRunSummary) -> str:
+    lines = [
+        "# Daily TTL Dry-Run Summary",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+        f"- TTL window: keep last `{summary.ttl_days}` day(s) in `memory/archive`",
+        f"- Candidate files: `{summary.candidate_file_count}`",
+        f"- Candidate bullets: `{summary.candidate_bullet_count}`",
+        "",
+        "## Candidate Files",
+    ]
+    if not summary.candidate_files:
+        lines.append("- none")
+    else:
+        for name in summary.candidate_files:
+            lines.append(f"- {name}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def apply_daily_ttl_janitor(
+    memory_dir: Path,
+    *,
+    ttl_days: int = 90,
+    max_files: int | None = None,
+) -> DailyTTLApplyResult:
+    dry = summarize_daily_ttl_dry_run(memory_dir, ttl_days=ttl_days)
+    archive_dir = memory_dir / "archive"
+    targets = list(dry.candidate_files)
+    if max_files is not None and int(max_files) > 0:
+        targets = targets[: int(max_files)]
+
+    deleted_files: list[str] = []
+    deleted_bullet_count = 0
+    metrics_rows: list[dict[str, object]] = []
+    timestamp = datetime.now().isoformat(timespec="seconds")
+
+    for name in targets:
+        path = archive_dir / name
+        if not path.exists():
+            continue
+        bullet_count = sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.startswith("- "))
+        path.unlink()
+        deleted_files.append(name)
+        deleted_bullet_count += bullet_count
+        metrics_rows.append(
+            {
+                "timestamp": timestamp,
+                "ttl_days": dry.ttl_days,
+                "source_file": name,
+                "bullet_count": bullet_count,
+                "action": "delete",
+            }
+        )
+
+    if metrics_rows:
+        metrics_file = _metrics_file_for_write(memory_dir, "daily-ttl-metrics.jsonl")
+        for row in metrics_rows:
+            _append_jsonl(metrics_file, row)
+
+    return DailyTTLApplyResult(
+        ttl_days=dry.ttl_days,
+        deleted_file_count=len(deleted_files),
+        deleted_bullet_count=deleted_bullet_count,
+        deleted_files=deleted_files,
+        metrics_rows=len(metrics_rows),
+    )
+
+
+def render_daily_ttl_apply_markdown(result: DailyTTLApplyResult) -> str:
+    lines = [
+        "# Daily TTL Apply Result",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+        f"- TTL window: keep last `{result.ttl_days}` day(s) in `memory/archive`",
+        f"- Deleted files: `{result.deleted_file_count}`",
+        f"- Deleted bullets: `{result.deleted_bullet_count}`",
+        f"- Metrics rows appended: `{result.metrics_rows}`",
+        "",
+        "## Deleted Files",
+    ]
+    if not result.deleted_files:
+        lines.append("- none")
+    else:
+        for name in result.deleted_files:
             lines.append(f"- {name}")
     lines.append("")
     return "\n".join(lines)
