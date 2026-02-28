@@ -368,6 +368,50 @@ R1 进展（2026-02-28）：
 
 R1 状态：已完成（模块拆分 + pipeline + guard policy + JSONL 汇总框架最小落地）。
 
+### Phase R1.2：Memory Package 化（新增阶段）
+
+目标：将 memory 管理代码聚合到单独逻辑包，降低 `agent` 目录耦合，同时保持外部行为不变。
+
+实施策略（两步）：
+
+- 第一步（现在执行）：逻辑包化，不拆 distribution
+  - 新增 `nanobot/memory/` 包，承载 memory 主链模块：
+    - `store.py`（原 `MemoryStore` facade）
+    - `consolidation.py`
+    - `routing_policy.py`
+    - `guard_policy.py`
+    - `io.py`
+    - `maintenance.py`
+  - 在 `nanobot/agent/` 下保留兼容 shim（薄转发导出），避免一次性改全仓 import
+- 第二步（后续评估）：物理包独立（可选）
+  - 仅在 API 边界稳定后，再评估独立 distribution（例如 `nanobot-memory`）
+
+DoD：
+
+- `nanobot/memory/` 成为 memory 代码主入口
+- `nanobot/agent/*memory*` 仍可被旧路径 import（兼容 shim）
+- memory 相关测试与 CLI 行为不变
+
+R1.2 进展（2026-02-28）：
+
+- 已新增 `nanobot/memory/` 逻辑包并迁移主模块：
+  - `store.py`
+  - `consolidation.py`
+  - `routing_policy.py`
+  - `guard_policy.py`
+  - `io.py`
+  - `maintenance.py`
+- 已在 `nanobot/agent/` 保留兼容 shim：
+  - `memory.py`
+  - `memory_consolidation.py`
+  - `memory_routing_policy.py`
+  - `memory_guard_policy.py`
+  - `memory_io.py`
+  - `memory_maintenance.py`
+- 验证结果：memory 主线回归 `111 passed`（行为保持一致）。
+
+R1.2 状态：已完成（逻辑包化 + 兼容 shim）。
+
 ### Phase R1.5：Section-level Merge（新增阶段）
 
 目标：消除 MEMORY.md 全文替换的数据丢失风险，不改存储格式。

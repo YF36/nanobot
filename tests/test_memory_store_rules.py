@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.memory import MemoryStore
+from nanobot.memory import MemoryStore
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.session.manager import Session
 
@@ -310,7 +310,7 @@ def test_consolidation_system_prompt_restricts_memory_update_to_long_term_facts(
 def test_save_memory_tool_schema_supports_optional_daily_sections() -> None:
     tool = MemoryStore.__dict__.get("_SAVE_MEMORY_TOOL") if False else None
     # Access module-level schema through imported module object
-    from nanobot.agent import memory as memory_module
+    from nanobot.memory import store as memory_module
 
     props = memory_module._SAVE_MEMORY_TOOL[0]["function"]["parameters"]["properties"]
     assert "daily_sections" in props

@@ -14,7 +14,7 @@ from nanobot.logging import get_logger
 
 from nanobot.agent.consolidation_coordinator import ConsolidationCoordinator
 from nanobot.agent.context import ContextBuilder
-from nanobot.agent.memory import MemoryStore
+from nanobot.memory import MemoryStore
 from nanobot.agent.message_processor import MessageProcessingHooks, MessageProcessor
 from nanobot.agent.session_command_handler import SessionCommandHandler
 from nanobot.agent.subagent import SubagentManager

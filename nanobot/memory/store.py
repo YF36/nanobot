@@ -9,10 +9,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from nanobot.agent.memory_consolidation import ConsolidationPipeline
-from nanobot.agent.memory_guard_policy import MemoryGuardPolicy
-from nanobot.agent.memory_io import MemoryIO
-from nanobot.agent.memory_routing_policy import DailyRoutingPlan, DailyRoutingPolicy
+from nanobot.memory.consolidation import ConsolidationPipeline
+from nanobot.memory.guard_policy import MemoryGuardPolicy
+from nanobot.memory.io import MemoryIO
+from nanobot.memory.routing_policy import DailyRoutingPlan, DailyRoutingPolicy
 from nanobot.logging import get_logger
 
 from nanobot.utils.helpers import ensure_dir

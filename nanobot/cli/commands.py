@@ -426,7 +426,7 @@ def memory_audit(
 ):
     """Run memory quality audit; optionally apply conservative cleanup with backups."""
     from nanobot.config.loader import load_config
-    from nanobot.agent.memory_maintenance import (
+    from nanobot.memory.maintenance import (
         apply_conservative_cleanup,
         apply_daily_archive_compact,
         apply_daily_archive,
@@ -868,7 +868,7 @@ def memory_observe(
     """Generate a daily observation snapshot (audit + routing metrics + guard metrics)."""
     from datetime import datetime
     from nanobot.config.loader import load_config
-    from nanobot.agent.memory_maintenance import (
+    from nanobot.memory.maintenance import (
         render_audit_markdown,
         render_cleanup_conversion_index_markdown,
         render_cleanup_drop_preview_markdown,

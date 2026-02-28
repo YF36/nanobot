@@ -1,7 +1,7 @@
 from pathlib import Path
 from datetime import datetime, timedelta
 
-from nanobot.agent.memory_maintenance import (
+from nanobot.memory.maintenance import (
     apply_daily_archive_compact,
     apply_daily_archive,
     apply_conservative_cleanup,

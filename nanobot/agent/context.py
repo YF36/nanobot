@@ -11,8 +11,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from nanobot.agent.memory import MemoryStore
-from nanobot.agent.memory_io import MemoryIO
+from nanobot.memory import MemoryStore
+from nanobot.memory.io import MemoryIO
 from nanobot.agent.skills import SkillsLoader
 
 # Lazy-loaded tiktoken encoder; None if tiktoken is not installed.

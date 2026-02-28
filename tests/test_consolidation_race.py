@@ -21,7 +21,7 @@ class TestSnapshotLen:
     @pytest.mark.asyncio
     async def test_last_consolidated_uses_snapshot_not_live_len(self, tmp_path: Path) -> None:
         """Messages appended during LLM call must not shift last_consolidated."""
-        from nanobot.agent.memory import MemoryStore
+        from nanobot.memory import MemoryStore
         from nanobot.providers.base import LLMResponse, ToolCallRequest
 
         mm = MemoryStore(workspace=tmp_path)
@@ -64,7 +64,7 @@ class TestSnapshotLen:
     @pytest.mark.asyncio
     async def test_archive_all_uses_snapshot_len(self, tmp_path: Path) -> None:
         """archive_all=True should snapshot messages before LLM call."""
-        from nanobot.agent.memory import MemoryStore
+        from nanobot.memory import MemoryStore
         from nanobot.providers.base import LLMResponse, ToolCallRequest
 
         mm = MemoryStore(workspace=tmp_path)
@@ -98,7 +98,7 @@ class TestSnapshotLen:
     @pytest.mark.asyncio
     async def test_consolidation_retries_with_smaller_chunk_on_context_overflow(self, tmp_path: Path) -> None:
         """Context-length errors should shrink the chunk and still make progress."""
-        from nanobot.agent.memory import MemoryStore
+        from nanobot.memory import MemoryStore
         from nanobot.providers.base import LLMResponse, ToolCallRequest
 
         mm = MemoryStore(workspace=tmp_path)
@@ -142,7 +142,7 @@ class TestSnapshotLen:
     @pytest.mark.asyncio
     async def test_archive_all_chunks_until_complete_on_context_overflow(self, tmp_path: Path) -> None:
         """archive_all=True must process all messages across multiple chunks, not return partial success."""
-        from nanobot.agent.memory import MemoryStore
+        from nanobot.memory import MemoryStore
         from nanobot.providers.base import LLMResponse, ToolCallRequest
 
         mm = MemoryStore(workspace=tmp_path)
@@ -185,7 +185,7 @@ class TestSnapshotLen:
     @pytest.mark.asyncio
     async def test_consolidation_retries_when_model_returns_text_instead_of_tool_call(self, tmp_path: Path) -> None:
         """Memory consolidation should retry once with stricter tool-call instructions."""
-        from nanobot.agent.memory import MemoryStore
+        from nanobot.memory import MemoryStore
         from nanobot.providers.base import LLMResponse, ToolCallRequest
 
         mm = MemoryStore(workspace=tmp_path)
@@ -222,7 +222,7 @@ class TestSnapshotLen:
     @pytest.mark.asyncio
     async def test_consolidation_trims_memory_context_and_skips_truncated_memory_write(self, tmp_path: Path) -> None:
         """Huge MEMORY.md should be truncated in prompt, but not overwritten with truncated output."""
-        from nanobot.agent.memory import MemoryStore
+        from nanobot.memory import MemoryStore
         from nanobot.providers.base import LLMResponse, ToolCallRequest
 
         mm = MemoryStore(workspace=tmp_path)

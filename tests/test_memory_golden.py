@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.memory import MemoryStore
+from nanobot.memory import MemoryStore
 
 
 _FIXTURE_DIR = Path(__file__).parent / "fixtures" / "memory_golden"
@@ -57,4 +57,3 @@ def test_golden_guard_heading_retention_low(tmp_path: Path) -> None:
         str(case["candidate_update"]),
     )
     assert reason == case["expected_guard_reason"]
-

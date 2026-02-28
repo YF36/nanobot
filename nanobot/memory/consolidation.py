@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from nanobot.logging import get_logger
 
 if TYPE_CHECKING:
-    from nanobot.agent.memory import MemoryStore
+    from nanobot.memory.store import MemoryStore
     from nanobot.session.manager import Session
 
 logger = get_logger(__name__)
@@ -193,4 +193,3 @@ class ConsolidationPipeline:
                 new_value=conflict["new_value"],
             )
         self.store.write_long_term(update)
-

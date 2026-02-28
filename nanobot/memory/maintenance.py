@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from nanobot.agent.memory_io import MemoryIO
+from nanobot.memory.io import MemoryIO
 
 _IO = MemoryIO()
 
