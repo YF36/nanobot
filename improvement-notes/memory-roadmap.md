@@ -428,6 +428,23 @@ DoD：
 - 现有 golden case 输出一致或可解释差异（增量合并的预期变化）
 - guard 拦截率显著下降（heading_retention 类不再触发）
 
+R1.5 进展（2026-02-28）：
+
+- 已实现 section-level merge 核心逻辑：
+  - `parse_sections`（按 H2 切分）
+  - `section_merge`（同名 section 增量合并 + bullet 去重）
+  - `render_sections`（回写 markdown）
+- 已接入 consolidation 主链：
+  - `memory_update` 在 sanitize 后、guard 前执行 section merge
+  - 对“仅返回部分 section”的候选更新，自动保留 current memory 既有 section
+- 行为变化（与 R1.5 目标一致）：
+  - 典型 `heading_retention_too_low` 场景由“guard 拒绝写入”升级为“merge 修复后 no-op / 正常写入”
+- 回归：
+  - 新增 section merge 专项测试（保留旧 section / 新增 section / 去重 / 非结构化回退）
+  - memory 主线测试当前 `114 passed`
+
+R1.5 状态：已完成（section-level merge 已落地并接入写入链路）。
+
 ### Phase R2：策略面收敛 + 中断恢复 + 指标基线
 
 目标：把策略开关与策略结果显式化，补全数据安全短板。
