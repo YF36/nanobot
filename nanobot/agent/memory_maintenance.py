@@ -129,6 +129,16 @@ class DailyArchiveDryRunSummary:
 
 
 @dataclass
+class DailyArchiveApplyResult:
+    keep_days: int
+    moved_file_count: int
+    moved_bullet_count: int
+    archive_dir: Path
+    moved_files: list[str]
+    metrics_rows: int
+
+
+@dataclass
 class MemoryConflictMetricsSummary:
     metrics_file_exists: bool
     total_rows: int
@@ -1461,6 +1471,88 @@ def render_daily_archive_dry_run_markdown(summary: DailyArchiveDryRunSummary) ->
         lines.append("- none")
     else:
         for name in summary.candidate_files:
+            lines.append(f"- {name}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def apply_daily_archive(
+    memory_dir: Path,
+    *,
+    keep_days: int = 30,
+    max_files: int | None = None,
+) -> DailyArchiveApplyResult:
+    window_days = max(1, int(keep_days))
+    cutoff = datetime.now().date() - timedelta(days=window_days - 1)
+    candidate_paths: list[Path] = []
+    for p in _iter_daily_files(memory_dir):
+        d = _daily_file_date(p)
+        if d is None or d >= cutoff:
+            continue
+        candidate_paths.append(p)
+    candidate_paths.sort(key=lambda p: p.name)
+    if max_files is not None and int(max_files) > 0:
+        candidate_paths = candidate_paths[: int(max_files)]
+
+    archive_dir = memory_dir / "archive"
+    moved_files: list[str] = []
+    moved_bullet_count = 0
+    metrics_rows: list[dict[str, object]] = []
+    timestamp = datetime.now().isoformat(timespec="seconds")
+
+    for src in candidate_paths:
+        text = src.read_text(encoding="utf-8")
+        bullet_count = sum(1 for line in text.splitlines() if line.startswith("- "))
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        dest = archive_dir / src.name
+        if dest.exists():
+            suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dest = archive_dir / f"{src.stem}.{suffix}{src.suffix}"
+        src.replace(dest)
+        moved_files.append(src.name)
+        moved_bullet_count += bullet_count
+        metrics_rows.append(
+            {
+                "timestamp": timestamp,
+                "keep_days": window_days,
+                "source_file": src.name,
+                "archive_file": dest.name,
+                "bullet_count": bullet_count,
+            }
+        )
+
+    if metrics_rows:
+        metrics_file = _metrics_file_for_write(memory_dir, "daily-archive-metrics.jsonl")
+        for row in metrics_rows:
+            _append_jsonl(metrics_file, row)
+
+    return DailyArchiveApplyResult(
+        keep_days=window_days,
+        moved_file_count=len(moved_files),
+        moved_bullet_count=moved_bullet_count,
+        archive_dir=archive_dir,
+        moved_files=moved_files,
+        metrics_rows=len(metrics_rows),
+    )
+
+
+def render_daily_archive_apply_markdown(result: DailyArchiveApplyResult) -> str:
+    lines = [
+        "# Daily Archive Apply Result",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+        f"- Keep window: last `{result.keep_days}` day(s)",
+        f"- Moved files: `{result.moved_file_count}`",
+        f"- Moved bullets: `{result.moved_bullet_count}`",
+        f"- Archive dir: `{result.archive_dir}`",
+        f"- Metrics rows appended: `{result.metrics_rows}`",
+        "",
+        "## Moved Files",
+    ]
+    if not result.moved_files:
+        lines.append("- none")
+    else:
+        for name in result.moved_files:
             lines.append(f"- {name}")
     lines.append("")
     return "\n".join(lines)

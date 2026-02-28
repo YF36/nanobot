@@ -2,7 +2,9 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 from nanobot.agent.memory_maintenance import (
+    apply_daily_archive,
     apply_conservative_cleanup,
+    render_daily_archive_apply_markdown,
     build_cleanup_plan,
     render_cleanup_conversion_index_markdown,
     render_cleanup_drop_preview_markdown,
@@ -951,3 +953,31 @@ def test_summarize_daily_archive_dry_run_respects_keep_window(tmp_path: Path) ->
     assert summary.candidate_files == ["2020-01-01.md"]
     rendered = render_daily_archive_dry_run_markdown(summary)
     assert "Candidate files: `1`" in rendered
+
+
+def test_apply_daily_archive_moves_candidates_and_writes_metrics(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
+    _write(memory_dir / "HISTORY.md", "")
+    _write(memory_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n- old2\n")
+    today = datetime.now().strftime("%Y-%m-%d")
+    _write(memory_dir / f"{today}.md", f"# {today}\n\n## Topics\n\n- recent\n")
+
+    result = apply_daily_archive(memory_dir, keep_days=30)
+    assert result.moved_file_count == 1
+    assert result.moved_bullet_count == 2
+    assert result.metrics_rows == 1
+    assert result.moved_files == ["2020-01-01.md"]
+    assert not (memory_dir / "2020-01-01.md").exists()
+    assert (memory_dir / "archive" / "2020-01-01.md").exists()
+
+    metrics_path = _obs_file(memory_dir, "daily-archive-metrics.jsonl")
+    lines = metrics_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert '"source_file":"2020-01-01.md"' in lines[0]
+    assert '"archive_file":"2020-01-01.md"' in lines[0]
+
+    rendered = render_daily_archive_apply_markdown(result)
+    assert "Daily Archive Apply Result" in rendered
+    assert "Moved files: `1`" in rendered

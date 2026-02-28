@@ -447,10 +447,16 @@ M3 验收标准：
 - 已有保守清理开关：`nanobot memory-audit --apply`
   - 行为：仅做“裁剪超长 + 同文件去重”，并自动创建时间戳备份目录；
   - 定位：用于低风险收口，不涉及 TTL/抽象层/检索层策略变更。
+- 已实施：`nanobot memory-audit --apply-safe`
+  - 行为：自动开启 `--apply`，并注入安全默认参数（`--apply-recent-days 7` + half-life 30d + `--apply-abort-on-high-risk`）；
+  - 定位：降低手工拼参数成本，优先走小范围灰度清理。
 - 已有受控清理范围开关：`nanobot memory-audit --apply --apply-recent-days N [--apply-skip-history]`
   - 行为：可限制只处理最近 N 天 daily files；可选择跳过 `HISTORY.md` 清理；
   - 适合灰度验证，避免一次性全量改写。
 - 已有半衰期清理开关：`--drop-tool-activity-older-than-days N`
   - 行为：在 `--apply` 时可按天数清理过旧 `Tool Activity` bullet（仅删除该 section，不影响其他 section）。
+- 已实施：`nanobot memory-audit --archive-apply [--archive-apply-max-files N]`
+  - 行为：将超出保留窗口（`--archive-keep-days`）的 daily files 移动到 `memory/archive/`，并写入 `memory/observability/daily-archive-metrics.jsonl`；
+  - 定位：生命周期最小落地（可审计归档），先收敛“长期堆积”的 daily 文件体量。
 - 已有清理闭环报告：`nanobot memory-audit --apply --apply-effect-out <path>`
   - 输出清理前后对比（`before/after/delta`），便于验证收益并做回滚决策。

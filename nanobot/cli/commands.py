@@ -316,6 +316,20 @@ def memory_audit(
         "",
         help="Optional daily archive dry-run markdown output path",
     ),
+    archive_apply: bool = typer.Option(
+        False,
+        "--archive-apply",
+        help="Move archive dry-run candidates into memory/archive (writes observability log)",
+    ),
+    archive_apply_max_files: int = typer.Option(
+        0,
+        "--archive-apply-max-files",
+        help="When >0, limit archive apply to first N candidate files",
+    ),
+    archive_apply_out: str = typer.Option(
+        "",
+        help="Optional daily archive apply markdown output path",
+    ),
     apply_drop_preview: bool = typer.Option(
         False,
         "--apply-drop-preview",
@@ -367,7 +381,9 @@ def memory_audit(
     from nanobot.config.loader import load_config
     from nanobot.agent.memory_maintenance import (
         apply_conservative_cleanup,
+        apply_daily_archive,
         build_cleanup_plan,
+        render_daily_archive_apply_markdown,
         render_daily_archive_dry_run_markdown,
         render_cleanup_drop_preview_markdown,
         render_cleanup_stage_metrics_markdown,
@@ -586,6 +602,27 @@ def memory_audit(
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(dry_md, encoding="utf-8")
             console.print(f"[green]✓[/green] Wrote archive dry-run summary: {out}")
+
+    if archive_apply or archive_apply_out:
+        archive_result = apply_daily_archive(
+            target_dir,
+            keep_days=archive_keep_days,
+            max_files=(archive_apply_max_files if archive_apply_max_files > 0 else None),
+        )
+        archive_apply_md = render_daily_archive_apply_markdown(archive_result)
+        if archive_apply:
+            console.print(
+                "[green]✓[/green] Applied daily archive: "
+                f"moved_files={archive_result.moved_file_count}, "
+                f"moved_bullets={archive_result.moved_bullet_count}, "
+                f"metrics_rows={archive_result.metrics_rows}"
+            )
+            console.print(Markdown(archive_apply_md))
+        if archive_apply_out:
+            out = Path(archive_apply_out).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(archive_apply_md, encoding="utf-8")
+            console.print(f"[green]✓[/green] Wrote archive apply summary: {out}")
 
     if apply_drop_preview or apply_drop_preview_out:
         top_n = max(1, int(apply_drop_preview_top))
