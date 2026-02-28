@@ -162,7 +162,7 @@ M2-min 状态（截至 2026-02-26）：已落地
 - daily file 升级为固定模板（Topics / Decisions / Tool Activity / Open Questions）。
 - 仍然只写摘要，不写原始对话全文。
 
-M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
+M2-full 状态（截至 2026-02-28）：部分落地（含策略开关）
 
 - 已实施（step1）：daily file 从 `## Entries` 升级为固定模板（`Topics / Decisions / Tool Activity / Open Questions`）。
 - 已实施（step1）：基于 `history_entry` 的轻量启发式分栏路由（兼容旧 `## Entries` 文件）。
@@ -184,14 +184,16 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
   - 保持“仅规则压缩、不做语义改写”。
 - 保持兼容：`history_entry` / `memory_update` 仍为必填主路径，旧模型输出不受影响。
 
-当前策略决策（阶段性，2026-02-26）：
+当前策略决策（阶段性，2026-02-28）：
 
-- 暂时保持 `M2-full step2` 兼容版现状（结构化 `daily_sections` + 启发式 fallback）。
-- 暂不强化 consolidation prompt（仍保持“可选提供 `daily_sections`”）。
+- 已实施：`agents.defaults.memory_daily_sections_mode` 策略开关（`compatible | preferred | required`）。
+- 当前默认：`compatible`（保持既有行为，兼容旧模型输出）。
+- 已实施：`required` 模式下禁用非结构化 fallback（当结构化写入失败时只保留 `HISTORY.md` 写入与指标留痕，不再回写 unstructured daily bullet）。
+- `preferred` 作为灰度模式：目标是在不破坏兼容性的前提下，提升 `daily_sections` 的稳定产出率。
 - 先收集一段时间真实数据，重点观察：
   - `structured_daily_ok` 命中率
   - `fallback_reason` 分布（`missing` / `empty` / `invalid_type:*` / `invalid_item:*`）
-- 后续再决定是否升级为“优先提供 `daily_sections`”或进一步收紧 schema/提示词。
+- 后续再决定是否在默认配置上从 `compatible` 升级到 `preferred`，并在高质量模型上灰度 `required`。
 
 观测增强进展（2026-02-27）：
 
