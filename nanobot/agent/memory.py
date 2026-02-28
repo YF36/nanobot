@@ -10,9 +10,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from nanobot.agent.memory_consolidation import ConsolidationPipeline
+from nanobot.agent.memory_io import MemoryIO
+from nanobot.agent.memory_routing_policy import DailyRoutingPlan, DailyRoutingPolicy
 from nanobot.logging import get_logger
 
-from nanobot.utils.helpers import ensure_dir, atomic_append_text, atomic_write_text
+from nanobot.utils.helpers import ensure_dir
 
 if TYPE_CHECKING:
     from nanobot.providers.base import LLMProvider
@@ -153,13 +156,6 @@ class MemoryStore:
         next_chunk: list[dict] | None = None
 
     @dataclass
-    class _DailyRoutingPlan:
-        sections_payload: object
-        structured_source: str
-        model_daily_sections_ok: bool
-        model_daily_sections_reason: str
-
-    @dataclass
     class _ConsolidationScope:
         snapshot_len: int
         keep_count: int
@@ -191,6 +187,13 @@ class MemoryStore:
         if mode not in {"compatible", "preferred", "required"}:
             mode = "compatible"
         self.daily_sections_mode = mode
+        self._io = MemoryIO()
+        self._routing_policy = DailyRoutingPolicy(
+            normalize_daily_sections_detailed=self._normalize_daily_sections_detailed,
+            coerce_partial_daily_sections=self._coerce_partial_daily_sections,
+            synthesize_daily_sections_from_entry=self._synthesize_daily_sections_from_entry,
+        )
+        self._pipeline = ConsolidationPipeline(self)
 
     def read_long_term(self) -> str:
         if self.memory_file.exists():
@@ -198,10 +201,10 @@ class MemoryStore:
         return ""
 
     def write_long_term(self, content: str) -> None:
-        atomic_write_text(self.memory_file, content, encoding="utf-8")
+        self._io.write_text(self.memory_file, content, encoding="utf-8")
 
     def append_history(self, entry: str) -> None:
-        atomic_append_text(self.history_file, entry.rstrip() + "\n\n", encoding="utf-8")
+        self._io.append_text(self.history_file, entry.rstrip() + "\n\n", encoding="utf-8")
 
     def _append_daily_routing_metric(
         self,
@@ -234,7 +237,7 @@ class MemoryStore:
             "tool_call_has_daily_sections": tool_call_has_daily_sections,
         }
         try:
-            atomic_append_text(
+            self._io.append_text(
                 self.daily_routing_metrics_file,
                 json.dumps(row, ensure_ascii=False) + "\n",
                 encoding="utf-8",
@@ -263,7 +266,7 @@ class MemoryStore:
             "candidate_preview": candidate_preview,
         }
         try:
-            atomic_append_text(
+            self._io.append_text(
                 self.memory_update_guard_metrics_file,
                 json.dumps(row, ensure_ascii=False) + "\n",
                 encoding="utf-8",
@@ -290,7 +293,7 @@ class MemoryStore:
             "new_value": new_value,
         }
         try:
-            atomic_append_text(
+            self._io.append_text(
                 self.memory_conflict_metrics_file,
                 json.dumps(row, ensure_ascii=False) + "\n",
                 encoding="utf-8",
@@ -323,7 +326,7 @@ class MemoryStore:
             "removed_duplicate_bullet_sections": removed_duplicate_bullet_sections[:3],
         }
         try:
-            atomic_append_text(
+            self._io.append_text(
                 self.memory_update_sanitize_metrics_file,
                 json.dumps(row, ensure_ascii=False) + "\n",
                 encoding="utf-8",
@@ -407,8 +410,7 @@ class MemoryStore:
             return "Tool Activity"
         return "Topics"
 
-    @staticmethod
-    def _append_bullet_to_daily_section(daily_file: Path, section: str, bullet: str) -> bool:
+    def _append_bullet_to_daily_section(self, daily_file: Path, section: str, bullet: str) -> bool:
         text = daily_file.read_text(encoding="utf-8")
         target = f"## {section}"
         idx = text.find(target)
@@ -416,7 +418,7 @@ class MemoryStore:
             target = "## Entries"
             idx = text.find(target)
         if idx == -1:
-            atomic_append_text(daily_file, f"\n## Entries\n\n- {bullet}\n", encoding="utf-8")
+            self._io.append_text(daily_file, f"\n## Entries\n\n- {bullet}\n", encoding="utf-8")
             return True
         insert_at = text.find("\n## ", idx + len(target))
         if insert_at == -1:
@@ -429,7 +431,7 @@ class MemoryStore:
         if not prefix.endswith("\n"):
             prefix += "\n"
         new_text = prefix + f"- {bullet}\n" + suffix
-        atomic_write_text(daily_file, new_text, encoding="utf-8")
+        self._io.write_text(daily_file, new_text, encoding="utf-8")
         return True
 
     @classmethod
@@ -544,7 +546,7 @@ class MemoryStore:
             }
         created = False
         if not daily_file.exists():
-            atomic_write_text(daily_file, self._daily_memory_template(date_str), encoding="utf-8")
+            self._io.write_text(daily_file, self._daily_memory_template(date_str), encoding="utf-8")
             created = True
         wrote = 0
         for schema_key, section_name in self._DAILY_SECTIONS_SCHEMA_MAP.items():
@@ -576,7 +578,7 @@ class MemoryStore:
         daily_file = self._daily_memory_file(date_str)
         created = False
         if not daily_file.exists():
-            atomic_write_text(daily_file, self._daily_memory_template(date_str), encoding="utf-8")
+            self._io.write_text(daily_file, self._daily_memory_template(date_str), encoding="utf-8")
             created = True
         section = self._daily_section_for_history_entry(entry)
         fallback_bullet = self._compact_fallback_daily_bullet(self._history_entry_body(entry))
@@ -636,51 +638,12 @@ class MemoryStore:
         *,
         entry_text: str,
         raw_daily_sections: object,
-    ) -> _DailyRoutingPlan:
+    ) -> DailyRoutingPlan:
         """Resolve best payload for structured daily write with stable source semantics."""
-        _, model_daily_sections_reason = self._normalize_daily_sections_detailed(raw_daily_sections)
-        model_daily_sections_ok = model_daily_sections_reason == "ok"
-        if model_daily_sections_ok:
-            return self._DailyRoutingPlan(
-                sections_payload=raw_daily_sections,
-                structured_source="model",
-                model_daily_sections_ok=True,
-                model_daily_sections_reason="ok",
-            )
-
-        salvaged_sections = self._coerce_partial_daily_sections(raw_daily_sections)
-        if salvaged_sections is not None and salvaged_sections != raw_daily_sections:
-            return self._DailyRoutingPlan(
-                sections_payload=salvaged_sections,
-                structured_source="salvaged_model_partial",
-                model_daily_sections_ok=False,
-                model_daily_sections_reason=model_daily_sections_reason,
-            )
-
-        synthesized_sections = self._synthesize_daily_sections_from_entry(entry_text)
-        if synthesized_sections is not None:
-            synthesized_source = (
-                "synthesized_missing" if raw_daily_sections is None else "synthesized_after_invalid"
-            )
-            return self._DailyRoutingPlan(
-                sections_payload=synthesized_sections,
-                structured_source=synthesized_source,
-                model_daily_sections_ok=False,
-                model_daily_sections_reason=model_daily_sections_reason,
-            )
-
-        if self.daily_sections_mode == "required":
-            return self._DailyRoutingPlan(
-                sections_payload=None,
-                structured_source="required_missing",
-                model_daily_sections_ok=False,
-                model_daily_sections_reason=model_daily_sections_reason,
-            )
-        return self._DailyRoutingPlan(
-            sections_payload=raw_daily_sections,
-            structured_source="fallback_unstructured",
-            model_daily_sections_ok=False,
-            model_daily_sections_reason=model_daily_sections_reason,
+        return self._routing_policy.resolve(
+            entry_text=entry_text,
+            raw_daily_sections=raw_daily_sections,
+            mode=self.daily_sections_mode,
         )
 
     def get_memory_context(self) -> str:
@@ -1321,140 +1284,13 @@ class MemoryStore:
         memory_truncated: bool,
         call_meta: _ConsolidationCallMeta | None = None,
     ) -> None:
-        entry = args.get("history_entry")
-        entry_text, entry_reason = self._normalize_history_entry(entry)
-        if entry_text is not None:
-            self.append_history(entry_text)
-            date_str = self._history_entry_date(entry_text)
-            raw_daily_sections = args.get("daily_sections")
-            routing_plan = self._resolve_daily_routing_plan(
-                entry_text=entry_text,
-                raw_daily_sections=raw_daily_sections,
-            )
-            _, structured_daily_ok, structured_daily_details = self.append_daily_sections_detailed(
-                date_str,
-                routing_plan.sections_payload,
-            )
-            if not structured_daily_ok:
-                if self.daily_sections_mode == "required":
-                    logger.warning(
-                        "Memory daily structured write required; skipping unstructured fallback",
-                        date=date_str,
-                        reason=structured_daily_details["reason"],
-                    )
-                else:
-                    routing_plan.structured_source = "fallback_unstructured"
-                    self.append_daily_history_entry(entry_text)
-            logger.debug(
-                "Memory daily routing decision",
-                date=date_str,
-                structured_daily_ok=structured_daily_ok,
-                structured_source=routing_plan.structured_source,
-                fallback_used=(not structured_daily_ok),
-                fallback_reason=structured_daily_details["reason"],
-                structured_keys=structured_daily_details["keys"],
-                structured_bullet_count=structured_daily_details["bullet_count"],
-            )
-            self._append_daily_routing_metric(
-                session_key=session.key,
-                date_str=date_str,
-                structured_daily_ok=structured_daily_ok,
-                fallback_reason=str(structured_daily_details["reason"]),
-                structured_keys=list(structured_daily_details["keys"]),
-                structured_bullet_count=int(structured_daily_details["bullet_count"]),
-                structured_source=routing_plan.structured_source,
-                model_daily_sections_ok=routing_plan.model_daily_sections_ok,
-                model_daily_sections_reason=routing_plan.model_daily_sections_reason,
-                preferred_retry_used=bool(call_meta and call_meta.preferred_retry_used),
-                tool_call_has_daily_sections=bool(call_meta and call_meta.tool_call_has_daily_sections),
-            )
-        else:
-            logger.warning(
-                "Memory consolidation skipped history_entry due to quality gate",
-                reason=entry_reason,
-            )
-
-        if not (update := args.get("memory_update")):
-            return
-        if not isinstance(update, str):
-            update = json.dumps(update, ensure_ascii=False)
-        update, sanitize_details = self._sanitize_memory_update_detailed(update, current_memory)
-        if (
-            sanitize_details["removed_sections"]
-            or sanitize_details["removed_transient_status_line_count"]
-            or sanitize_details["removed_duplicate_bullet_count"]
-        ):
-            logger.warning(
-                "Memory consolidation sanitized long-term memory update",
-                removed_sections=sanitize_details["removed_sections"],
-                removed_recent_topic_sections=sanitize_details["removed_recent_topic_sections"],
-                removed_transient_status_sections=sanitize_details["removed_transient_status_sections"],
-                removed_transient_status_line_count=sanitize_details["removed_transient_status_line_count"],
-                removed_duplicate_bullet_count=sanitize_details["removed_duplicate_bullet_count"],
-                recent_topic_section_samples=sanitize_details["recent_topic_section_samples"],
-                transient_status_line_samples=sanitize_details["transient_status_line_samples"],
-                duplicate_bullet_section_samples=sanitize_details["duplicate_bullet_section_samples"],
-            )
-            self._append_memory_update_sanitize_metric(
-                session_key=session.key,
-                removed_recent_topic_section_count=len(
-                    list(sanitize_details["removed_recent_topic_sections"])
-                ),
-                removed_transient_status_line_count=int(
-                    sanitize_details["removed_transient_status_line_count"]
-                ),
-                removed_duplicate_bullet_count=int(
-                    sanitize_details["removed_duplicate_bullet_count"]
-                ),
-                removed_recent_topic_sections=list(sanitize_details["removed_recent_topic_sections"]),
-                removed_transient_status_sections=list(
-                    sanitize_details["removed_transient_status_sections"]
-                ),
-                removed_duplicate_bullet_sections=list(
-                    sanitize_details["duplicate_bullet_section_samples"]
-                ),
-            )
-        if memory_truncated:
-            logger.warning(
-                "Skipping memory_update write because long-term memory context was truncated",
-                current_memory_chars=len(current_memory),
-                returned_memory_chars=len(update),
-            )
-            return
-        if update == current_memory:
-            return
-        guard_reason = self._memory_update_guard_reason(current_memory, update)
-        if guard_reason:
-            logger.warning(
-                "Skipping memory_update write due to guard",
-                reason=guard_reason,
-                current_memory_chars=len(current_memory),
-                returned_memory_chars=len(update),
-            )
-            self._append_memory_update_guard_metric(
-                session_key=session.key,
-                reason=guard_reason,
-                current_memory_chars=len(current_memory),
-                returned_memory_chars=len(update),
-                candidate_preview=self._truncate_log_sample(update),
-            )
-            return
-
-        conflicts = self._detect_preference_conflicts(current_memory, update)
-        for conflict in conflicts:
-            logger.warning(
-                "Memory preference conflict detected",
-                key=conflict["conflict_key"],
-                old_value=conflict["old_value"],
-                new_value=conflict["new_value"],
-            )
-            self._append_memory_conflict_metric(
-                session_key=session.key,
-                conflict_key=conflict["conflict_key"],
-                old_value=conflict["old_value"],
-                new_value=conflict["new_value"],
-            )
-        self.write_long_term(update)
+        self._pipeline.run(
+            session=session,
+            args=args,
+            current_memory=current_memory,
+            memory_truncated=memory_truncated,
+            call_meta=call_meta,
+        )
 
     async def _process_chunk(
         self,

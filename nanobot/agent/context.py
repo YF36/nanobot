@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from nanobot.agent.memory import MemoryStore
+from nanobot.agent.memory_io import MemoryIO
 from nanobot.agent.skills import SkillsLoader
-from nanobot.utils.helpers import atomic_append_text
 
 # Lazy-loaded tiktoken encoder; None if tiktoken is not installed.
 _tiktoken_encoder: Any = None
@@ -74,6 +74,7 @@ class ContextBuilder:
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
+        self._io = MemoryIO()
         self._context_trace_file = self.memory.observability_dir / "context-trace.jsonl"
         self._max_context_tokens = max_context_tokens or self._DEFAULT_MAX_CONTEXT_TOKENS
         self._tool_catalog_compact_threshold = (
@@ -437,7 +438,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         }
         try:
             self._context_trace_file.parent.mkdir(parents=True, exist_ok=True)
-            atomic_append_text(
+            self._io.append_text(
                 self._context_trace_file,
                 json.dumps(row, ensure_ascii=False) + "\n",
                 encoding="utf-8",

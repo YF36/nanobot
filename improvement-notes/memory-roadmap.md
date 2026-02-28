@@ -342,6 +342,29 @@ DoD：
 - R0 golden case 输出一致（history/daily/memory）
 - `memory_maintenance.py` 中新增指标类型仅需配置不需代码
 
+R1 进展（2026-02-28）：
+
+- 已落地模块拆分（行为保持不变）：
+  - consolidation 编排抽离到 `nanobot/agent/memory_consolidation.py`（`ConsolidationPipeline`）
+  - daily 路由策略抽离到 `nanobot/agent/memory_routing_policy.py`
+  - 文件 IO 抽离到 `nanobot/agent/memory_io.py`（统一 `MemoryIO` 写入入口）
+- 已完成主链接线：
+  - `MemoryStore` 通过 `self._pipeline` 执行 `save_memory` 应用流程
+  - `ContextBuilder` 与 `memory_maintenance` 改用 `MemoryIO` 写入接口
+- 回归验证：
+  - `tests/test_memory_store_rules.py`
+  - `tests/test_consolidation_race.py`
+  - `tests/test_memory_maintenance.py`
+  - `tests/test_memory_observe_cli.py`
+  - `tests/test_atomic_file_io.py`
+  - `tests/test_memory_golden.py`
+  - 当前结果：`111 passed`
+- 待完成项（R1 剩余）：
+  - `memory_guard_policy.py` 拆分
+  - `JsonlMetricsSummarizer` 通用框架提取
+
+R1 状态：已部分完成（核心模块拆分 + pipeline 已落地，剩余项转下一步收尾）。
+
 ### Phase R1.5：Section-level Merge（新增阶段）
 
 目标：消除 MEMORY.md 全文替换的数据丢失风险，不改存储格式。
