@@ -532,6 +532,51 @@ def test_memory_update_guard_detects_duplicate_line_overflow() -> None:
     assert reason == "duplicate_line_overflow"
 
 
+def test_merge_memory_update_with_current_retains_existing_sections() -> None:
+    current = (
+        "# Long-term Memory\n\n"
+        "## Preferences\n- 中文沟通\n\n"
+        "## Constraints\n- local-first\n"
+    )
+    candidate = "# Long-term Memory\n\n## Preferences\n- 中文沟通\n"
+
+    merged, details = MemoryStore._merge_memory_update_with_current(current, candidate)
+
+    assert details["applied"] is True
+    assert "## Preferences" in merged
+    assert "## Constraints" in merged
+    assert merged.count("- 中文沟通") == 1
+
+
+def test_merge_memory_update_with_current_adds_new_section_and_dedupes_bullets() -> None:
+    current = "# Long-term Memory\n\n## Preferences\n- 中文沟通\n"
+    candidate = (
+        "# Long-term Memory\n\n"
+        "## Preferences\n- 中文沟通\n- 简洁回答\n\n"
+        "## Tools\n- use pytest\n"
+    )
+
+    merged, details = MemoryStore._merge_memory_update_with_current(current, candidate)
+
+    assert details["applied"] is True
+    assert "Tools" in details["added_sections"]
+    assert "## Tools" in merged
+    assert merged.count("- 中文沟通") == 1
+    assert "- 简洁回答" in merged
+    assert "- use pytest" in merged
+
+
+def test_merge_memory_update_with_current_unstructured_candidate_is_passthrough() -> None:
+    current = "# Long-term Memory\n\n## Preferences\n- 中文沟通\n"
+    candidate = "plain paragraph without headings"
+
+    merged, details = MemoryStore._merge_memory_update_with_current(current, candidate)
+
+    assert details["applied"] is False
+    assert details["reason"] == "unstructured"
+    assert merged == candidate
+
+
 @pytest.mark.asyncio
 async def test_consolidate_accepts_json_string_tool_arguments(tmp_path: Path) -> None:
     mm = MemoryStore(workspace=tmp_path)
