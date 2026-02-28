@@ -18,6 +18,10 @@
 - overflow 恢复统计
 - 并发/中断策略
 
+进展（2026-02-28）：
+
+- 已完成一轮提纯：新增 consolidation scope 构建/last_consolidated 更新/完成日志收口方法，`consolidate()` 主流程分支进一步收敛（行为保持不变）。
+
 ## G2. 记忆系统可引入 Daily Files 作为短期→中期过渡层（中优先级，设计建议）
 
 （补充参考：`ai-agent-memory` 的 `Q1/Q2/Q3`、TTL、`L0/L1/L2` 思路；本节已按 nanobot 当前阶段做取舍融合。）

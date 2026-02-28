@@ -159,6 +159,15 @@ class MemoryStore:
         model_daily_sections_ok: bool
         model_daily_sections_reason: str
 
+    @dataclass
+    class _ConsolidationScope:
+        snapshot_len: int
+        keep_count: int
+        old_messages: list[dict]
+        start_index: int
+        target_last: int
+        archive_all: bool
+
     def __init__(self, workspace: Path):
         self.memory_dir = ensure_dir(workspace / "memory")
         self.observability_dir = ensure_dir(self.memory_dir / "observability")
@@ -1054,28 +1063,15 @@ class MemoryStore:
 
         Returns True on success (including no-op), False on failure.
         """
-        # Snapshot length before the LLM call so new messages appended
-        # concurrently don't shift the last_consolidated boundary.
-        snapshot_len = len(session.messages)
+        scope = self._build_consolidation_scope(
+            session=session,
+            archive_all=archive_all,
+            memory_window=memory_window,
+        )
+        if scope is None:
+            return True
 
-        if archive_all:
-            old_messages = session.messages[:snapshot_len]
-            keep_count = 0
-            logger.info("Memory consolidation (archive_all)", message_count=snapshot_len)
-        else:
-            keep_count = memory_window // 2
-            if snapshot_len <= keep_count:
-                return True
-            if snapshot_len - session.last_consolidated <= 0:
-                return True
-            old_messages = session.messages[session.last_consolidated:snapshot_len - keep_count]
-            if not old_messages:
-                return True
-            logger.info("Memory consolidation", to_consolidate=len(old_messages), keep=keep_count)
-
-        start_index = session.last_consolidated
-        target_last = 0 if archive_all else snapshot_len - keep_count
-        pending = list(old_messages)
+        pending = list(scope.old_messages)
         processed_count = 0
 
         try:
@@ -1102,34 +1098,107 @@ class MemoryStore:
 
                     processed_count += chunk_result.processed_count
                     pending = pending[chunk_result.processed_count:]
-                    if not archive_all:
+                    if not scope.archive_all:
                         # Process at most one chunk per normal pass to keep latency bounded.
-                        session.last_consolidated = min(target_last, start_index + processed_count)
-                        logger.info(
-                            "Memory consolidation done",
-                            snapshot_len=snapshot_len,
+                        self._update_last_consolidated(
+                            session=session,
+                            target_last=scope.target_last,
+                            start_index=scope.start_index,
+                            processed_count=processed_count,
+                        )
+                        self._log_consolidation_done(
+                            snapshot_len=scope.snapshot_len,
                             last_consolidated=session.last_consolidated,
                             processed_messages=processed_count,
-                            partial=(session.last_consolidated < target_last),
+                            partial=(session.last_consolidated < scope.target_last),
                         )
                         return True
                     break
 
-            if archive_all:
+            if scope.archive_all:
                 session.last_consolidated = 0
             else:
-                session.last_consolidated = min(target_last, start_index + processed_count)
-            logger.info(
-                "Memory consolidation done",
-                snapshot_len=snapshot_len,
+                self._update_last_consolidated(
+                    session=session,
+                    target_last=scope.target_last,
+                    start_index=scope.start_index,
+                    processed_count=processed_count,
+                )
+            self._log_consolidation_done(
+                snapshot_len=scope.snapshot_len,
                 last_consolidated=session.last_consolidated,
                 processed_messages=processed_count,
-                partial=(not archive_all and session.last_consolidated < target_last),
+                partial=(not scope.archive_all and session.last_consolidated < scope.target_last),
             )
             return True
         except Exception:
             logger.exception("Memory consolidation failed")
             return False
+
+    def _build_consolidation_scope(
+        self,
+        *,
+        session: Session,
+        archive_all: bool,
+        memory_window: int,
+    ) -> _ConsolidationScope | None:
+        # Snapshot length before the LLM call so concurrent appends don't shift boundaries.
+        snapshot_len = len(session.messages)
+        if archive_all:
+            old_messages = session.messages[:snapshot_len]
+            logger.info("Memory consolidation (archive_all)", message_count=snapshot_len)
+            return self._ConsolidationScope(
+                snapshot_len=snapshot_len,
+                keep_count=0,
+                old_messages=list(old_messages),
+                start_index=session.last_consolidated,
+                target_last=0,
+                archive_all=True,
+            )
+
+        keep_count = memory_window // 2
+        if snapshot_len <= keep_count:
+            return None
+        if snapshot_len - session.last_consolidated <= 0:
+            return None
+        old_messages = session.messages[session.last_consolidated:snapshot_len - keep_count]
+        if not old_messages:
+            return None
+        logger.info("Memory consolidation", to_consolidate=len(old_messages), keep=keep_count)
+        return self._ConsolidationScope(
+            snapshot_len=snapshot_len,
+            keep_count=keep_count,
+            old_messages=list(old_messages),
+            start_index=session.last_consolidated,
+            target_last=snapshot_len - keep_count,
+            archive_all=False,
+        )
+
+    @staticmethod
+    def _update_last_consolidated(
+        *,
+        session: Session,
+        target_last: int,
+        start_index: int,
+        processed_count: int,
+    ) -> None:
+        session.last_consolidated = min(target_last, start_index + processed_count)
+
+    @staticmethod
+    def _log_consolidation_done(
+        *,
+        snapshot_len: int,
+        last_consolidated: int,
+        processed_messages: int,
+        partial: bool,
+    ) -> None:
+        logger.info(
+            "Memory consolidation done",
+            snapshot_len=snapshot_len,
+            last_consolidated=last_consolidated,
+            processed_messages=processed_messages,
+            partial=partial,
+        )
 
     async def _call_consolidation_llm(
         self,
