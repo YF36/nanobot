@@ -167,6 +167,8 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已实施（step2，兼容版）：`consolidate()` 优先写入结构化 daily sections；结构非法或缺失时回退到启发式分栏。
 - 已增强（step2+）：当 `daily_sections` 缺失时，会基于 `history_entry` 自动合成最小结构化 sections（按启发式 section 映射），优先走结构化写入路径。
 - 已增强（step2+）：当 `daily_sections` 存在但无效时，也会尝试基于 `history_entry` 合成结构化 sections 进行补救，降低 fallback 到非结构化路径的概率。
+- 已增强（step2+）：结构化补救支持对 `history_entry` 做轻量分句并按语义映射到多 section（如 decisions/tool_activity/open_questions），不再只生成单条 section bullet。
+- 已增强（step2+）：当模型 `daily_sections` 为“部分有效 + 部分无效”时，优先保留可用 section（best-effort salvage），仅对剩余问题走补救路径。
 - 已实施（step2+，2026-02-27）：daily 写入去噪增强：
   - fallback（`history_entry`）写入 daily 时仅写正文，不再带时间戳前缀；
   - 同一 daily section 内完全相同 bullet 自动去重（结构化写入与 fallback 均生效）。
@@ -196,6 +198,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已增强：routing 指标汇总新增 fallback 会话影响面（`sessions_with_fallback_events` + `reason -> sessions`），用于识别 fallback 是否跨会话扩散。
 - 已增强：当 fallback 事件跨会话扩散（会话数高）时，dashboard 追加“优先修 serializer/schema”建议，避免只做单会话 prompt 微调。
 - 已增强：routing 指标汇总新增 `structured_source` 分布（`model/synthesized_missing/synthesized_after_invalid/fallback_unstructured`），用于区分模型原生结构化与系统补救占比。
+- 已增强：daily routing 指标新增模型原始 payload 质量信号（`model_daily_sections_ok/model_daily_sections_reason`），用于区分“模型输出健康”与“被系统补救后成功”。
 - 已实施：`nanobot memory-audit --metrics-out <path>` 可导出指标汇总 Markdown。
 - 已实施：fallback reason 纠偏建议映射（`metrics-summary` 中自动给出 top reason 对应修复建议）。
 - 已增强：当 `structured_daily_ok` 命中率低于阈值（当前 60%）时，`metrics-summary` 与 dashboard 会给出 prompt/serializer 收敛建议。

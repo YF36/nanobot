@@ -122,6 +122,7 @@ class MemoryStore:
     }
     _HISTORY_ENTRY_MAX_CHARS = 600
     _DAILY_BULLET_MAX_CHARS = 240
+    _SYNTH_DAILY_MAX_BULLETS = 4
     _FALLBACK_PREFIX_PATTERNS = (
         re.compile(
             r"^(?:User|Assistant|System)\s+(?:asked|requested|shared|sent|provided|explained|confirmed|discussed)\s+",
@@ -177,6 +178,8 @@ class MemoryStore:
         structured_keys: list[str],
         structured_bullet_count: int,
         structured_source: str,
+        model_daily_sections_ok: bool,
+        model_daily_sections_reason: str,
     ) -> None:
         row = {
             "ts": datetime.now().isoformat(timespec="seconds"),
@@ -188,6 +191,8 @@ class MemoryStore:
             "structured_keys": structured_keys,
             "structured_bullet_count": structured_bullet_count,
             "structured_source": structured_source,
+            "model_daily_sections_ok": model_daily_sections_ok,
+            "model_daily_sections_reason": model_daily_sections_reason,
         }
         try:
             with open(self.daily_routing_metrics_file, "a", encoding="utf-8") as f:
@@ -455,6 +460,28 @@ class MemoryStore:
         normalized, reason = cls._normalize_daily_sections_detailed(value)
         return normalized if reason == "ok" else None
 
+    @classmethod
+    def _coerce_partial_daily_sections(cls, value: object) -> dict[str, list[str]] | None:
+        """Best-effort salvage for partially invalid model payloads.
+
+        Keeps valid list[string] sections and drops invalid keys/items.
+        """
+        if not isinstance(value, dict):
+            return None
+        normalized: dict[str, list[str]] = {}
+        for key in cls._DAILY_SECTIONS_SCHEMA_MAP:
+            raw = value.get(key)
+            if raw is None or not isinstance(raw, list):
+                continue
+            items: list[str] = []
+            for item in raw:
+                text, _ = cls._sanitize_daily_bullet(item)
+                if text:
+                    items.append(text)
+            if items:
+                normalized[key] = items
+        return normalized or None
+
     def append_daily_sections_detailed(self, date_str: str, sections: object) -> tuple[Path, bool, dict[str, object]]:
         daily_file = self._daily_memory_file(date_str)
         normalized, reason = self._normalize_daily_sections_detailed(sections)
@@ -520,15 +547,35 @@ class MemoryStore:
 
     @classmethod
     def _synthesize_daily_sections_from_entry(cls, entry: str) -> dict[str, list[str]] | None:
-        section = cls._daily_section_for_history_entry(entry)
-        schema_key = cls._DAILY_SECTIONS_REVERSE_SCHEMA_MAP.get(section)
-        if not schema_key:
+        body = cls._history_entry_body(entry)
+        compact = cls._compact_fallback_daily_bullet(body)
+        if not compact:
             return None
-        bullet = cls._compact_fallback_daily_bullet(cls._history_entry_body(entry))
-        bullet, _ = cls._sanitize_daily_bullet(bullet)
-        if not bullet:
-            return None
-        return {schema_key: [bullet]}
+        raw_parts = re.split(r"[。！？!?;；]\s*", compact)
+        candidates = [p.strip() for p in raw_parts if p and p.strip()]
+        if not candidates:
+            candidates = [compact]
+
+        sections: dict[str, list[str]] = {}
+        seen: set[str] = set()
+        used = 0
+        for part in candidates:
+            bullet, _ = cls._sanitize_daily_bullet(part)
+            if not bullet:
+                continue
+            normalized = " ".join(bullet.split()).lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            section = cls._daily_section_for_history_entry(bullet)
+            schema_key = cls._DAILY_SECTIONS_REVERSE_SCHEMA_MAP.get(section)
+            if not schema_key:
+                continue
+            sections.setdefault(schema_key, []).append(bullet)
+            used += 1
+            if used >= cls._SYNTH_DAILY_MAX_BULLETS:
+                break
+        return sections or None
 
     def get_memory_context(self) -> str:
         long_term = self.read_long_term()
@@ -1085,6 +1132,8 @@ class MemoryStore:
             self.append_history(entry_text)
             date_str = self._history_entry_date(entry_text)
             raw_daily_sections = args.get("daily_sections")
+            _, model_daily_sections_reason = self._normalize_daily_sections_detailed(raw_daily_sections)
+            model_daily_sections_ok = model_daily_sections_reason == "ok"
             structured_source = "model"
             if raw_daily_sections is None:
                 synthesized_sections = self._synthesize_daily_sections_from_entry(entry_text)
@@ -1095,6 +1144,15 @@ class MemoryStore:
                 date_str,
                 raw_daily_sections,
             )
+            if not structured_daily_ok:
+                salvaged_sections = self._coerce_partial_daily_sections(raw_daily_sections)
+                if salvaged_sections is not None and salvaged_sections != raw_daily_sections:
+                    _, structured_daily_ok, structured_daily_details = self.append_daily_sections_detailed(
+                        date_str,
+                        salvaged_sections,
+                    )
+                    if structured_daily_ok:
+                        structured_source = "salvaged_model_partial"
             if not structured_daily_ok:
                 synthesized_sections = self._synthesize_daily_sections_from_entry(entry_text)
                 if synthesized_sections is not None and synthesized_sections != raw_daily_sections:
@@ -1125,6 +1183,8 @@ class MemoryStore:
                 structured_keys=list(structured_daily_details["keys"]),
                 structured_bullet_count=int(structured_daily_details["bullet_count"]),
                 structured_source=structured_source,
+                model_daily_sections_ok=model_daily_sections_ok,
+                model_daily_sections_reason=model_daily_sections_reason,
             )
         else:
             logger.warning(

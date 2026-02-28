@@ -89,6 +89,16 @@ def test_synthesize_daily_sections_from_entry_uses_mapped_section_and_compact_bu
     assert sections == {"topics": ["about memory design."]}
 
 
+def test_synthesize_daily_sections_from_entry_can_split_into_multiple_sections() -> None:
+    sections = MemoryStore._synthesize_daily_sections_from_entry(
+        "[2026-02-25 10:00] Decision: use structured sections first; ran exec command to inspect logs; follow up tomorrow."
+    )
+    assert sections is not None
+    assert "decisions" in sections
+    assert "tool_activity" in sections
+    assert "open_questions" in sections
+
+
 def test_normalize_daily_sections_detailed_reports_quality_reasons() -> None:
     normalized, reason = MemoryStore._normalize_daily_sections_detailed(None)
     assert normalized is None and reason == "missing"
@@ -102,6 +112,17 @@ def test_normalize_daily_sections_detailed_reports_quality_reasons() -> None:
     normalized, reason = MemoryStore._normalize_daily_sections_detailed({"topics": ["  A  ", ""]})
     assert reason == "ok"
     assert normalized == {"topics": ["A"]}
+
+
+def test_coerce_partial_daily_sections_salvages_valid_keys() -> None:
+    coerced = MemoryStore._coerce_partial_daily_sections(
+        {
+            "decisions": ["keep this"],
+            "tool_activity": "invalid",
+            "open_questions": ["", 123, "follow up"],
+        }
+    )
+    assert coerced == {"decisions": ["keep this"], "open_questions": ["follow up"]}
 
 
 def test_normalize_daily_sections_drops_code_block_like_bullets() -> None:
@@ -525,6 +546,8 @@ async def test_consolidate_prefers_structured_daily_sections_when_present(tmp_pa
     assert metrics[0]["session_key"] == "test:daily_sections_ok"
     assert metrics[0]["structured_daily_ok"] is True
     assert metrics[0]["structured_source"] == "model"
+    assert metrics[0]["model_daily_sections_ok"] is True
+    assert metrics[0]["model_daily_sections_reason"] == "ok"
     assert metrics[0]["fallback_reason"] == "ok"
     assert metrics[0]["structured_bullet_count"] == 2
 
@@ -571,8 +594,57 @@ async def test_consolidate_synthesizes_structured_sections_when_daily_sections_i
     assert metrics[0]["session_key"] == "test:daily_sections_bad"
     assert metrics[0]["structured_daily_ok"] is True
     assert metrics[0]["structured_source"] == "synthesized_after_invalid"
+    assert metrics[0]["model_daily_sections_ok"] is False
+    assert metrics[0]["model_daily_sections_reason"] == "invalid_type:tool_activity"
     assert metrics[0]["fallback_used"] is False
     assert metrics[0]["fallback_reason"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_consolidate_salvages_partial_valid_daily_sections_before_synthesis(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    mm.write_long_term("# Long-term Memory\n")
+
+    session = Session(key="test:daily_sections_partial")
+    for i in range(60):
+        session.add_message("user", f"msg{i}")
+
+    provider = MagicMock()
+
+    async def _fake_chat(**kwargs):
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="t1",
+                    name="save_memory",
+                    arguments={
+                        "history_entry": "[2026-02-25 10:00] Ran exec command to inspect memory files.",
+                        "memory_update": "# Long-term Memory\n",
+                        "daily_sections": {
+                            "decisions": ["Use structured path first."],
+                            "tool_activity": "not-a-list",
+                        },
+                    },
+                )
+            ],
+        )
+
+    provider.chat = _fake_chat
+    result = await mm.consolidate(session=session, provider=provider, model="test", memory_window=50)
+
+    assert result is True
+    daily_text = (mm.memory_dir / "2026-02-25.md").read_text(encoding="utf-8")
+    assert "## Decisions" in daily_text
+    assert "- Use structured path first." in daily_text
+    metrics_path = mm.observability_dir / "daily-routing-metrics.jsonl"
+    metrics = [json.loads(line) for line in metrics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(metrics) == 1
+    assert metrics[0]["session_key"] == "test:daily_sections_partial"
+    assert metrics[0]["structured_daily_ok"] is True
+    assert metrics[0]["structured_source"] == "salvaged_model_partial"
+    assert metrics[0]["model_daily_sections_ok"] is False
+    assert metrics[0]["model_daily_sections_reason"] == "invalid_type:tool_activity"
 
 
 @pytest.mark.asyncio
@@ -614,6 +686,8 @@ async def test_consolidate_synthesizes_structured_daily_sections_when_missing(tm
     assert metrics[0]["session_key"] == "test:daily_sections_missing"
     assert metrics[0]["structured_daily_ok"] is True
     assert metrics[0]["structured_source"] == "synthesized_missing"
+    assert metrics[0]["model_daily_sections_ok"] is False
+    assert metrics[0]["model_daily_sections_reason"] == "missing"
     assert metrics[0]["fallback_used"] is False
     assert metrics[0]["fallback_reason"] == "ok"
 
