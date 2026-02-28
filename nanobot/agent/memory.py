@@ -123,6 +123,12 @@ class MemoryStore:
     _HISTORY_ENTRY_MAX_CHARS = 600
     _DAILY_BULLET_MAX_CHARS = 240
     _SYNTH_DAILY_MAX_BULLETS = 4
+    _SYNTH_DAILY_MIN_BULLET_CHARS = 8
+    _SYNTH_DAILY_EXCLUDE_PATTERNS = (
+        re.compile(r"\b(4\d{2}|5\d{2})\b"),
+        re.compile(r"\b(error|failed|failure|timeout|timed out|unavailable|temporary)\b", re.IGNORECASE),
+        re.compile(r"(报错|错误|失败|超时|不可用|临时)"),
+    )
     _FALLBACK_PREFIX_PATTERNS = (
         re.compile(
             r"^(?:User|Assistant|System)\s+(?:asked|requested|shared|sent|provided|explained|confirmed|discussed)\s+",
@@ -569,6 +575,10 @@ class MemoryStore:
         for part in candidates:
             bullet, _ = cls._sanitize_daily_bullet(part)
             if not bullet:
+                continue
+            if len(bullet) < cls._SYNTH_DAILY_MIN_BULLET_CHARS:
+                continue
+            if any(p.search(bullet) for p in cls._SYNTH_DAILY_EXCLUDE_PATTERNS):
                 continue
             normalized = " ".join(bullet.split()).lower()
             if normalized in seen:

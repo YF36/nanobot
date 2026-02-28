@@ -99,6 +99,27 @@ def test_synthesize_daily_sections_from_entry_can_split_into_multiple_sections()
     assert "open_questions" in sections
 
 
+def test_synthesize_daily_sections_filters_transient_status_noise() -> None:
+    sections = MemoryStore._synthesize_daily_sections_from_entry(
+        "[2026-02-25 10:00] 2026-02-25 timeout error 502 from API; Decision: keep daily_sections strict."
+    )
+    assert sections is not None
+    flat = " ".join(v for vals in sections.values() for v in vals)
+    assert "timeout" not in flat.lower()
+    assert "502" not in flat
+    assert "Decision: keep daily_sections strict." in flat
+
+
+def test_synthesize_daily_sections_drops_too_short_fragments() -> None:
+    sections = MemoryStore._synthesize_daily_sections_from_entry(
+        "[2026-02-25 10:00] ok; yes; Decision: use structured flow."
+    )
+    assert sections is not None
+    flat = " ".join(v for vals in sections.values() for v in vals)
+    assert "Decision: use structured flow." in flat
+    assert "ok" not in flat.lower()
+
+
 def test_resolve_daily_routing_plan_prefers_model_when_valid(tmp_path: Path) -> None:
     mm = MemoryStore(workspace=tmp_path)
     plan = mm._resolve_daily_routing_plan(
