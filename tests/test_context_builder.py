@@ -362,6 +362,23 @@ def test_system_prompt_stable_across_session_ids_when_runtime_context_enabled(tm
     assert msgs_a[0] == msgs_b[0]
 
 
+def test_build_messages_includes_and_consumes_pending_preference_conflict_prompt(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    metadata = {
+        "pending_preference_conflict": {
+            "question": "Keep old values or apply new values?",
+            "conflicts": [{"conflict_key": "language"}],
+        }
+    }
+
+    messages = builder.build_messages(history=[], current_message="hi", session_metadata=metadata)
+    system_text = _system_joined_text(messages[0]["content"])
+    assert "Pending Preference Confirmation" in system_text
+    assert "Keep old values or apply new values?" in system_text
+    assert "language" in system_text
+    assert "pending_preference_conflict" not in metadata
+
+
 def test_build_messages_groups_runtime_tool_catalog_by_capability(tmp_path) -> None:
     builder = _builder(tmp_path)
     tool_defs = [

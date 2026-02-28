@@ -455,6 +455,7 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         media: list[str] | None = None,
         channel: str | None = None,
         chat_id: str | None = None,
+        session_metadata: dict[str, Any] | None = None,
         tool_definitions: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """
@@ -499,6 +500,9 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         tool_runtime_prompt = self._build_tool_runtime_prompt(tool_definitions)
         if tool_runtime_prompt:
             dynamic_prompt = "\n\n---\n\n".join(p for p in [dynamic_prompt, tool_runtime_prompt] if p)
+        pending_preference_prompt = self._consume_pending_preference_conflict_prompt(session_metadata)
+        if pending_preference_prompt:
+            dynamic_prompt = "\n\n---\n\n".join(p for p in [dynamic_prompt, pending_preference_prompt] if p)
         runtime_context_msg = self._build_runtime_context_message(channel=channel, chat_id=chat_id)
 
         # Build system content as a list of blocks so _apply_cache_control can
@@ -570,6 +574,37 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         )
 
         return messages
+
+    @staticmethod
+    def _consume_pending_preference_conflict_prompt(session_metadata: dict[str, Any] | None) -> str:
+        if not isinstance(session_metadata, dict):
+            return ""
+        pending = session_metadata.pop("pending_preference_conflict", None)
+        if not isinstance(pending, dict):
+            return ""
+        question = str(pending.get("question") or "").strip()
+        conflicts = pending.get("conflicts")
+        if not question:
+            return ""
+        lines = [
+            "## Pending Preference Confirmation",
+            "A previous memory consolidation detected conflicting preference updates.",
+            "Before applying preference changes, ask the user to confirm this item first.",
+            f"Confirmation question: {question}",
+        ]
+        if isinstance(conflicts, list) and conflicts:
+            labels: list[str] = []
+            for item in conflicts[:3]:
+                if isinstance(item, dict):
+                    key = str(item.get("conflict_key") or "").strip()
+                    if key:
+                        labels.append(key)
+            if labels:
+                lines.append("Conflict keys: " + ", ".join(labels))
+        lines.append(
+            "Policy: if user does not explicitly confirm, keep existing preference values unchanged."
+        )
+        return "\n".join(lines)
 
     @staticmethod
     def _should_include_recent_daily_memory(current_message: str) -> bool:

@@ -233,6 +233,17 @@ class ConsolidationPipeline:
                 resolution=resolution,
             )
         if conflicts and resolution in {"keep_old", "ask_user"}:
+            if resolution == "ask_user":
+                keys = ", ".join(
+                    sorted({str(c.get("conflict_key") or "").strip() for c in conflicts if c.get("conflict_key")})
+                )
+                if not keys:
+                    keys = "these preference fields"
+                ctx.session.metadata["pending_preference_conflict"] = {
+                    "created_at": self.store._history_entry_date(ctx.entry_text or "") if ctx.entry_text else "",
+                    "conflicts": conflicts,
+                    "question": f"I detected conflicting updates for {keys}. Keep old values or apply new values?",
+                }
             self.store._append_memory_update_outcome_metric(
                 session_key=ctx.session.key,
                 outcome="guard_rejected",

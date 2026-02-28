@@ -233,6 +233,7 @@ class TurnMessageBuilder:
             "current_message": msg.content,
             "channel": channel,
             "chat_id": chat_id,
+            "session_metadata": session.metadata,
             "tool_definitions": self.deps.tools.get_definitions(),
         }
         if include_media:
