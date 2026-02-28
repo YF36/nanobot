@@ -92,3 +92,47 @@ def test_memory_audit_archive_apply_moves_old_daily_files(tmp_path: Path, monkey
     assert "Applied daily archive:" in result.output
     assert not (memory_dir / "2020-01-01.md").exists()
     assert (memory_dir / "archive" / "2020-01-01.md").exists()
+
+
+def test_memory_audit_archive_compact_apply_writes_history_and_moves(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "ws"
+    memory_dir = workspace / "memory"
+    memory_dir.mkdir(parents=True)
+    _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
+    _write(memory_dir / "HISTORY.md", "")
+    _write(
+        memory_dir / "2020-01-01.md",
+        (
+            "# 2020-01-01\n\n"
+            "## Topics\n\n- old topic\n\n"
+            "## Decisions\n\n- old decision\n"
+        ),
+    )
+
+    class _Cfg:
+        workspace_path = workspace
+
+    import nanobot.cli.commands as commands_module
+
+    monkeypatch.setattr(commands_module, "load_config", lambda: _Cfg(), raising=False)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "memory-audit",
+            "--memory-dir",
+            str(memory_dir),
+            "--archive-compact-apply",
+            "--archive-keep-days",
+            "30",
+            "--archive-compact-max-bullets-per-file",
+            "2",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Applied daily archive compact:" in result.output
+    assert not (memory_dir / "2020-01-01.md").exists()
+    assert (memory_dir / "archive" / "2020-01-01.md").exists()
+    history_text = (memory_dir / "HISTORY.md").read_text(encoding="utf-8")
+    assert "Archived daily summary" in history_text

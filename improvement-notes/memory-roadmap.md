@@ -458,5 +458,8 @@ M3 验收标准：
 - 已实施：`nanobot memory-audit --archive-apply [--archive-apply-max-files N]`
   - 行为：将超出保留窗口（`--archive-keep-days`）的 daily files 移动到 `memory/archive/`，并写入 `memory/observability/daily-archive-metrics.jsonl`；
   - 定位：生命周期最小落地（可审计归档），先收敛“长期堆积”的 daily 文件体量。
+- 已实施：`nanobot memory-audit --archive-compact-apply [--archive-compact-max-files N]`
+  - 行为：归档前先将 daily file 关键信息压缩写回 `HISTORY.md`（按 section 优先级 + 每文件 bullet 上限），再移动到 `memory/archive/`；
+  - 审计：写入 `memory/observability/daily-archive-compact-metrics.jsonl`（来源文件、归档文件、压缩前后 bullet 计数）。
 - 已有清理闭环报告：`nanobot memory-audit --apply --apply-effect-out <path>`
   - 输出清理前后对比（`before/after/delta`），便于验证收益并做回滚决策。

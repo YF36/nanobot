@@ -2,8 +2,10 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 from nanobot.agent.memory_maintenance import (
+    apply_daily_archive_compact,
     apply_daily_archive,
     apply_conservative_cleanup,
+    render_daily_archive_compact_apply_markdown,
     render_daily_archive_apply_markdown,
     build_cleanup_plan,
     render_cleanup_conversion_index_markdown,
@@ -981,3 +983,44 @@ def test_apply_daily_archive_moves_candidates_and_writes_metrics(tmp_path: Path)
     rendered = render_daily_archive_apply_markdown(result)
     assert "Daily Archive Apply Result" in rendered
     assert "Moved files: `1`" in rendered
+
+
+def test_apply_daily_archive_compact_writes_history_and_moves_file(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
+    _write(memory_dir / "HISTORY.md", "")
+    _write(
+        memory_dir / "2020-01-01.md",
+        (
+            "# 2020-01-01\n\n"
+            "## Topics\n\n- topic a\n\n"
+            "## Decisions\n\n- decision a\n\n"
+            "## Open Questions\n\n- q1\n"
+        ),
+    )
+
+    result = apply_daily_archive_compact(memory_dir, keep_days=30, max_bullets_per_file=2)
+    assert result.compacted_file_count == 1
+    assert result.compacted_bullet_total == 3
+    assert result.compacted_bullet_kept == 2
+    assert result.metrics_rows == 1
+    assert result.compacted_files == ["2020-01-01.md"]
+    assert not (memory_dir / "2020-01-01.md").exists()
+    assert (memory_dir / "archive" / "2020-01-01.md").exists()
+
+    history_text = (memory_dir / "HISTORY.md").read_text(encoding="utf-8")
+    assert "Archived daily summary:" in history_text
+    assert "Decisions: decision a" in history_text
+    assert "Topics: topic a" in history_text
+
+    metrics_path = _obs_file(memory_dir, "daily-archive-compact-metrics.jsonl")
+    lines = metrics_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert '"source_file":"2020-01-01.md"' in lines[0]
+    assert '"bullets_total":3' in lines[0]
+    assert '"bullets_kept":2' in lines[0]
+
+    rendered = render_daily_archive_compact_apply_markdown(result)
+    assert "Daily Archive Compact Apply Result" in rendered
+    assert "Compacted files: `1`" in rendered

@@ -330,6 +330,25 @@ def memory_audit(
         "",
         help="Optional daily archive apply markdown output path",
     ),
+    archive_compact_apply: bool = typer.Option(
+        False,
+        "--archive-compact-apply",
+        help="Compact old daily files into HISTORY.md summaries, then move files to memory/archive",
+    ),
+    archive_compact_max_files: int = typer.Option(
+        0,
+        "--archive-compact-max-files",
+        help="When >0, limit archive compact apply to first N candidate files",
+    ),
+    archive_compact_max_bullets_per_file: int = typer.Option(
+        6,
+        "--archive-compact-max-bullets-per-file",
+        help="Max bullets kept per archived daily file when writing compact summary to HISTORY.md",
+    ),
+    archive_compact_out: str = typer.Option(
+        "",
+        help="Optional daily archive compact apply markdown output path",
+    ),
     apply_drop_preview: bool = typer.Option(
         False,
         "--apply-drop-preview",
@@ -381,8 +400,10 @@ def memory_audit(
     from nanobot.config.loader import load_config
     from nanobot.agent.memory_maintenance import (
         apply_conservative_cleanup,
+        apply_daily_archive_compact,
         apply_daily_archive,
         build_cleanup_plan,
+        render_daily_archive_compact_apply_markdown,
         render_daily_archive_apply_markdown,
         render_daily_archive_dry_run_markdown,
         render_cleanup_drop_preview_markdown,
@@ -623,6 +644,28 @@ def memory_audit(
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(archive_apply_md, encoding="utf-8")
             console.print(f"[green]✓[/green] Wrote archive apply summary: {out}")
+
+    if archive_compact_apply or archive_compact_out:
+        archive_compact_result = apply_daily_archive_compact(
+            target_dir,
+            keep_days=archive_keep_days,
+            max_files=(archive_compact_max_files if archive_compact_max_files > 0 else None),
+            max_bullets_per_file=max(1, int(archive_compact_max_bullets_per_file)),
+        )
+        archive_compact_md = render_daily_archive_compact_apply_markdown(archive_compact_result)
+        if archive_compact_apply:
+            console.print(
+                "[green]✓[/green] Applied daily archive compact: "
+                f"compacted_files={archive_compact_result.compacted_file_count}, "
+                f"bullets_kept={archive_compact_result.compacted_bullet_kept}, "
+                f"metrics_rows={archive_compact_result.metrics_rows}"
+            )
+            console.print(Markdown(archive_compact_md))
+        if archive_compact_out:
+            out = Path(archive_compact_out).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(archive_compact_md, encoding="utf-8")
+            console.print(f"[green]✓[/green] Wrote archive compact summary: {out}")
 
     if apply_drop_preview or apply_drop_preview_out:
         top_n = max(1, int(apply_drop_preview_top))

@@ -139,6 +139,17 @@ class DailyArchiveApplyResult:
 
 
 @dataclass
+class DailyArchiveCompactApplyResult:
+    keep_days: int
+    compacted_file_count: int
+    compacted_bullet_total: int
+    compacted_bullet_kept: int
+    archive_dir: Path
+    compacted_files: list[str]
+    metrics_rows: int
+
+
+@dataclass
 class MemoryConflictMetricsSummary:
     metrics_file_exists: bool
     total_rows: int
@@ -1553,6 +1564,143 @@ def render_daily_archive_apply_markdown(result: DailyArchiveApplyResult) -> str:
         lines.append("- none")
     else:
         for name in result.moved_files:
+            lines.append(f"- {name}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _collect_daily_sections(path: Path) -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {}
+    current_section = "Entries"
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if raw.startswith("## "):
+            current_section = raw[3:].strip() or "Entries"
+            continue
+        if not raw.startswith("- "):
+            continue
+        bullet = raw[2:].strip()
+        if not bullet:
+            continue
+        sections.setdefault(current_section, []).append(bullet)
+    return sections
+
+
+def _build_daily_compact_history_entry(
+    *,
+    day: str,
+    sections: dict[str, list[str]],
+    max_bullets: int,
+) -> tuple[str, int, int]:
+    ordered_sections = ("Decisions", "Topics", "Open Questions", "Tool Activity", "Entries")
+    picked: list[str] = []
+    total = sum(len(v) for v in sections.values())
+    for section in ordered_sections:
+        for bullet in sections.get(section, []):
+            if len(picked) >= max_bullets:
+                break
+            picked.append(f"{section}: {bullet}")
+        if len(picked) >= max_bullets:
+            break
+    if not picked:
+        return f"[{day} 00:00] Archived daily summary with no usable bullets.", total, 0
+    summary = "; ".join(picked)
+    return f"[{day} 00:00] Archived daily summary: {summary}", total, len(picked)
+
+
+def apply_daily_archive_compact(
+    memory_dir: Path,
+    *,
+    keep_days: int = 30,
+    max_files: int | None = None,
+    max_bullets_per_file: int = 6,
+) -> DailyArchiveCompactApplyResult:
+    window_days = max(1, int(keep_days))
+    bullet_limit = max(1, int(max_bullets_per_file))
+    cutoff = datetime.now().date() - timedelta(days=window_days - 1)
+    candidate_paths: list[Path] = []
+    for p in _iter_daily_files(memory_dir):
+        d = _daily_file_date(p)
+        if d is None or d >= cutoff:
+            continue
+        candidate_paths.append(p)
+    candidate_paths.sort(key=lambda p: p.name)
+    if max_files is not None and int(max_files) > 0:
+        candidate_paths = candidate_paths[: int(max_files)]
+
+    archive_dir = memory_dir / "archive"
+    history_file = memory_dir / "HISTORY.md"
+    compacted_files: list[str] = []
+    compacted_bullet_total = 0
+    compacted_bullet_kept = 0
+    metrics_rows: list[dict[str, object]] = []
+    timestamp = datetime.now().isoformat(timespec="seconds")
+
+    for src in candidate_paths:
+        sections = _collect_daily_sections(src)
+        day = src.stem
+        entry, bullets_total, bullets_kept = _build_daily_compact_history_entry(
+            day=day,
+            sections=sections,
+            max_bullets=bullet_limit,
+        )
+        with history_file.open("a", encoding="utf-8") as fp:
+            fp.write(entry.rstrip() + "\n\n")
+
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        dest = archive_dir / src.name
+        if dest.exists():
+            suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dest = archive_dir / f"{src.stem}.{suffix}{src.suffix}"
+        src.replace(dest)
+
+        compacted_files.append(src.name)
+        compacted_bullet_total += bullets_total
+        compacted_bullet_kept += bullets_kept
+        metrics_rows.append(
+            {
+                "timestamp": timestamp,
+                "keep_days": window_days,
+                "source_file": src.name,
+                "archive_file": dest.name,
+                "history_entry": entry,
+                "bullets_total": bullets_total,
+                "bullets_kept": bullets_kept,
+            }
+        )
+
+    if metrics_rows:
+        metrics_file = _metrics_file_for_write(memory_dir, "daily-archive-compact-metrics.jsonl")
+        for row in metrics_rows:
+            _append_jsonl(metrics_file, row)
+
+    return DailyArchiveCompactApplyResult(
+        keep_days=window_days,
+        compacted_file_count=len(compacted_files),
+        compacted_bullet_total=compacted_bullet_total,
+        compacted_bullet_kept=compacted_bullet_kept,
+        archive_dir=archive_dir,
+        compacted_files=compacted_files,
+        metrics_rows=len(metrics_rows),
+    )
+
+
+def render_daily_archive_compact_apply_markdown(result: DailyArchiveCompactApplyResult) -> str:
+    lines = [
+        "# Daily Archive Compact Apply Result",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+        f"- Keep window: last `{result.keep_days}` day(s)",
+        f"- Compacted files: `{result.compacted_file_count}`",
+        f"- Bullets total/kept: `{result.compacted_bullet_total}` / `{result.compacted_bullet_kept}`",
+        f"- Archive dir: `{result.archive_dir}`",
+        f"- Metrics rows appended: `{result.metrics_rows}`",
+        "",
+        "## Compacted Files",
+    ]
+    if not result.compacted_files:
+        lines.append("- none")
+    else:
+        for name in result.compacted_files:
             lines.append(f"- {name}")
     lines.append("")
     return "\n".join(lines)
