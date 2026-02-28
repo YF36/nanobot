@@ -173,7 +173,7 @@ class MemoryStore:
         prompt: str
         memory_truncated: bool
 
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, *, daily_sections_mode: str = "compatible"):
         self.memory_dir = ensure_dir(workspace / "memory")
         self.observability_dir = ensure_dir(self.memory_dir / "observability")
         self.memory_file = self.memory_dir / "MEMORY.md"
@@ -182,6 +182,10 @@ class MemoryStore:
         self.memory_update_guard_metrics_file = self.observability_dir / "memory-update-guard-metrics.jsonl"
         self.memory_update_sanitize_metrics_file = self.observability_dir / "memory-update-sanitize-metrics.jsonl"
         self.memory_conflict_metrics_file = self.observability_dir / "memory-conflict-metrics.jsonl"
+        mode = (daily_sections_mode or "compatible").strip().lower()
+        if mode not in {"compatible", "preferred", "required"}:
+            mode = "compatible"
+        self.daily_sections_mode = mode
 
     def read_long_term(self) -> str:
         if self.memory_file.exists():
@@ -646,6 +650,13 @@ class MemoryStore:
                 model_daily_sections_reason=model_daily_sections_reason,
             )
 
+        if self.daily_sections_mode == "required":
+            return self._DailyRoutingPlan(
+                sections_payload=None,
+                structured_source="required_missing",
+                model_daily_sections_ok=False,
+                model_daily_sections_reason=model_daily_sections_reason,
+            )
         return self._DailyRoutingPlan(
             sections_payload=raw_daily_sections,
             structured_source="fallback_unstructured",
@@ -1277,8 +1288,15 @@ class MemoryStore:
                 routing_plan.sections_payload,
             )
             if not structured_daily_ok:
-                routing_plan.structured_source = "fallback_unstructured"
-                self.append_daily_history_entry(entry_text)
+                if self.daily_sections_mode == "required":
+                    logger.warning(
+                        "Memory daily structured write required; skipping unstructured fallback",
+                        date=date_str,
+                        reason=structured_daily_details["reason"],
+                    )
+                else:
+                    routing_plan.structured_source = "fallback_unstructured"
+                    self.append_daily_history_entry(entry_text)
             logger.debug(
                 "Memory daily routing decision",
                 date=date_str,

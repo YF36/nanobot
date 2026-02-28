@@ -72,6 +72,11 @@ def test_compact_fallback_daily_bullet_removes_templated_prefix_and_meta_clause(
     assert compact == "about memory design."
 
 
+def test_memory_store_invalid_daily_sections_mode_falls_back_to_compatible(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path, daily_sections_mode="bad-mode")
+    assert mm.daily_sections_mode == "compatible"
+
+
 def test_append_daily_history_entry_applies_compact_fallback(tmp_path: Path) -> None:
     mm = MemoryStore(workspace=tmp_path)
     mm.append_daily_history_entry(
@@ -146,6 +151,18 @@ def test_resolve_daily_routing_plan_uses_salvage_then_synthesis(tmp_path: Path) 
         raw_daily_sections={"tool_activity": "bad"},
     )
     assert plan2.structured_source in {"synthesized_after_invalid", "fallback_unstructured"}
+
+
+def test_resolve_daily_routing_plan_required_mode_returns_required_missing(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path, daily_sections_mode="required")
+    plan = mm._resolve_daily_routing_plan(
+        entry_text="[2026-02-25 10:00] 502 timeout error from API.",
+        raw_daily_sections=None,
+    )
+    assert plan.structured_source == "required_missing"
+    assert plan.sections_payload is None
+    assert plan.model_daily_sections_ok is False
+    assert plan.model_daily_sections_reason == "missing"
 
 
 def test_normalize_daily_sections_detailed_reports_quality_reasons() -> None:
@@ -739,6 +756,47 @@ async def test_consolidate_synthesizes_structured_daily_sections_when_missing(tm
     assert metrics[0]["model_daily_sections_reason"] == "missing"
     assert metrics[0]["fallback_used"] is False
     assert metrics[0]["fallback_reason"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_consolidate_required_mode_skips_unstructured_daily_fallback(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path, daily_sections_mode="required")
+    mm.write_long_term("# Long-term Memory\n")
+
+    session = Session(key="test:daily_sections_required")
+    for i in range(60):
+        session.add_message("user", f"msg{i}")
+
+    provider = MagicMock()
+
+    async def _fake_chat(**kwargs):
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="t1",
+                    name="save_memory",
+                    arguments={
+                        "history_entry": "[2026-02-25 10:00] 502 timeout error from API.",
+                        "memory_update": "# Long-term Memory\n",
+                    },
+                )
+            ],
+        )
+
+    provider.chat = _fake_chat
+    result = await mm.consolidate(session=session, provider=provider, model="test", memory_window=50)
+
+    assert result is True
+    assert not (mm.memory_dir / "2026-02-25.md").exists()
+    metrics_path = mm.observability_dir / "daily-routing-metrics.jsonl"
+    metrics = [json.loads(line) for line in metrics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(metrics) == 1
+    assert metrics[0]["session_key"] == "test:daily_sections_required"
+    assert metrics[0]["structured_daily_ok"] is False
+    assert metrics[0]["structured_source"] == "required_missing"
+    assert metrics[0]["fallback_used"] is True
+    assert metrics[0]["fallback_reason"] == "missing"
 
 
 @pytest.mark.asyncio

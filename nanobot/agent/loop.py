@@ -75,6 +75,7 @@ class AgentLoop:
         temperature: float = 0.1,
         max_tokens: int = 4096,
         memory_window: int = 100,
+        memory_daily_sections_mode: str = "compatible",
         brave_api_key: str | None = None,
         web_search_max_results: int = 5,
         web_search_timeout_s: float = 15.0,
@@ -98,6 +99,7 @@ class AgentLoop:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.memory_window = memory_window
+        self.memory_daily_sections_mode = memory_daily_sections_mode
         self.brave_api_key = brave_api_key
         self.web_search_max_results = web_search_max_results
         self.web_search_timeout_s = web_search_timeout_s
@@ -603,7 +605,10 @@ class AgentLoop:
 
     async def _consolidate_memory(self, session, archive_all: bool = False) -> bool:
         """Delegate to MemoryStore.consolidate(). Returns True on success."""
-        return await MemoryStore(self.workspace).consolidate(
+        return await MemoryStore(
+            self.workspace,
+            daily_sections_mode=self.memory_daily_sections_mode,
+        ).consolidate(
             session, self.provider, self.model,
             archive_all=archive_all, memory_window=self.memory_window,
         )
