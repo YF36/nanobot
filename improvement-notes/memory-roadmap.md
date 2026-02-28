@@ -475,6 +475,31 @@ DoD：
 - consolidation 中断后下次启动可自动恢复
 - `outcome` 指标覆盖所有 memory_update 处理路径
 
+R2 进展（2026-02-28）：
+
+- 已落地 consolidation 中断恢复（最小版）：
+  - 新增 `memory/consolidation-in-progress.json`
+  - 每次 consolidation 启动写入进度，chunk 处理后更新 `processed_count`
+  - 失败后保留进度；下次同 session 同模式运行时自动恢复 scope
+  - 成功完成后自动清理进度文件
+- 已落地 `memory-update-outcome.jsonl` 基线指标：
+  - 覆盖 `written / sanitize_modified / no_change / guard_rejected / truncated_skip`
+  - 额外记录 `guard_reason / sanitize_changes / merge_applied / conflict_count`
+  - 新增 `summarize_memory_update_outcomes()` 与 markdown render
+  - `memory-audit` 新增 `--outcome-metrics-summary`
+  - `memory-observe` 新增 `outcome-metrics-summary` 输出文件
+- 已落地 P0/P1/P2 最小打标：
+  - `cleanup-conversion-index.jsonl` 增加 `priority`
+  - `cleanup-stage-metrics.jsonl` 增加 `priority_counts`
+  - `daily-archive-metrics.jsonl` / `daily-archive-compact-metrics.jsonl` / `daily-ttl-metrics.jsonl` 增加 `priority`
+- 已落地 preference conflict 扩展（最小策略版）：
+  - preference key 扩展：`language / communication_style / timezone / output_format / tone`
+  - 支持配置 conflict keys（`MemoryStore(..., preference_conflict_keys=...)`）
+  - 支持策略：`keep_new / keep_old / ask_user / merge`（当前 `ask_user` 先按保守拒写处理，并写 outcome/metrics）
+  - conflict metrics 增加 `resolution` 字段
+
+R2 状态：已完成（最小可用版）；`ask_user` 的“下一轮交互提示注入”留待后续增强。
+
 ### Phase R2.5：L1 Insights 中间层（新增阶段）
 
 目标：填补"半持久知识"的存储空白。
