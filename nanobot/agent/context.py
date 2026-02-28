@@ -13,6 +13,7 @@ from typing import Any
 
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.skills import SkillsLoader
+from nanobot.utils.helpers import atomic_append_text
 
 # Lazy-loaded tiktoken encoder; None if tiktoken is not installed.
 _tiktoken_encoder: Any = None
@@ -436,8 +437,11 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         }
         try:
             self._context_trace_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._context_trace_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            atomic_append_text(
+                self._context_trace_file,
+                json.dumps(row, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
         except Exception:
             # Observability only; never affect main flow.
             return

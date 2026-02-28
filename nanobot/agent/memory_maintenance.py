@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from nanobot.utils.helpers import atomic_append_text, atomic_write_text
 
 _DATE_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.md$")
 _ARCHIVE_DATE_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:\..+)?\.md$")
@@ -264,13 +265,12 @@ def _parse_history_entries(history_text: str) -> list[str]:
 
 def _backup_file(src: Path, backup_dir: Path) -> None:
     backup_dir.mkdir(parents=True, exist_ok=True)
-    (backup_dir / src.name).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    atomic_write_text(backup_dir / src.name, src.read_text(encoding="utf-8"), encoding="utf-8")
 
 
 def _append_jsonl(path: Path, payload: dict[str, object]) -> None:
     line = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
-    with path.open("a", encoding="utf-8") as fp:
-        fp.write(line)
+    atomic_append_text(path, line, encoding="utf-8")
 
 
 def _observability_file(memory_dir: Path, filename: str) -> Path:
@@ -436,7 +436,7 @@ def apply_conservative_cleanup(
         new_content = ("\n\n".join(cleaned).rstrip() + "\n") if cleaned else ""
         if new_content != original:
             _backup_file(history_file, backup_dir)
-            history_file.write_text(new_content, encoding="utf-8")
+            atomic_write_text(history_file, new_content, encoding="utf-8")
             touched_files.append(history_file.name)
 
     for daily in daily_files:
@@ -541,7 +541,7 @@ def apply_conservative_cleanup(
             new_content += "\n"
         if changed and new_content != original:
             _backup_file(daily, backup_dir)
-            daily.write_text(new_content, encoding="utf-8")
+            atomic_write_text(daily, new_content, encoding="utf-8")
             touched_files.append(daily.name)
 
     if not touched_files and backup_dir.exists():

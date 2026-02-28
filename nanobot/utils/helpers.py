@@ -1,5 +1,7 @@
 """Utility functions for nanobot."""
 
+import os
+import uuid
 from pathlib import Path
 from datetime import datetime
 
@@ -78,3 +80,24 @@ def parse_session_key(key: str) -> tuple[str, str]:
     if len(parts) != 2:
         raise ValueError(f"Invalid session key: {key}")
     return parts[0], parts[1]
+
+
+def atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> None:
+    """Atomically write text content to a file via tmp + replace."""
+    ensure_dir(path.parent)
+    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+    try:
+        tmp.write_text(content, encoding=encoding)
+        tmp.replace(path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except Exception:
+                pass
+
+
+def atomic_append_text(path: Path, content: str, *, encoding: str = "utf-8") -> None:
+    """Atomically append text by read-modify-write replacement."""
+    existing = path.read_text(encoding=encoding) if path.exists() else ""
+    atomic_write_text(path, existing + content, encoding=encoding)

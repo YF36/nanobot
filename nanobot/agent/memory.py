@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from nanobot.logging import get_logger
 
-from nanobot.utils.helpers import ensure_dir
+from nanobot.utils.helpers import ensure_dir, atomic_append_text, atomic_write_text
 
 if TYPE_CHECKING:
     from nanobot.providers.base import LLMProvider
@@ -198,11 +198,10 @@ class MemoryStore:
         return ""
 
     def write_long_term(self, content: str) -> None:
-        self.memory_file.write_text(content, encoding="utf-8")
+        atomic_write_text(self.memory_file, content, encoding="utf-8")
 
     def append_history(self, entry: str) -> None:
-        with open(self.history_file, "a", encoding="utf-8") as f:
-            f.write(entry.rstrip() + "\n\n")
+        atomic_append_text(self.history_file, entry.rstrip() + "\n\n", encoding="utf-8")
 
     def _append_daily_routing_metric(
         self,
@@ -235,8 +234,11 @@ class MemoryStore:
             "tool_call_has_daily_sections": tool_call_has_daily_sections,
         }
         try:
-            with open(self.daily_routing_metrics_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            atomic_append_text(
+                self.daily_routing_metrics_file,
+                json.dumps(row, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
         except Exception:
             logger.warning(
                 "Failed to append daily routing metric",
@@ -261,8 +263,11 @@ class MemoryStore:
             "candidate_preview": candidate_preview,
         }
         try:
-            with open(self.memory_update_guard_metrics_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            atomic_append_text(
+                self.memory_update_guard_metrics_file,
+                json.dumps(row, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
         except Exception:
             logger.warning(
                 "Failed to append memory_update guard metric",
@@ -285,8 +290,11 @@ class MemoryStore:
             "new_value": new_value,
         }
         try:
-            with open(self.memory_conflict_metrics_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            atomic_append_text(
+                self.memory_conflict_metrics_file,
+                json.dumps(row, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
         except Exception:
             logger.warning(
                 "Failed to append memory conflict metric",
@@ -315,8 +323,11 @@ class MemoryStore:
             "removed_duplicate_bullet_sections": removed_duplicate_bullet_sections[:3],
         }
         try:
-            with open(self.memory_update_sanitize_metrics_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            atomic_append_text(
+                self.memory_update_sanitize_metrics_file,
+                json.dumps(row, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
         except Exception:
             logger.warning(
                 "Failed to append memory_update sanitize metric",
@@ -405,8 +416,7 @@ class MemoryStore:
             target = "## Entries"
             idx = text.find(target)
         if idx == -1:
-            with open(daily_file, "a", encoding="utf-8") as f:
-                f.write(f"\n## Entries\n\n- {bullet}\n")
+            atomic_append_text(daily_file, f"\n## Entries\n\n- {bullet}\n", encoding="utf-8")
             return True
         insert_at = text.find("\n## ", idx + len(target))
         if insert_at == -1:
@@ -419,7 +429,7 @@ class MemoryStore:
         if not prefix.endswith("\n"):
             prefix += "\n"
         new_text = prefix + f"- {bullet}\n" + suffix
-        daily_file.write_text(new_text, encoding="utf-8")
+        atomic_write_text(daily_file, new_text, encoding="utf-8")
         return True
 
     @classmethod
@@ -534,7 +544,7 @@ class MemoryStore:
             }
         created = False
         if not daily_file.exists():
-            daily_file.write_text(self._daily_memory_template(date_str), encoding="utf-8")
+            atomic_write_text(daily_file, self._daily_memory_template(date_str), encoding="utf-8")
             created = True
         wrote = 0
         for schema_key, section_name in self._DAILY_SECTIONS_SCHEMA_MAP.items():
@@ -566,7 +576,7 @@ class MemoryStore:
         daily_file = self._daily_memory_file(date_str)
         created = False
         if not daily_file.exists():
-            daily_file.write_text(self._daily_memory_template(date_str), encoding="utf-8")
+            atomic_write_text(daily_file, self._daily_memory_template(date_str), encoding="utf-8")
             created = True
         section = self._daily_section_for_history_entry(entry)
         fallback_bullet = self._compact_fallback_daily_bullet(self._history_entry_body(entry))

@@ -296,6 +296,15 @@ DoD：
 - golden output 测试覆盖核心写入链路
 - 所有文件写入操作通过 atomic write 保护
 
+R0 进展（2026-02-28）：
+
+- 已落地 atomic write 基础能力：新增 `atomic_write_text()` / `atomic_append_text()`。
+- 已接入 memory 主链写入路径：
+  - `MemoryStore.write_long_term()` / `append_history()` / daily 写入 / routing+guard+sanitize+conflict 指标写入
+  - `ContextBuilder` 的 `context-trace.jsonl` 追加写入
+  - `memory_maintenance` 的 JSONL 追加与 cleanup 文件覆盖写入
+- 已补充基础测试：`tests/test_atomic_file_io.py`
+
 ### Phase R1：模块拆分 + Pipeline 抽象（行为不变）
 
 目标：仅重构结构，不变业务行为。引入 Pipeline 编排模式。
