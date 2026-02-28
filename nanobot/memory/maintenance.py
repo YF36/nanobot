@@ -230,6 +230,10 @@ class ContextTraceSummary:
     by_stage: dict[str, int]
     avg_tokens_by_stage: dict[str, int]
     prefix_stability_ratio: float
+    daily_recall_requested_count: int
+    daily_recall_injected_count: int
+    daily_recall_tool_activity_count: int
+    daily_recall_trigger_counts: dict[str, int]
 
 
 @dataclass
@@ -2545,6 +2549,10 @@ def summarize_context_trace(memory_dir: Path) -> ContextTraceSummary:
             by_stage={},
             avg_tokens_by_stage={},
             prefix_stability_ratio=0.0,
+            daily_recall_requested_count=0,
+            daily_recall_injected_count=0,
+            daily_recall_tool_activity_count=0,
+            daily_recall_trigger_counts={},
         )
 
     total_rows = 0
@@ -2553,6 +2561,10 @@ def summarize_context_trace(memory_dir: Path) -> ContextTraceSummary:
     stage_tokens_sum: Counter[str] = Counter()
     stage_tokens_count: Counter[str] = Counter()
     before_send_prefixes: list[str] = []
+    daily_recall_requested_count = 0
+    daily_recall_injected_count = 0
+    daily_recall_tool_activity_count = 0
+    daily_recall_trigger_counter: Counter[str] = Counter()
 
     for raw_line in trace_file.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
@@ -2577,6 +2589,15 @@ def summarize_context_trace(memory_dir: Path) -> ContextTraceSummary:
             prefix = str(item.get("prefix_hash") or "")
             if prefix:
                 before_send_prefixes.append(prefix)
+            if item.get("daily_recall_requested") is True:
+                daily_recall_requested_count += 1
+            if item.get("includes_recent_daily") is True:
+                daily_recall_injected_count += 1
+            if item.get("daily_recall_include_tool_activity") is True:
+                daily_recall_tool_activity_count += 1
+            trigger = str(item.get("daily_recall_trigger") or "").strip()
+            if trigger:
+                daily_recall_trigger_counter[trigger] += 1
 
     avg_tokens_by_stage: dict[str, int] = {}
     for stage, count in stage_tokens_count.items():
@@ -2597,6 +2618,10 @@ def summarize_context_trace(memory_dir: Path) -> ContextTraceSummary:
         by_stage=dict(sorted(stage_counter.items())),
         avg_tokens_by_stage=dict(sorted(avg_tokens_by_stage.items())),
         prefix_stability_ratio=ratio,
+        daily_recall_requested_count=daily_recall_requested_count,
+        daily_recall_injected_count=daily_recall_injected_count,
+        daily_recall_tool_activity_count=daily_recall_tool_activity_count,
+        daily_recall_trigger_counts=dict(sorted(daily_recall_trigger_counter.items())),
     )
 
 
@@ -2618,6 +2643,9 @@ def render_context_trace_markdown(summary: ContextTraceSummary) -> str:
             "## Overall",
             f"- Rows: `{summary.total_rows}` (valid=`{valid}`, parse_errors=`{summary.parse_error_rows}`)",
             f"- Prefix stability ratio (before_send): `{summary.prefix_stability_ratio:.2f}`",
+            f"- Daily recall requested (before_send): `{summary.daily_recall_requested_count}`",
+            f"- Daily recall injected (before_send): `{summary.daily_recall_injected_count}`",
+            f"- Daily recall with tool activity: `{summary.daily_recall_tool_activity_count}`",
             "",
             "## Stage Counts",
         ]
@@ -2633,6 +2661,14 @@ def render_context_trace_markdown(summary: ContextTraceSummary) -> str:
     else:
         for stage, avg in summary.avg_tokens_by_stage.items():
             lines.append(f"- {stage}: `{avg}`")
+    lines.extend(["", "## Daily Recall Triggers (Top)"])
+    if not summary.daily_recall_trigger_counts:
+        lines.append("- none")
+    else:
+        for idx, (trigger, count) in enumerate(summary.daily_recall_trigger_counts.items()):
+            if idx >= 10:
+                break
+            lines.append(f"- {trigger}: `{count}`")
     lines.append("")
     return "\n".join(lines)
 
@@ -2697,6 +2733,9 @@ def render_memory_observability_dashboard(memory_dir: Path) -> str:
         "## Context Trace",
         f"- prefix stability ratio: `{trace.prefix_stability_ratio:.2f}`",
         f"- trace rows(valid): `{max(0, trace.total_rows - trace.parse_error_rows)}`",
+        f"- daily recall requested(before_send): `{trace.daily_recall_requested_count}`",
+        f"- daily recall injected(before_send): `{trace.daily_recall_injected_count}`",
+        f"- daily recall with tool activity: `{trace.daily_recall_tool_activity_count}`",
         "",
         "## Pruning Stage Distribution",
         f"- cleanup rows(valid): `{cleanup_valid}`",

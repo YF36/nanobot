@@ -62,6 +62,75 @@ class ContextBuilder:
     _RECENT_DAILY_RECALL_DAYS = 7
     _RECENT_DAILY_RECALL_MAX_BULLETS = 12
     _RECENT_DAILY_RECALL_MAX_CHARS = 1200
+    _RECENT_DAILY_RECALL_NEGATIONS = (
+        "不要回顾",
+        "不需要回顾",
+        "不用回顾",
+        "无需回顾",
+        "别回顾",
+        "don't recall",
+        "do not recall",
+        "no need to recall",
+        "skip history",
+        "ignore history",
+    )
+    _RECENT_DAILY_RECALL_KEYWORDS = (
+        "之前",
+        "刚才",
+        "上次",
+        "上周",
+        "昨天",
+        "前天",
+        "最近聊",
+        "回顾",
+        "回忆",
+        "我们聊过",
+        "还记得",
+        "recall",
+        "what did we",
+        "last time",
+        "last week",
+        "yesterday",
+        "history",
+    )
+    _RECENT_DAILY_RECALL_TIME_HINTS = (
+        "上周",
+        "昨天",
+        "前天",
+        "之前",
+        "上次",
+        "earlier",
+        "previous",
+        "last week",
+        "yesterday",
+        "day before yesterday",
+    )
+    _RECENT_DAILY_RECALL_INTENT_HINTS = (
+        "聊过",
+        "讨论",
+        "说过",
+        "做过",
+        "记得",
+        "回顾",
+        "历史",
+        "talked",
+        "discussed",
+        "worked on",
+        "did we",
+        "history",
+    )
+    _RECENT_DAILY_TOOL_ACTIVITY_KEYWORDS = (
+        "tool",
+        "tools",
+        "command",
+        "commands",
+        "exec",
+        "操作",
+        "命令",
+        "工具调用",
+        "跑了什么",
+        "执行了什么",
+    )
 
     def __init__(
         self,
@@ -427,6 +496,11 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         estimated_tokens: int,
         prefix_hash: str,
         includes_recent_daily: bool,
+        daily_recall_requested: bool | None = None,
+        daily_recall_trigger: str | None = None,
+        daily_recall_include_tool_activity: bool | None = None,
+        daily_recall_snippet_lines: int | None = None,
+        daily_recall_snippet_chars: int | None = None,
     ) -> None:
         row = {
             "ts": datetime.now().isoformat(timespec="seconds"),
@@ -436,6 +510,16 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             "prefix_hash": prefix_hash,
             "includes_recent_daily": includes_recent_daily,
         }
+        if daily_recall_requested is not None:
+            row["daily_recall_requested"] = daily_recall_requested
+        if daily_recall_trigger:
+            row["daily_recall_trigger"] = daily_recall_trigger
+        if daily_recall_include_tool_activity is not None:
+            row["daily_recall_include_tool_activity"] = daily_recall_include_tool_activity
+        if isinstance(daily_recall_snippet_lines, int):
+            row["daily_recall_snippet_lines"] = daily_recall_snippet_lines
+        if isinstance(daily_recall_snippet_chars, int):
+            row["daily_recall_snippet_chars"] = daily_recall_snippet_chars
         try:
             self._context_trace_file.parent.mkdir(parents=True, exist_ok=True)
             self._io.append_text(
@@ -477,8 +561,12 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
 
         # System prompt — split into static (cacheable) and dynamic parts
         static_prompt, dynamic_prompt = self.build_system_prompt_parts(skill_names)
-        if self._should_include_recent_daily_memory(current_message):
-            include_tool_activity = self._should_include_recent_tool_activity(current_message)
+        recall_requested, recall_trigger = self._recent_daily_recall_decision(current_message)
+        include_tool_activity, tool_activity_trigger = self._recent_tool_activity_decision(current_message)
+        recent_daily = ""
+        recent_daily_lines = 0
+        recent_daily_chars = 0
+        if recall_requested:
             recent_daily = self.memory.get_recent_daily_context(
                 days=self._RECENT_DAILY_RECALL_DAYS,
                 max_bullets=self._RECENT_DAILY_RECALL_MAX_BULLETS,
@@ -486,6 +574,8 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                 include_tool_activity=include_tool_activity,
             )
             if recent_daily:
+                recent_daily_lines = len([line for line in recent_daily.splitlines() if line.strip()])
+                recent_daily_chars = len(recent_daily)
                 dynamic_prompt = "\n\n---\n\n".join(
                     p
                     for p in [
@@ -497,6 +587,8 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
                     if p
                 )
         includes_recent_daily = "Recent Daily Memory (On-Demand)" in (dynamic_prompt or "")
+        if include_tool_activity and tool_activity_trigger:
+            recall_trigger = f"{recall_trigger}+{tool_activity_trigger}"
         tool_runtime_prompt = self._build_tool_runtime_prompt(tool_definitions)
         if tool_runtime_prompt:
             dynamic_prompt = "\n\n---\n\n".join(p for p in [dynamic_prompt, tool_runtime_prompt] if p)
@@ -538,6 +630,11 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             estimated_tokens=pre_compact_tokens,
             prefix_hash=prefix_hash,
             includes_recent_daily=includes_recent_daily,
+            daily_recall_requested=recall_requested,
+            daily_recall_trigger=recall_trigger,
+            daily_recall_include_tool_activity=include_tool_activity,
+            daily_recall_snippet_lines=recent_daily_lines,
+            daily_recall_snippet_chars=recent_daily_chars,
         )
 
         # History (compact then trim to fit budget)
@@ -549,6 +646,11 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             estimated_tokens=post_compact_tokens,
             prefix_hash=prefix_hash,
             includes_recent_daily=includes_recent_daily,
+            daily_recall_requested=recall_requested,
+            daily_recall_trigger=recall_trigger,
+            daily_recall_include_tool_activity=include_tool_activity,
+            daily_recall_snippet_lines=recent_daily_lines,
+            daily_recall_snippet_chars=recent_daily_chars,
         )
         trimmed = self._trim_history(compacted, budget_tokens)
 
@@ -571,6 +673,11 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
             estimated_tokens=total_tokens,
             prefix_hash=prefix_hash,
             includes_recent_daily=includes_recent_daily,
+            daily_recall_requested=recall_requested,
+            daily_recall_trigger=recall_trigger,
+            daily_recall_include_tool_activity=include_tool_activity,
+            daily_recall_snippet_lines=recent_daily_lines,
+            daily_recall_snippet_chars=recent_daily_chars,
         )
 
         return messages
@@ -607,44 +714,30 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         return "\n".join(lines)
 
     @staticmethod
-    def _should_include_recent_daily_memory(current_message: str) -> bool:
+    def _recent_daily_recall_decision(current_message: str) -> tuple[bool, str]:
         text = (current_message or "").strip().lower()
         if not text:
-            return False
-        keywords = (
-            "之前",
-            "刚才",
-            "上次",
-            "最近聊",
-            "回顾",
-            "回忆",
-            "我们聊过",
-            "recall",
-            "earlier",
-            "previous",
-            "what did we",
-            "history",
-            "last time",
-        )
-        return any(k in text for k in keywords)
+            return False, "empty"
+        if any(k in text for k in ContextBuilder._RECENT_DAILY_RECALL_NEGATIONS):
+            return False, "negated"
+        for keyword in ContextBuilder._RECENT_DAILY_RECALL_KEYWORDS:
+            if keyword in text:
+                return True, f"keyword:{keyword}"
+        has_time_hint = any(k in text for k in ContextBuilder._RECENT_DAILY_RECALL_TIME_HINTS)
+        has_intent_hint = any(k in text for k in ContextBuilder._RECENT_DAILY_RECALL_INTENT_HINTS)
+        if has_time_hint and has_intent_hint:
+            return True, "time_intent_combo"
+        return False, "no_recall_signal"
 
     @staticmethod
-    def _should_include_recent_tool_activity(current_message: str) -> bool:
+    def _recent_tool_activity_decision(current_message: str) -> tuple[bool, str]:
         text = (current_message or "").strip().lower()
         if not text:
-            return False
-        keywords = (
-            "tool",
-            "tools",
-            "command",
-            "commands",
-            "exec",
-            "操作",
-            "命令",
-            "工具调用",
-            "跑了什么",
-        )
-        return any(k in text for k in keywords)
+            return False, "no_tool_signal"
+        for keyword in ContextBuilder._RECENT_DAILY_TOOL_ACTIVITY_KEYWORDS:
+            if keyword in text:
+                return True, f"tool_keyword:{keyword}"
+        return False, "no_tool_signal"
 
     @staticmethod
     def _build_runtime_context_message(

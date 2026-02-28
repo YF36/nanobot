@@ -1079,6 +1079,7 @@ class MemoryStore:
         window_days = max(1, days)
         bullet_budget = max(1, max_bullets)
         char_budget = max(200, max_chars)
+        token_budget = max(50, char_budget // self._CHARS_PER_TOKEN)
         allowed_sections = set(self._RECENT_DAILY_DEFAULT_SECTIONS)
         if include_tool_activity:
             allowed_sections.add("Tool Activity")
@@ -1098,8 +1099,7 @@ class MemoryStore:
                 dated_files.append((date_str, p))
         dated_files.sort(key=lambda x: x[0], reverse=True)
 
-        lines: list[str] = []
-        total_chars = 0
+        candidates: list[tuple[str, str, str]] = []
         for date_str, path in dated_files:
             text = path.read_text(encoding="utf-8")
             current_section = ""
@@ -1114,13 +1114,47 @@ class MemoryStore:
                 bullet = raw[2:].strip()
                 if not bullet:
                     continue
-                section_label = f" [{current_section}]" if current_section else ""
-                line = f"- {date_str}{section_label}: {bullet}"
-                projected = total_chars + len(line) + 1
-                if len(lines) >= bullet_budget or projected > char_budget:
-                    return "\n".join(lines)
-                lines.append(line)
-                total_chars = projected
+                section = current_section or "Entries"
+                candidates.append((date_str, section, bullet))
+
+        if not candidates:
+            return ""
+
+        # Section budget first, then fill remaining by recency.
+        section_count = max(1, len(allowed_sections))
+        per_section_cap = max(1, bullet_budget // section_count)
+        section_selected: dict[str, int] = {}
+        selected: list[tuple[str, str, str]] = []
+        overflow: list[tuple[str, str, str]] = []
+
+        for item in candidates:
+            section = item[1]
+            used = section_selected.get(section, 0)
+            if len(selected) < bullet_budget and used < per_section_cap:
+                selected.append(item)
+                section_selected[section] = used + 1
+            else:
+                overflow.append(item)
+
+        if len(selected) < bullet_budget:
+            for item in overflow:
+                if len(selected) >= bullet_budget:
+                    break
+                selected.append(item)
+
+        lines: list[str] = []
+        total_chars = 0
+        total_tokens = 0
+        for date_str, section, bullet in selected:
+            section_label = f" [{section}]" if section else ""
+            line = f"- {date_str}{section_label}: {bullet}"
+            projected_chars = total_chars + len(line) + 1
+            projected_tokens = total_tokens + self._estimate_tokens(line)
+            if projected_chars > char_budget or projected_tokens > token_budget:
+                break
+            lines.append(line)
+            total_chars = projected_chars
+            total_tokens = projected_tokens
         return "\n".join(lines)
 
     @classmethod

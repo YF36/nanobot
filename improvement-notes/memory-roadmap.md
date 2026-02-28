@@ -829,6 +829,33 @@ DoD：
 - 回顾类 query 的成功率提升，默认 token 开销不显著上升
 - recall 触发精度有可衡量指标（触发率 + 命中率）
 
+R4 进展（2026-02-28）：
+
+- 已落地 Daily Recall 判定升级（`ContextBuilder`）：
+  - 扩展关键词（含“上周/昨天/前天”等时间词）
+  - 增加否定排除（如“不要回顾/skip history”）避免误触发
+  - 增加 `time+intent` 组合判定，降低仅靠单词命中的噪声
+- 已落地 recall trace 增强：
+  - `context-trace.jsonl` 新增字段：
+    - `daily_recall_requested`
+    - `daily_recall_trigger`
+    - `daily_recall_include_tool_activity`
+    - `daily_recall_snippet_lines`
+    - `daily_recall_snippet_chars`
+- 已落地 recent daily 三维预算（`MemoryStore.get_recent_daily_context`）：
+  - age 预算：仅取窗口内日期
+  - section 预算：先做 section cap，再按时间顺序补足
+  - token/char 预算：同时受 `max_chars` 与 token 估算上限约束
+- 已落地 dashboard/context-trace summary 的 recall 代理指标：
+  - before_send 维度统计 requested/injected/tool_activity
+  - 输出 trigger top 分布，支持后续观察与调优
+- 测试覆盖：
+  - 新增 recall 正负样本（含否定与“上周”）
+  - 新增 recent daily section budget 行为测试
+  - 新增 context-trace recall 字段汇总测试
+
+R4 状态：已完成（读取策略与 recall 质量最小闭环）。
+
 ### Phase R5：数据模型升级（谨慎）
 
 目标：在不破坏 markdown 兼容的前提下引入结构化元数据。

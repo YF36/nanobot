@@ -299,6 +299,23 @@ def test_get_recent_daily_context_can_include_tool_activity(tmp_path: Path) -> N
     assert "[Tool Activity]" in context
 
 
+def test_get_recent_daily_context_section_budget_keeps_decision_signal(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    today = datetime.now().strftime("%Y-%m-%d")
+    mm.append_daily_sections(
+        today,
+        {
+            "topics": ["topic a", "topic b", "topic c"],
+            "decisions": ["decision x"],
+        },
+    )
+
+    context = mm.get_recent_daily_context(days=1, max_bullets=2, max_chars=500)
+    assert "topic a" in context
+    assert "decision x" in context
+    assert "topic b" not in context
+
+
 def test_consolidation_system_prompt_restricts_memory_update_to_long_term_facts() -> None:
     prompt = MemoryStore._consolidation_system_prompt()
     assert "long-term stable facts only" in prompt

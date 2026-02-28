@@ -275,6 +275,35 @@ def test_build_messages_does_not_include_recent_daily_memory_on_normal_query(tmp
     assert "Recent Daily Memory (On-Demand)" not in system_text
 
 
+def test_build_messages_includes_recent_daily_memory_on_last_week_query(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    today = datetime.now().strftime("%Y-%m-%d")
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(exist_ok=True)
+    (memory_dir / f"{today}.md").write_text(
+        f"# {today}\n\n## Topics\n\n- discussed step-by-step rollout\n", encoding="utf-8"
+    )
+
+    messages = builder.build_messages(history=[], current_message="上周我们讨论过什么方案？")
+    system_text = _system_joined_text(messages[0]["content"])
+    assert "Recent Daily Memory (On-Demand)" in system_text
+    assert "discussed step-by-step rollout" in system_text
+
+
+def test_build_messages_skips_recent_daily_memory_when_user_negates_recall(tmp_path) -> None:
+    builder = _builder(tmp_path)
+    today = datetime.now().strftime("%Y-%m-%d")
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(exist_ok=True)
+    (memory_dir / f"{today}.md").write_text(
+        f"# {today}\n\n## Topics\n\n- should not be injected\n", encoding="utf-8"
+    )
+
+    messages = builder.build_messages(history=[], current_message="不要回顾历史，直接告诉我下一步。")
+    system_text = _system_joined_text(messages[0]["content"])
+    assert "Recent Daily Memory (On-Demand)" not in system_text
+
+
 def test_build_messages_recent_recall_excludes_tool_activity_by_default(tmp_path) -> None:
     builder = _builder(tmp_path)
     today = datetime.now().strftime("%Y-%m-%d")
@@ -319,6 +348,8 @@ def test_build_messages_writes_context_trace_rows(tmp_path) -> None:
     stages = [r["stage"] for r in rows]
     assert stages == ["before_compact", "after_compact", "before_send"]
     assert all("prefix_hash" in r for r in rows)
+    assert all("daily_recall_trigger" in r for r in rows)
+    assert all("daily_recall_requested" in r for r in rows)
 
 
 def test_build_messages_moves_session_metadata_out_of_system_prompt(tmp_path) -> None:

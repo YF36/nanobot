@@ -515,9 +515,9 @@ def test_summarize_context_trace_reports_stage_counts_and_stability(tmp_path: Pa
             [
                 '{"stage":"before_compact","estimated_tokens":100,"prefix_hash":"a1"}',
                 '{"stage":"after_compact","estimated_tokens":80,"prefix_hash":"a1"}',
-                '{"stage":"before_send","estimated_tokens":120,"prefix_hash":"a1"}',
-                '{"stage":"before_send","estimated_tokens":110,"prefix_hash":"a1"}',
-                '{"stage":"before_send","estimated_tokens":130,"prefix_hash":"b2"}',
+                '{"stage":"before_send","estimated_tokens":120,"prefix_hash":"a1","daily_recall_requested":true,"includes_recent_daily":true,"daily_recall_include_tool_activity":false,"daily_recall_trigger":"keyword:上周"}',
+                '{"stage":"before_send","estimated_tokens":110,"prefix_hash":"a1","daily_recall_requested":true,"includes_recent_daily":true,"daily_recall_include_tool_activity":true,"daily_recall_trigger":"keyword:之前+tool_keyword:命令"}',
+                '{"stage":"before_send","estimated_tokens":130,"prefix_hash":"b2","daily_recall_requested":false,"includes_recent_daily":false,"daily_recall_include_tool_activity":false,"daily_recall_trigger":"no_recall_signal"}',
                 "not-json",
             ]
         )
@@ -529,9 +529,14 @@ def test_summarize_context_trace_reports_stage_counts_and_stability(tmp_path: Pa
     assert summary.parse_error_rows == 1
     assert summary.by_stage["before_send"] == 3
     assert summary.avg_tokens_by_stage["before_send"] == 120
+    assert summary.daily_recall_requested_count == 2
+    assert summary.daily_recall_injected_count == 2
+    assert summary.daily_recall_tool_activity_count == 1
+    assert summary.daily_recall_trigger_counts["keyword:上周"] == 1
     assert 0.0 <= summary.prefix_stability_ratio <= 1.0
     text = render_context_trace_markdown(summary)
     assert "Prefix stability ratio" in text
+    assert "Daily recall requested" in text
 
 
 def test_render_context_trace_markdown_handles_missing_file(tmp_path: Path) -> None:
