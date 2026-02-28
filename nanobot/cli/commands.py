@@ -513,6 +513,16 @@ def memory_audit(
 
     config = load_config()
     target_dir = Path(memory_dir).expanduser() if memory_dir else (config.workspace_path / "memory")
+    def _print_risk_summary(*, action: str, candidates: int, unit: str) -> None:
+        if candidates >= 50:
+            risk = "high"
+        elif candidates >= 20:
+            risk = "medium"
+        else:
+            risk = "low"
+        console.print(
+            f"[yellow]Pre-apply risk summary[/yellow] action={action} candidates={candidates} {unit} risk={risk}"
+        )
     if apply_safe and not apply:
         console.print("[yellow]`--apply-safe` auto-enables `--apply`.[/yellow]")
         apply = True
@@ -765,6 +775,12 @@ def memory_audit(
             console.print(f"[green]✓[/green] Wrote archive dry-run summary: {out}")
 
     if archive_apply or archive_apply_out:
+        archive_dry_preview = summarize_daily_archive_dry_run(target_dir, keep_days=archive_keep_days)
+        _print_risk_summary(
+            action="archive_apply",
+            candidates=archive_dry_preview.candidate_file_count,
+            unit="files",
+        )
         archive_result = apply_daily_archive(
             target_dir,
             keep_days=archive_keep_days,
@@ -774,6 +790,7 @@ def memory_audit(
         if archive_apply:
             console.print(
                 "[green]✓[/green] Applied daily archive: "
+                f"run_id={archive_result.run_id}, "
                 f"moved_files={archive_result.moved_file_count}, "
                 f"moved_bullets={archive_result.moved_bullet_count}, "
                 f"metrics_rows={archive_result.metrics_rows}"
@@ -786,6 +803,12 @@ def memory_audit(
             console.print(f"[green]✓[/green] Wrote archive apply summary: {out}")
 
     if archive_compact_apply or archive_compact_out:
+        archive_compact_dry = summarize_daily_archive_dry_run(target_dir, keep_days=archive_keep_days)
+        _print_risk_summary(
+            action="archive_compact_apply",
+            candidates=archive_compact_dry.candidate_file_count,
+            unit="files",
+        )
         archive_compact_result = apply_daily_archive_compact(
             target_dir,
             keep_days=archive_keep_days,
@@ -796,6 +819,7 @@ def memory_audit(
         if archive_compact_apply:
             console.print(
                 "[green]✓[/green] Applied daily archive compact: "
+                f"run_id={archive_compact_result.run_id}, "
                 f"compacted_files={archive_compact_result.compacted_file_count}, "
                 f"bullets_kept={archive_compact_result.compacted_bullet_kept}, "
                 f"metrics_rows={archive_compact_result.metrics_rows}"
@@ -819,6 +843,12 @@ def memory_audit(
             console.print(f"[green]✓[/green] Wrote daily TTL dry-run summary: {out}")
 
     if daily_ttl_apply or daily_ttl_apply_out:
+        ttl_dry_preview = summarize_daily_ttl_dry_run(target_dir, ttl_days=max(1, int(daily_ttl_days)))
+        _print_risk_summary(
+            action="daily_ttl_apply",
+            candidates=ttl_dry_preview.candidate_file_count,
+            unit="files",
+        )
         ttl_apply = apply_daily_ttl_janitor(
             target_dir,
             ttl_days=max(1, int(daily_ttl_days)),
@@ -828,6 +858,7 @@ def memory_audit(
         if daily_ttl_apply:
             console.print(
                 "[green]✓[/green] Applied daily TTL janitor: "
+                f"run_id={ttl_apply.run_id}, "
                 f"deleted_files={ttl_apply.deleted_file_count}, "
                 f"deleted_bullets={ttl_apply.deleted_bullet_count}, "
                 f"metrics_rows={ttl_apply.metrics_rows}"
@@ -854,6 +885,15 @@ def memory_audit(
             console.print(f"[green]✓[/green] Wrote insights TTL dry-run summary: {out}")
 
     if insights_ttl_apply or insights_ttl_apply_out:
+        insights_ttl_dry_preview = summarize_insights_ttl_dry_run(
+            target_dir,
+            ttl_days=max(1, int(insights_ttl_days)),
+        )
+        _print_risk_summary(
+            action="insights_ttl_apply",
+            candidates=insights_ttl_dry_preview.candidate_line_count,
+            unit="lines",
+        )
         insights_apply = apply_insights_ttl_janitor(
             target_dir,
             ttl_days=max(1, int(insights_ttl_days)),
@@ -862,6 +902,7 @@ def memory_audit(
         if insights_ttl_apply:
             console.print(
                 "[green]✓[/green] Applied insights TTL janitor: "
+                f"run_id={insights_apply.run_id}, "
                 f"deleted_lines={insights_apply.deleted_line_count}, "
                 f"metrics_rows={insights_apply.metrics_rows}"
             )
@@ -993,6 +1034,54 @@ def memory_audit(
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(effect_md, encoding="utf-8")
             console.print(f"[green]✓[/green] Wrote cleanup effect: {out}")
+
+
+@app.command("memory-restore")
+def memory_restore(
+    run_id: str = typer.Option(..., "--run-id", help="Lifecycle run_id to restore"),
+    memory_dir: str = typer.Option("", help="Memory directory path; defaults to <workspace>/memory from config"),
+    files: str = typer.Option(
+        "",
+        "--files",
+        help="Optional comma-separated source filenames to restore (e.g. 2026-02-01.md,2026-02-02.md)",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview restore actions without changing files"),
+):
+    """Restore lifecycle operations by run_id (archive/archive-compact/ttl/insights-ttl)."""
+    from nanobot.config.loader import load_config
+    from nanobot.memory.maintenance import restore_lifecycle_run
+
+    config = load_config()
+    target_dir = Path(memory_dir).expanduser() if memory_dir else (config.workspace_path / "memory")
+    file_filters = [x.strip() for x in files.split(",") if x.strip()]
+    result = restore_lifecycle_run(
+        target_dir,
+        run_id=run_id.strip(),
+        file_filters=file_filters if file_filters else None,
+        dry_run=dry_run,
+    )
+    lines = [
+        "# Lifecycle Restore Result",
+        "",
+        f"- run_id: `{result.run_id}`",
+        f"- dry_run: `{result.dry_run}`",
+        f"- restored_count: `{result.restored_count}`",
+        f"- skipped_count: `{result.skipped_count}`",
+        "",
+        "## Restored",
+    ]
+    if result.restored_items:
+        for item in result.restored_items:
+            lines.append(f"- {item}")
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Skipped"])
+    if result.skipped_items:
+        for item in result.skipped_items:
+            lines.append(f"- {item}")
+    else:
+        lines.append("- none")
+    console.print(Markdown("\n".join(lines)))
 
 
 @app.command("memory-observe")

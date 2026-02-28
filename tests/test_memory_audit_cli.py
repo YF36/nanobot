@@ -250,3 +250,54 @@ def test_memory_audit_insights_ttl_apply_deletes_expired_lines(tmp_path: Path, m
     text = (memory_dir / "INSIGHTS.md").read_text(encoding="utf-8")
     assert "stale insight" not in text
     assert "recent insight" in text
+
+
+def test_memory_restore_by_run_id_recovers_ttl_deleted_file(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "ws"
+    memory_dir = workspace / "memory"
+    archive_dir = memory_dir / "archive"
+    archive_dir.mkdir(parents=True)
+    _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
+    _write(memory_dir / "HISTORY.md", "")
+    _write(archive_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n")
+
+    class _Cfg:
+        workspace_path = workspace
+
+    import nanobot.cli.commands as commands_module
+
+    monkeypatch.setattr(commands_module, "load_config", lambda: _Cfg(), raising=False)
+
+    runner = CliRunner()
+    apply_result = runner.invoke(
+        app,
+        [
+            "memory-audit",
+            "--memory-dir",
+            str(memory_dir),
+            "--daily-ttl-apply",
+            "--daily-ttl-days",
+            "30",
+        ],
+    )
+    assert apply_result.exit_code == 0
+    assert not (archive_dir / "2020-01-01.md").exists()
+
+    metrics_lines = (memory_dir / "observability" / "daily-ttl-metrics.jsonl").read_text(encoding="utf-8").splitlines()
+    assert metrics_lines
+    import json
+    run_id = json.loads(metrics_lines[-1])["run_id"]
+
+    restore_result = runner.invoke(
+        app,
+        [
+            "memory-restore",
+            "--memory-dir",
+            str(memory_dir),
+            "--run-id",
+            str(run_id),
+        ],
+    )
+    assert restore_result.exit_code == 0
+    assert "Lifecycle Restore Result" in restore_result.output
+    assert (archive_dir / "2020-01-01.md").exists()

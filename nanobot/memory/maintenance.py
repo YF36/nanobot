@@ -148,6 +148,7 @@ class DailyArchiveDryRunSummary:
 
 @dataclass
 class DailyArchiveApplyResult:
+    run_id: str
     keep_days: int
     moved_file_count: int
     moved_bullet_count: int
@@ -158,6 +159,7 @@ class DailyArchiveApplyResult:
 
 @dataclass
 class DailyArchiveCompactApplyResult:
+    run_id: str
     keep_days: int
     compacted_file_count: int
     compacted_bullet_total: int
@@ -177,6 +179,7 @@ class DailyTTLDryRunSummary:
 
 @dataclass
 class DailyTTLApplyResult:
+    run_id: str
     ttl_days: int
     deleted_file_count: int
     deleted_bullet_count: int
@@ -193,10 +196,21 @@ class InsightsTTLDryRunSummary:
 
 @dataclass
 class InsightsTTLApplyResult:
+    run_id: str
     ttl_days: int
     deleted_line_count: int
     deleted_lines: list[str]
     metrics_rows: int
+
+
+@dataclass
+class LifecycleRestoreResult:
+    run_id: str
+    dry_run: bool
+    restored_count: int
+    skipped_count: int
+    restored_items: list[str]
+    skipped_items: list[str]
 
 
 @dataclass
@@ -378,6 +392,18 @@ def _metrics_file_for_write(memory_dir: Path, filename: str) -> Path:
 
 def _metrics_file_for_read(memory_dir: Path, filename: str) -> Path:
     return _observability_file(memory_dir, filename)
+
+
+def _new_run_id(prefix: str) -> str:
+    return f"{prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+
+
+def _lifecycle_log_file(memory_dir: Path) -> Path:
+    return _metrics_file_for_write(memory_dir, "lifecycle-ops.jsonl")
+
+
+def _append_lifecycle_row(memory_dir: Path, payload: dict[str, object]) -> None:
+    _append_jsonl(_lifecycle_log_file(memory_dir), payload)
 
 
 def _extract_history_dates(entries: list[str]) -> set[str]:
@@ -1698,6 +1724,7 @@ def apply_daily_archive(
     keep_days: int = 30,
     max_files: int | None = None,
 ) -> DailyArchiveApplyResult:
+    run_id = _new_run_id("archive")
     window_days = max(1, int(keep_days))
     cutoff = datetime.now().date() - timedelta(days=window_days - 1)
     candidate_paths: list[Path] = []
@@ -1729,6 +1756,7 @@ def apply_daily_archive(
         moved_bullet_count += bullet_count
         metrics_rows.append(
             {
+                "run_id": run_id,
                 "timestamp": timestamp,
                 "keep_days": window_days,
                 "source_file": src.name,
@@ -1737,6 +1765,16 @@ def apply_daily_archive(
                 "priority": "P2",
             }
         )
+        _append_lifecycle_row(
+            memory_dir,
+            {
+                "run_id": run_id,
+                "timestamp": timestamp,
+                "op": "archive",
+                "source_file": src.name,
+                "archive_file": dest.name,
+            },
+        )
 
     if metrics_rows:
         metrics_file = _metrics_file_for_write(memory_dir, "daily-archive-metrics.jsonl")
@@ -1744,6 +1782,7 @@ def apply_daily_archive(
             _append_jsonl(metrics_file, row)
 
     return DailyArchiveApplyResult(
+        run_id=run_id,
         keep_days=window_days,
         moved_file_count=len(moved_files),
         moved_bullet_count=moved_bullet_count,
@@ -1758,6 +1797,7 @@ def render_daily_archive_apply_markdown(result: DailyArchiveApplyResult) -> str:
         "# Daily Archive Apply Result",
         "",
         f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+        f"- run_id: `{result.run_id}`",
         f"- Keep window: last `{result.keep_days}` day(s)",
         f"- Moved files: `{result.moved_file_count}`",
         f"- Moved bullets: `{result.moved_bullet_count}`",
@@ -1820,6 +1860,7 @@ def apply_daily_archive_compact(
     max_files: int | None = None,
     max_bullets_per_file: int = 6,
 ) -> DailyArchiveCompactApplyResult:
+    run_id = _new_run_id("archive_compact")
     window_days = max(1, int(keep_days))
     bullet_limit = max(1, int(max_bullets_per_file))
     cutoff = datetime.now().date() - timedelta(days=window_days - 1)
@@ -1840,6 +1881,11 @@ def apply_daily_archive_compact(
     compacted_bullet_kept = 0
     metrics_rows: list[dict[str, object]] = []
     timestamp = datetime.now().isoformat(timespec="seconds")
+    history_backup_rel: str | None = None
+    if candidate_paths and history_file.exists():
+        backup_dir = memory_dir / f"_lifecycle_backup_{run_id}"
+        _backup_file(history_file, backup_dir)
+        history_backup_rel = str((backup_dir / history_file.name).relative_to(memory_dir))
 
     for src in candidate_paths:
         sections = _collect_daily_sections(src)
@@ -1864,6 +1910,7 @@ def apply_daily_archive_compact(
         compacted_bullet_kept += bullets_kept
         metrics_rows.append(
             {
+                "run_id": run_id,
                 "timestamp": timestamp,
                 "keep_days": window_days,
                 "source_file": src.name,
@@ -1874,6 +1921,17 @@ def apply_daily_archive_compact(
                 "priority": "P2",
             }
         )
+        _append_lifecycle_row(
+            memory_dir,
+            {
+                "run_id": run_id,
+                "timestamp": timestamp,
+                "op": "archive_compact",
+                "source_file": src.name,
+                "archive_file": dest.name,
+                "history_backup_file": history_backup_rel or "",
+            },
+        )
 
     if metrics_rows:
         metrics_file = _metrics_file_for_write(memory_dir, "daily-archive-compact-metrics.jsonl")
@@ -1881,6 +1939,7 @@ def apply_daily_archive_compact(
             _append_jsonl(metrics_file, row)
 
     return DailyArchiveCompactApplyResult(
+        run_id=run_id,
         keep_days=window_days,
         compacted_file_count=len(compacted_files),
         compacted_bullet_total=compacted_bullet_total,
@@ -1896,6 +1955,7 @@ def render_daily_archive_compact_apply_markdown(result: DailyArchiveCompactApply
         "# Daily Archive Compact Apply Result",
         "",
         f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+        f"- run_id: `{result.run_id}`",
         f"- Keep window: last `{result.keep_days}` day(s)",
         f"- Compacted files: `{result.compacted_file_count}`",
         f"- Bullets total/kept: `{result.compacted_bullet_total}` / `{result.compacted_bullet_kept}`",
@@ -1967,10 +2027,12 @@ def apply_insights_ttl_janitor(
     *,
     ttl_days: int = 60,
 ) -> InsightsTTLApplyResult:
+    run_id = _new_run_id("insights_ttl")
     dry = summarize_insights_ttl_dry_run(memory_dir, ttl_days=ttl_days)
     insights_file = memory_dir / "INSIGHTS.md"
     if not insights_file.exists() or dry.candidate_line_count <= 0:
         return InsightsTTLApplyResult(
+            run_id=run_id,
             ttl_days=dry.ttl_days,
             deleted_line_count=0,
             deleted_lines=[],
@@ -1998,6 +2060,7 @@ def apply_insights_ttl_janitor(
 
     if not deleted_lines:
         return InsightsTTLApplyResult(
+            run_id=run_id,
             ttl_days=dry.ttl_days,
             deleted_line_count=0,
             deleted_lines=[],
@@ -2006,6 +2069,7 @@ def apply_insights_ttl_janitor(
 
     backup_dir = memory_dir / f"_cleanup_backup_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
     _backup_file(insights_file, backup_dir)
+    backup_rel = str((backup_dir / insights_file.name).relative_to(memory_dir))
     rendered = "\n".join(kept_lines).rstrip() + "\n"
     _IO.write_text(insights_file, rendered, encoding="utf-8")
 
@@ -2013,6 +2077,7 @@ def apply_insights_ttl_janitor(
     _append_jsonl(
         metrics_file,
         {
+            "run_id": run_id,
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "ttl_days": dry.ttl_days,
             "deleted_line_count": len(deleted_lines),
@@ -2020,7 +2085,19 @@ def apply_insights_ttl_janitor(
             "priority": "P2",
         },
     )
+    _append_lifecycle_row(
+        memory_dir,
+        {
+            "run_id": run_id,
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "op": "insights_ttl",
+            "insights_file": "INSIGHTS.md",
+            "backup_file": backup_rel,
+            "deleted_line_count": len(deleted_lines),
+        },
+    )
     return InsightsTTLApplyResult(
+        run_id=run_id,
         ttl_days=dry.ttl_days,
         deleted_line_count=len(deleted_lines),
         deleted_lines=deleted_lines,
@@ -2033,6 +2110,7 @@ def render_insights_ttl_apply_markdown(result: InsightsTTLApplyResult) -> str:
         "# Insights TTL Apply Result",
         "",
         f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+        f"- run_id: `{result.run_id}`",
         f"- TTL window: keep last `{result.ttl_days}` day(s) in `INSIGHTS.md`",
         f"- Deleted lines: `{result.deleted_line_count}`",
         f"- Metrics rows appended: `{result.metrics_rows}`",
@@ -2101,6 +2179,7 @@ def apply_daily_ttl_janitor(
     ttl_days: int = 90,
     max_files: int | None = None,
 ) -> DailyTTLApplyResult:
+    run_id = _new_run_id("daily_ttl")
     dry = summarize_daily_ttl_dry_run(memory_dir, ttl_days=ttl_days)
     archive_dir = memory_dir / "archive"
     targets = list(dry.candidate_files)
@@ -2111,17 +2190,21 @@ def apply_daily_ttl_janitor(
     deleted_bullet_count = 0
     metrics_rows: list[dict[str, object]] = []
     timestamp = datetime.now().isoformat(timespec="seconds")
+    backup_dir = memory_dir / f"_lifecycle_backup_{run_id}"
 
     for name in targets:
         path = archive_dir / name
         if not path.exists():
             continue
         bullet_count = sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.startswith("- "))
+        _backup_file(path, backup_dir)
+        backup_rel = str((backup_dir / path.name).relative_to(memory_dir))
         path.unlink()
         deleted_files.append(name)
         deleted_bullet_count += bullet_count
         metrics_rows.append(
             {
+                "run_id": run_id,
                 "timestamp": timestamp,
                 "ttl_days": dry.ttl_days,
                 "source_file": name,
@@ -2130,6 +2213,17 @@ def apply_daily_ttl_janitor(
                 "priority": "P2",
             }
         )
+        _append_lifecycle_row(
+            memory_dir,
+            {
+                "run_id": run_id,
+                "timestamp": timestamp,
+                "op": "daily_ttl",
+                "archive_file": name,
+                "backup_file": backup_rel,
+                "bullet_count": bullet_count,
+            },
+        )
 
     if metrics_rows:
         metrics_file = _metrics_file_for_write(memory_dir, "daily-ttl-metrics.jsonl")
@@ -2137,6 +2231,7 @@ def apply_daily_ttl_janitor(
             _append_jsonl(metrics_file, row)
 
     return DailyTTLApplyResult(
+        run_id=run_id,
         ttl_days=dry.ttl_days,
         deleted_file_count=len(deleted_files),
         deleted_bullet_count=deleted_bullet_count,
@@ -2150,6 +2245,7 @@ def render_daily_ttl_apply_markdown(result: DailyTTLApplyResult) -> str:
         "# Daily TTL Apply Result",
         "",
         f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+        f"- run_id: `{result.run_id}`",
         f"- TTL window: keep last `{result.ttl_days}` day(s) in `memory/archive`",
         f"- Deleted files: `{result.deleted_file_count}`",
         f"- Deleted bullets: `{result.deleted_bullet_count}`",
@@ -2164,6 +2260,119 @@ def render_daily_ttl_apply_markdown(result: DailyTTLApplyResult) -> str:
             lines.append(f"- {name}")
     lines.append("")
     return "\n".join(lines)
+
+
+def restore_lifecycle_run(
+    memory_dir: Path,
+    *,
+    run_id: str,
+    file_filters: list[str] | None = None,
+    dry_run: bool = False,
+) -> LifecycleRestoreResult:
+    log_file = _metrics_file_for_read(memory_dir, "lifecycle-ops.jsonl")
+    if not log_file.exists():
+        return LifecycleRestoreResult(
+            run_id=run_id,
+            dry_run=dry_run,
+            restored_count=0,
+            skipped_count=0,
+            restored_items=[],
+            skipped_items=["lifecycle-ops.jsonl not found"],
+        )
+
+    allow = {x.strip() for x in (file_filters or []) if x.strip()}
+    rows: list[dict[str, object]] = []
+    for raw in log_file.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("run_id") or "") != run_id:
+            continue
+        rows.append(item)
+
+    restored: list[str] = []
+    skipped: list[str] = []
+    history_restored = False
+    for item in rows:
+        op = str(item.get("op") or "")
+        if op in {"archive", "archive_compact"}:
+            source_file = str(item.get("source_file") or "").strip()
+            archive_file = str(item.get("archive_file") or "").strip()
+            if not source_file or not archive_file:
+                skipped.append(f"{op}: missing source/archive file info")
+                continue
+            if allow and source_file not in allow:
+                continue
+            src = memory_dir / "archive" / archive_file
+            dest = memory_dir / source_file
+            if not src.exists():
+                skipped.append(f"{op}:{source_file} missing archive source")
+                continue
+            if dest.exists():
+                skipped.append(f"{op}:{source_file} destination exists")
+                continue
+            if not dry_run:
+                src.replace(dest)
+            restored.append(f"{op}:{source_file}")
+
+            if op == "archive_compact" and not history_restored:
+                history_backup_file = str(item.get("history_backup_file") or "").strip()
+                if history_backup_file:
+                    backup = memory_dir / history_backup_file
+                    history_dest = memory_dir / "HISTORY.md"
+                    if backup.exists():
+                        if not dry_run:
+                            _IO.write_text(history_dest, backup.read_text(encoding="utf-8"), encoding="utf-8")
+                        restored.append("archive_compact:HISTORY.md")
+                        history_restored = True
+        elif op == "daily_ttl":
+            archive_file = str(item.get("archive_file") or "").strip()
+            backup_file = str(item.get("backup_file") or "").strip()
+            if not archive_file or not backup_file:
+                skipped.append("daily_ttl: missing archive/backup file info")
+                continue
+            if allow and archive_file not in allow:
+                continue
+            src = memory_dir / backup_file
+            dest = memory_dir / "archive" / archive_file
+            if not src.exists():
+                skipped.append(f"daily_ttl:{archive_file} missing backup source")
+                continue
+            if dest.exists():
+                skipped.append(f"daily_ttl:{archive_file} destination exists")
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if not dry_run:
+                _IO.write_text(dest, src.read_text(encoding="utf-8"), encoding="utf-8")
+            restored.append(f"daily_ttl:{archive_file}")
+        elif op == "insights_ttl":
+            backup_file = str(item.get("backup_file") or "").strip()
+            if not backup_file:
+                skipped.append("insights_ttl: missing backup file info")
+                continue
+            src = memory_dir / backup_file
+            dest = memory_dir / "INSIGHTS.md"
+            if not src.exists():
+                skipped.append("insights_ttl: missing backup source")
+                continue
+            if not dry_run:
+                _IO.write_text(dest, src.read_text(encoding="utf-8"), encoding="utf-8")
+            restored.append("insights_ttl:INSIGHTS.md")
+
+    return LifecycleRestoreResult(
+        run_id=run_id,
+        dry_run=dry_run,
+        restored_count=len(restored),
+        skipped_count=len(skipped),
+        restored_items=restored,
+        skipped_items=skipped,
+    )
 
 
 def summarize_memory_update_outcomes(memory_dir: Path) -> MemoryUpdateOutcomeSummary:

@@ -793,6 +793,25 @@ DoD：
 
 - 任一 apply 都可基于日志恢复到 apply 前状态
 
+R3 进展（2026-02-28）：
+
+- 已落地 lifecycle run_id 闭环（archive / archive-compact / daily-ttl / insights-ttl）：
+  - 各 apply 操作结果新增 `run_id`
+  - 各 metrics 行新增 `run_id` 字段（`daily-archive*` / `daily-ttl` / `insights-ttl`）
+  - 新增统一 lifecycle 日志：`memory/observability/lifecycle-ops.jsonl`
+- 已落地 restore 能力：
+  - 新增 `restore_lifecycle_run()`（按 `run_id` 恢复，支持可选文件过滤与 dry-run）
+  - 新增 CLI：`nanobot memory-restore --run-id <id> [--files a,b] [--dry-run]`
+  - 覆盖恢复场景：archive move-back、archive-compact move-back + HISTORY 恢复、daily-ttl 从备份回放、insights-ttl 文件恢复
+- 已落地 destructive 操作风险摘要标准化：
+  - `memory-audit` 在 archive/apply、archive-compact/apply、daily-ttl/apply、insights-ttl/apply 前统一输出 `Pre-apply risk summary`
+  - 统一展示 action/candidates/risk（low/medium/high）
+- 回归验证：
+  - 生命周期与 CLI 相关测试通过（含 restore 新增用例）
+  - 当前结果：`136 passed`（两组回归合计）
+
+R3 状态：已完成（run_id 闭环 + restore CLI + 风险摘要标准化）。
+
 ### Phase R4：读取策略与 recall 质量
 
 目标：提升 recall 命中率并控制 token 成本。

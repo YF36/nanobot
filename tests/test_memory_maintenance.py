@@ -32,6 +32,7 @@ from nanobot.memory.maintenance import (
     summarize_insights_ttl_dry_run,
     apply_insights_ttl_janitor,
     apply_daily_ttl_janitor,
+    restore_lifecycle_run,
     summarize_cleanup_stage_metrics,
     summarize_cleanup_conversion_index,
     summarize_cleanup_drop_preview,
@@ -1061,6 +1062,7 @@ def test_apply_daily_archive_moves_candidates_and_writes_metrics(tmp_path: Path)
     _write(memory_dir / f"{today}.md", f"# {today}\n\n## Topics\n\n- recent\n")
 
     result = apply_daily_archive(memory_dir, keep_days=30)
+    assert result.run_id.startswith("archive_")
     assert result.moved_file_count == 1
     assert result.moved_bullet_count == 2
     assert result.metrics_rows == 1
@@ -1071,6 +1073,7 @@ def test_apply_daily_archive_moves_candidates_and_writes_metrics(tmp_path: Path)
     metrics_path = _obs_file(memory_dir, "daily-archive-metrics.jsonl")
     lines = metrics_path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
+    assert '"run_id":"' in lines[0]
     assert '"source_file":"2020-01-01.md"' in lines[0]
     assert '"archive_file":"2020-01-01.md"' in lines[0]
     assert '"priority":"P2"' in lines[0]
@@ -1096,6 +1099,7 @@ def test_apply_daily_archive_compact_writes_history_and_moves_file(tmp_path: Pat
     )
 
     result = apply_daily_archive_compact(memory_dir, keep_days=30, max_bullets_per_file=2)
+    assert result.run_id.startswith("archive_compact_")
     assert result.compacted_file_count == 1
     assert result.compacted_bullet_total == 3
     assert result.compacted_bullet_kept == 2
@@ -1112,6 +1116,7 @@ def test_apply_daily_archive_compact_writes_history_and_moves_file(tmp_path: Pat
     metrics_path = _obs_file(memory_dir, "daily-archive-compact-metrics.jsonl")
     lines = metrics_path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
+    assert '"run_id":"' in lines[0]
     assert '"source_file":"2020-01-01.md"' in lines[0]
     assert '"bullets_total":3' in lines[0]
     assert '"bullets_kept":2' in lines[0]
@@ -1140,12 +1145,14 @@ def test_daily_ttl_dry_run_and_apply_only_touch_archive(tmp_path: Path) -> None:
     assert "Daily TTL Dry-Run Summary" in dry_md
 
     applied = apply_daily_ttl_janitor(memory_dir, ttl_days=30)
+    assert applied.run_id.startswith("daily_ttl_")
     assert applied.deleted_file_count == 1
     assert applied.deleted_bullet_count == 2
     assert applied.deleted_files == ["2020-01-01.md"]
     assert not (archive_dir / "2020-01-01.md").exists()
     assert (archive_dir / f"{today}.md").exists()
     metrics = _obs_file(memory_dir, "daily-ttl-metrics.jsonl").read_text(encoding="utf-8")
+    assert '"run_id":"' in metrics
     assert '"source_file":"2020-01-01.md"' in metrics
     assert '"action":"delete"' in metrics
     assert '"priority":"P2"' in metrics
@@ -1172,13 +1179,50 @@ def test_insights_ttl_dry_run_and_apply(tmp_path: Path) -> None:
     assert "Insights TTL Dry-Run Summary" in dry_md
 
     applied = apply_insights_ttl_janitor(memory_dir, ttl_days=30)
+    assert applied.run_id.startswith("insights_ttl_")
     assert applied.deleted_line_count == 1
     assert "stale insight" in applied.deleted_lines[0]
     after = (memory_dir / "INSIGHTS.md").read_text(encoding="utf-8")
     assert "stale insight" not in after
     assert "recent insight" in after
     metrics = _obs_file(memory_dir, "insights-ttl-metrics.jsonl").read_text(encoding="utf-8")
+    assert '"run_id":"' in metrics
     assert '"action":"delete_lines"' in metrics
     assert '"priority":"P2"' in metrics
     apply_md = render_insights_ttl_apply_markdown(applied)
     assert "Insights TTL Apply Result" in apply_md
+
+
+def test_restore_lifecycle_run_restores_daily_ttl_file(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    archive_dir = memory_dir / "archive"
+    archive_dir.mkdir(parents=True)
+    _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
+    _write(memory_dir / "HISTORY.md", "")
+    _write(archive_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- old\n")
+
+    applied = apply_daily_ttl_janitor(memory_dir, ttl_days=30)
+    assert applied.deleted_file_count == 1
+    assert not (archive_dir / "2020-01-01.md").exists()
+
+    restored = restore_lifecycle_run(memory_dir, run_id=applied.run_id, dry_run=False)
+    assert restored.restored_count >= 1
+    assert (archive_dir / "2020-01-01.md").exists()
+
+
+def test_restore_lifecycle_run_restores_archive_compact_history_and_file(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(parents=True)
+    _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
+    _write(memory_dir / "HISTORY.md", "seed\n\n")
+    _write(memory_dir / "2020-01-01.md", "# 2020-01-01\n\n## Topics\n\n- topic a\n")
+
+    applied = apply_daily_archive_compact(memory_dir, keep_days=30, max_bullets_per_file=1)
+    assert applied.compacted_file_count == 1
+    assert not (memory_dir / "2020-01-01.md").exists()
+    assert "Archived daily summary" in (memory_dir / "HISTORY.md").read_text(encoding="utf-8")
+
+    restored = restore_lifecycle_run(memory_dir, run_id=applied.run_id, dry_run=False)
+    assert restored.restored_count >= 1
+    assert (memory_dir / "2020-01-01.md").exists()
+    assert (memory_dir / "HISTORY.md").read_text(encoding="utf-8").startswith("seed")
