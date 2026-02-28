@@ -168,6 +168,11 @@ class MemoryStore:
         target_last: int
         archive_all: bool
 
+    @dataclass
+    class _ChunkPromptData:
+        prompt: str
+        memory_truncated: bool
+
     def __init__(self, workspace: Path):
         self.memory_dir = ensure_dir(workspace / "memory")
         self.observability_dir = ensure_dir(self.memory_dir / "observability")
@@ -1392,11 +1397,36 @@ class MemoryStore:
         chunk: list[dict],
         current_memory: str,
     ) -> _ChunkProcessResult:
-        lines = self._format_consolidation_lines(chunk)
-        if not lines:
+        prompt_data = self._build_chunk_prompt(
+            chunk=chunk,
+            current_memory=current_memory,
+        )
+        if prompt_data is None:
             # Nothing useful to summarize; just mark the messages as processed.
             return self._ChunkProcessResult(status="processed", processed_count=len(chunk))
+        response = await self._call_consolidation_llm(
+            provider=provider,
+            model=model,
+            prompt=prompt_data.prompt,
+        )
+        assert response is not None
+        return self._handle_chunk_response(
+            session=session,
+            response=response,
+            chunk=chunk,
+            current_memory=current_memory,
+            memory_truncated=prompt_data.memory_truncated,
+        )
 
+    def _build_chunk_prompt(
+        self,
+        *,
+        chunk: list[dict],
+        current_memory: str,
+    ) -> _ChunkPromptData | None:
+        lines = self._format_consolidation_lines(chunk)
+        if not lines:
+            return None
         prompt_memory, memory_truncated = self._fit_memory_context_by_soft_budget(current_memory, lines)
         if memory_truncated:
             logger.warning(
@@ -1405,14 +1435,20 @@ class MemoryStore:
                 prompt_memory_chars=len(prompt_memory),
                 chunk_messages=len(chunk),
             )
-        prompt = self._build_consolidation_prompt(prompt_memory, lines)
-        response = await self._call_consolidation_llm(
-            provider=provider,
-            model=model,
-            prompt=prompt,
+        return self._ChunkPromptData(
+            prompt=self._build_consolidation_prompt(prompt_memory, lines),
+            memory_truncated=memory_truncated,
         )
-        assert response is not None
 
+    def _handle_chunk_response(
+        self,
+        *,
+        session: Session,
+        response,
+        chunk: list[dict],
+        current_memory: str,
+        memory_truncated: bool,
+    ) -> _ChunkProcessResult:
         if getattr(response, "finish_reason", "") == "error" and self._is_context_length_error(response.content):
             if len(chunk) <= 1:
                 logger.warning("Memory consolidation failed: prompt exceeds context even for single message")
