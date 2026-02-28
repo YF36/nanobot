@@ -220,6 +220,38 @@ class CleanupDropPreviewSummary:
     by_file: dict[str, dict[str, int]]
 
 
+@dataclass
+class JsonlLoadResult:
+    total_rows: int
+    parse_error_rows: int
+    rows: list[dict[str, object]]
+
+
+class JsonlMetricsSummarizer:
+    """Shared JSONL loader for metrics summaries."""
+
+    @staticmethod
+    def load_rows(path: Path) -> JsonlLoadResult:
+        total_rows = 0
+        parse_error_rows = 0
+        rows: list[dict[str, object]] = []
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            total_rows += 1
+            try:
+                item = json.loads(line)
+            except Exception:
+                parse_error_rows += 1
+                continue
+            if not isinstance(item, dict):
+                parse_error_rows += 1
+                continue
+            rows.append(item)
+        return JsonlLoadResult(total_rows=total_rows, parse_error_rows=parse_error_rows, rows=rows)
+
+
 def _iter_daily_files(memory_dir: Path) -> list[Path]:
     items: list[Path] = []
     for p in sorted(memory_dir.glob("*.md")):
@@ -796,8 +828,7 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
             by_date={},
         )
 
-    total_rows = 0
-    parse_error_rows = 0
+    loaded = JsonlMetricsSummarizer.load_rows(metrics_file)
     structured_ok_count = 0
     fallback_count = 0
     session_counter: Counter[str] = Counter()
@@ -807,19 +838,7 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
     structured_source_counter: Counter[str] = Counter()
     by_date: dict[str, dict[str, int]] = {}
 
-    for raw_line in metrics_file.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        total_rows += 1
-        try:
-            item = json.loads(line)
-        except Exception:
-            parse_error_rows += 1
-            continue
-        if not isinstance(item, dict):
-            parse_error_rows += 1
-            continue
+    for item in loaded.rows:
         session_key = str(item.get("session_key") or "unknown")
         session_counter[session_key] += 1
         structured_source = str(item.get("structured_source") or "")
@@ -846,8 +865,8 @@ def summarize_daily_routing_metrics(memory_dir: Path) -> DailyRoutingMetricsSumm
 
     return DailyRoutingMetricsSummary(
         metrics_file_exists=True,
-        total_rows=total_rows,
-        parse_error_rows=parse_error_rows,
+        total_rows=loaded.total_rows,
+        parse_error_rows=loaded.parse_error_rows,
         structured_ok_count=structured_ok_count,
         fallback_count=fallback_count,
         sessions_with_routing_events=len(session_counter),
@@ -876,25 +895,12 @@ def summarize_cleanup_stage_metrics(memory_dir: Path) -> CleanupStageMetricsSumm
             runs_with_stage={},
         )
 
-    total_rows = 0
-    parse_error_rows = 0
+    loaded = JsonlMetricsSummarizer.load_rows(metrics_file)
     total_stage_counter: Counter[str] = Counter()
     runs_with_stage_counter: Counter[str] = Counter()
 
-    for raw_line in metrics_file.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        total_rows += 1
-        try:
-            item = json.loads(line)
-        except Exception:
-            parse_error_rows += 1
-            continue
-        if not isinstance(item, dict):
-            parse_error_rows += 1
-            continue
-
+    parse_error_rows = loaded.parse_error_rows
+    for item in loaded.rows:
         stage_counts = item.get("stage_counts")
         if not isinstance(stage_counts, dict):
             parse_error_rows += 1
@@ -912,7 +918,7 @@ def summarize_cleanup_stage_metrics(memory_dir: Path) -> CleanupStageMetricsSumm
 
     return CleanupStageMetricsSummary(
         metrics_file_exists=True,
-        total_rows=total_rows,
+        total_rows=loaded.total_rows,
         parse_error_rows=parse_error_rows,
         total_stage_counts=dict(sorted(total_stage_counter.items())),
         runs_with_stage=dict(sorted(runs_with_stage_counter.items())),
@@ -971,25 +977,12 @@ def summarize_cleanup_conversion_index(memory_dir: Path) -> CleanupConversionInd
             latest_run_action_counts={},
         )
 
-    total_rows = 0
-    parse_error_rows = 0
+    loaded = JsonlMetricsSummarizer.load_rows(index_file)
     action_counter: Counter[str] = Counter()
     source_counter: Counter[str] = Counter()
     latest_run_id = ""
     latest_run_action_counter: Counter[str] = Counter()
-    for raw_line in index_file.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        total_rows += 1
-        try:
-            item = json.loads(line)
-        except Exception:
-            parse_error_rows += 1
-            continue
-        if not isinstance(item, dict):
-            parse_error_rows += 1
-            continue
+    for item in loaded.rows:
         action = str(item.get("action") or "unknown")
         source_file = str(item.get("source_file") or "unknown")
         run_id = str(item.get("run_id") or "")
@@ -1002,8 +995,8 @@ def summarize_cleanup_conversion_index(memory_dir: Path) -> CleanupConversionInd
             latest_run_action_counter[action] += 1
     return CleanupConversionIndexSummary(
         index_file_exists=True,
-        total_rows=total_rows,
-        parse_error_rows=parse_error_rows,
+        total_rows=loaded.total_rows,
+        parse_error_rows=loaded.parse_error_rows,
         action_counts=dict(sorted(action_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         source_file_counts=dict(sorted(source_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         latest_run_id=latest_run_id,

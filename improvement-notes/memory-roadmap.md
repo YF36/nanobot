@@ -351,6 +351,12 @@ R1 进展（2026-02-28）：
 - 已完成主链接线：
   - `MemoryStore` 通过 `self._pipeline` 执行 `save_memory` 应用流程
   - `ContextBuilder` 与 `memory_maintenance` 改用 `MemoryIO` 写入接口
+- 已落地 guard policy 抽离：
+  - `sanitize/guard/conflict` 逻辑抽离到 `nanobot/agent/memory_guard_policy.py`
+  - `MemoryStore` 保留原方法签名，通过委托调用 policy（行为兼容）
+- 已落地 `JsonlMetricsSummarizer` 最小框架：
+  - 新增通用 JSONL 读取层（`JsonlMetricsSummarizer.load_rows`）
+  - 已接入：`daily-routing` / `cleanup-stage` / `cleanup-conversion-index` 三类汇总
 - 回归验证：
   - `tests/test_memory_store_rules.py`
   - `tests/test_consolidation_race.py`
@@ -359,11 +365,8 @@ R1 进展（2026-02-28）：
   - `tests/test_atomic_file_io.py`
   - `tests/test_memory_golden.py`
   - 当前结果：`111 passed`
-- 待完成项（R1 剩余）：
-  - `memory_guard_policy.py` 拆分
-  - `JsonlMetricsSummarizer` 通用框架提取
 
-R1 状态：已部分完成（核心模块拆分 + pipeline 已落地，剩余项转下一步收尾）。
+R1 状态：已完成（模块拆分 + pipeline + guard policy + JSONL 汇总框架最小落地）。
 
 ### Phase R1.5：Section-level Merge（新增阶段）
 

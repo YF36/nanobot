@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nanobot.agent.memory_consolidation import ConsolidationPipeline
+from nanobot.agent.memory_guard_policy import MemoryGuardPolicy
 from nanobot.agent.memory_io import MemoryIO
 from nanobot.agent.memory_routing_policy import DailyRoutingPlan, DailyRoutingPolicy
 from nanobot.logging import get_logger
@@ -339,44 +339,11 @@ class MemoryStore:
 
     @classmethod
     def _extract_preference_values(cls, text: str) -> dict[str, str]:
-        values: dict[str, str] = {}
-        in_preferences = False
-        for raw in text.splitlines():
-            line = raw.strip()
-            if line.startswith("## "):
-                in_preferences = line[3:].strip().lower() in {"preferences", "偏好", "用户偏好"}
-                continue
-            if not in_preferences or not line.startswith("-"):
-                continue
-            item = line.lstrip("-").strip()
-            for key, pat in cls._PREFERENCE_KEY_PATTERNS:
-                if pat.search(item):
-                    if ":" in item:
-                        values[key] = item.split(":", 1)[1].strip()
-                    elif "：" in item:
-                        values[key] = item.split("：", 1)[1].strip()
-                    else:
-                        values[key] = item
-        return values
+        return MemoryGuardPolicy.extract_preference_values(text)
 
     @classmethod
     def _detect_preference_conflicts(cls, current_memory: str, candidate_update: str) -> list[dict[str, str]]:
-        current_vals = cls._extract_preference_values(current_memory)
-        candidate_vals = cls._extract_preference_values(candidate_update)
-        conflicts: list[dict[str, str]] = []
-        for key, old_value in current_vals.items():
-            new_value = candidate_vals.get(key)
-            if not new_value:
-                continue
-            if old_value != new_value:
-                conflicts.append(
-                    {
-                        "conflict_key": key,
-                        "old_value": old_value,
-                        "new_value": new_value,
-                    }
-                )
-        return conflicts
+        return MemoryGuardPolicy.detect_preference_conflicts(current_memory, candidate_update)
 
     @classmethod
     def _history_entry_date(cls, entry: str) -> str:
@@ -762,10 +729,7 @@ class MemoryStore:
 
     @classmethod
     def _truncate_log_sample(cls, text: str) -> str:
-        text = " ".join(text.split())
-        if len(text) <= cls._MEMORY_SANITIZE_LOG_SAMPLE_CHARS:
-            return text
-        return text[: cls._MEMORY_SANITIZE_LOG_SAMPLE_CHARS - 3].rstrip() + "..."
+        return MemoryGuardPolicy.truncate_log_sample(text)
 
     @classmethod
     def _sanitize_memory_update_detailed(
@@ -774,209 +738,29 @@ class MemoryStore:
         current_memory: str,
     ) -> tuple[str, dict[str, object]]:
         """Remove obviously short-lived/topic-dump content and return classification stats."""
-        if not update.strip():
-            return update, {
-                "removed_sections": [],
-                "removed_recent_topic_sections": [],
-                "removed_transient_status_sections": [],
-                "removed_transient_status_line_count": 0,
-                "removed_duplicate_bullet_count": 0,
-                "recent_topic_section_samples": [],
-                "transient_status_line_samples": [],
-                "duplicate_bullet_section_samples": [],
-            }
-
-        lines = update.splitlines()
-        kept: list[str] = []
-        removed_headings: list[str] = []
-        removed_recent_sections: list[str] = []
-        removed_transient_status_sections: list[str] = []
-        removed_transient_status_line_count = 0
-        recent_topic_section_samples: list[str] = []
-        transient_status_line_samples: list[str] = []
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            if line.startswith("## "):
-                heading = line[3:].strip()
-                if any(p.search(heading) for p in cls._MEMORY_SECTION_REJECT_PATTERNS):
-                    removed_headings.append(heading)
-                    removed_recent_sections.append(heading)
-                    if len(recent_topic_section_samples) < cls._MEMORY_SANITIZE_LOG_SAMPLE_LIMIT:
-                        recent_topic_section_samples.append(cls._truncate_log_sample(heading))
-                    i += 1
-                    while i < len(lines) and not lines[i].startswith("## "):
-                        i += 1
-                    continue
-                if any(p.search(heading) for p in cls._MEMORY_TRANSIENT_STATUS_SECTION_PATTERNS):
-                    section_lines = [line]
-                    removed_lines_in_section = 0
-                    i += 1
-                    while i < len(lines) and not lines[i].startswith("## "):
-                        candidate = lines[i]
-                        stripped = candidate.strip()
-                        if stripped and any(p.search(candidate) for p in cls._MEMORY_TRANSIENT_STATUS_LINE_PATTERNS):
-                            removed_lines_in_section += 1
-                            removed_transient_status_line_count += 1
-                            if len(transient_status_line_samples) < cls._MEMORY_SANITIZE_LOG_SAMPLE_LIMIT:
-                                transient_status_line_samples.append(cls._truncate_log_sample(candidate))
-                            i += 1
-                            continue
-                        section_lines.append(candidate)
-                        i += 1
-                    if any(s.strip() for s in section_lines[1:]):
-                        kept.extend(section_lines)
-                    else:
-                        removed_heading = f"{heading} (transient status only)"
-                        removed_headings.append(removed_heading)
-                        removed_transient_status_sections.append(heading)
-                    if removed_lines_in_section:
-                        removed_transient_status_sections.append(heading)
-                    continue
-            kept.append(line)
-            i += 1
-
-        deduped_kept, removed_duplicate_bullet_count, duplicate_bullet_section_samples = (
-            cls._dedupe_markdown_bullets_by_section(kept)
-        )
-        kept = deduped_kept
-        sanitized = "\n".join(kept).strip()
-        if not sanitized:
-            sanitized = current_memory
-        else:
-            sanitized = sanitized + ("\n" if update.endswith("\n") else "")
-        details = {
-            "removed_sections": removed_headings,
-            "removed_recent_topic_sections": removed_recent_sections,
-            "removed_transient_status_sections": sorted(set(removed_transient_status_sections)),
-            "removed_transient_status_line_count": removed_transient_status_line_count,
-            "removed_duplicate_bullet_count": removed_duplicate_bullet_count,
-            "recent_topic_section_samples": recent_topic_section_samples,
-            "transient_status_line_samples": transient_status_line_samples,
-            "duplicate_bullet_section_samples": duplicate_bullet_section_samples,
-        }
-        return sanitized, details
+        return MemoryGuardPolicy.sanitize_memory_update_detailed(update, current_memory)
 
     @classmethod
     def _dedupe_markdown_bullets_by_section(cls, lines: list[str]) -> tuple[list[str], int, list[str]]:
-        kept: list[str] = []
-        seen: set[tuple[str, str]] = set()
-        current_heading = "(root)"
-        removed = 0
-        section_samples: list[str] = []
-        for line in lines:
-            if line.startswith("## "):
-                heading = line[3:].strip()
-                current_heading = heading or "(untitled)"
-                kept.append(line)
-                continue
-            stripped = line.strip()
-            if not stripped.startswith("- "):
-                kept.append(line)
-                continue
-            normalized = re.sub(r"\s+", " ", stripped[2:].strip()).lower()
-            if not normalized:
-                kept.append(line)
-                continue
-            key = (current_heading, normalized)
-            if key in seen:
-                removed += 1
-                if (
-                    current_heading not in section_samples
-                    and len(section_samples) < cls._MEMORY_SANITIZE_LOG_SAMPLE_LIMIT
-                ):
-                    section_samples.append(current_heading)
-                continue
-            seen.add(key)
-            kept.append(line)
-        return kept, removed, section_samples
+        return MemoryGuardPolicy.dedupe_markdown_bullets_by_section(lines)
 
     @classmethod
     def _sanitize_memory_update(cls, update: str, current_memory: str) -> tuple[str, list[str]]:
         """Backward-compatible wrapper returning removed section headings only."""
-        sanitized, details = cls._sanitize_memory_update_detailed(update, current_memory)
-        return sanitized, list(details["removed_sections"])
+        return MemoryGuardPolicy.sanitize_memory_update(update, current_memory)
 
     @classmethod
     def _extract_h2_headings(cls, text: str) -> list[str]:
-        headings: list[str] = []
-        for line in text.splitlines():
-            if line.startswith("## "):
-                heading = line[3:].strip()
-                if heading:
-                    headings.append(heading)
-        return headings
+        return MemoryGuardPolicy.extract_h2_headings(text)
 
     @classmethod
     def _has_structured_markers(cls, text: str) -> bool:
-        for raw in text.splitlines():
-            line = raw.strip()
-            if not line:
-                continue
-            if line.startswith("## ") or line.startswith("- "):
-                return True
-        return False
+        return MemoryGuardPolicy.has_structured_markers(text)
 
     @classmethod
     def _memory_update_guard_reason(cls, current_memory: str, candidate_update: str) -> str | None:
         """Return reason string when memory_update looks suspicious and should be skipped."""
-        current = current_memory.strip()
-        candidate = candidate_update.strip()
-        if not candidate:
-            return "empty_candidate"
-        if not current:
-            return None
-
-        current_len = len(current)
-        candidate_len = len(candidate)
-        if candidate_len > cls._MEMORY_UPDATE_MAX_CHARS:
-            return "candidate_too_long"
-        if candidate.count("```") > cls._MEMORY_UPDATE_CODE_FENCE_MAX:
-            return "contains_code_block"
-        if current_len >= 200 and candidate_len < int(current_len * cls._MEMORY_UPDATE_SHRINK_GUARD_RATIO):
-            return "excessive_shrink"
-        if candidate_len >= cls._MEMORY_UPDATE_MIN_STRUCTURED_CHARS and not cls._has_structured_markers(candidate):
-            return "unstructured_candidate"
-        non_empty_lines = [ln.strip() for ln in candidate.splitlines() if ln.strip()]
-        if non_empty_lines:
-            date_lines = sum(1 for ln in non_empty_lines if cls._DATE_TOKEN_RE.search(ln))
-            if (
-                date_lines >= cls._MEMORY_UPDATE_DATE_LINE_MIN_COUNT
-                and (date_lines / len(non_empty_lines)) >= cls._MEMORY_UPDATE_DATE_LINE_RATIO_GUARD
-            ):
-                return "date_line_overflow"
-            url_lines = sum(1 for ln in non_empty_lines if "http://" in ln or "https://" in ln)
-            if (
-                url_lines >= cls._MEMORY_UPDATE_URL_LINE_MIN_COUNT
-                and (url_lines / len(non_empty_lines)) >= cls._MEMORY_UPDATE_URL_LINE_RATIO_GUARD
-            ):
-                return "url_line_overflow"
-            content_lines: list[str] = []
-            for line in non_empty_lines:
-                normalized = line
-                if normalized.startswith("## "):
-                    continue
-                if normalized.startswith("- "):
-                    normalized = normalized[2:].strip()
-                normalized = re.sub(r"\s+", " ", normalized).strip().lower()
-                if normalized:
-                    content_lines.append(normalized)
-            if content_lines:
-                duplicate_max = max(Counter(content_lines).values())
-                if (
-                    duplicate_max >= cls._MEMORY_UPDATE_DUPLICATE_LINE_MIN_COUNT
-                    and (duplicate_max / len(content_lines)) >= cls._MEMORY_UPDATE_DUPLICATE_LINE_RATIO_GUARD
-                ):
-                    return "duplicate_line_overflow"
-
-        current_h2 = cls._extract_h2_headings(current)
-        if current_h2:
-            candidate_h2 = set(cls._extract_h2_headings(candidate))
-            kept = sum(1 for h in current_h2 if h in candidate_h2)
-            keep_ratio = kept / len(current_h2)
-            if keep_ratio < cls._MEMORY_UPDATE_MIN_HEADING_RETAIN_RATIO:
-                return "heading_retention_too_low"
-        return None
+        return MemoryGuardPolicy.memory_update_guard_reason(current_memory, candidate_update)
 
     def _fit_chunk_by_soft_budget(
         self,
