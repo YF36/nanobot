@@ -115,6 +115,11 @@ class ConsolidationPipeline:
         if not isinstance(update, str):
             update = json.dumps(update, ensure_ascii=False)
         update, sanitize_details = self.store._sanitize_memory_update_detailed(update, ctx.current_memory)
+        sanitize_changes = int(
+            len(list(sanitize_details["removed_sections"]))
+            + int(sanitize_details["removed_transient_status_line_count"])
+            + int(sanitize_details["removed_duplicate_bullet_count"])
+        )
 
         if (
             sanitize_details["removed_sections"]
@@ -158,9 +163,17 @@ class ConsolidationPipeline:
                 current_memory_chars=len(ctx.current_memory),
                 returned_memory_chars=len(update),
             )
+            self.store._append_memory_update_outcome_metric(
+                session_key=ctx.session.key,
+                outcome="truncated_skip",
+                sanitize_changes=sanitize_changes,
+                merge_applied=False,
+                conflict_count=0,
+            )
             return
 
         update, merge_details = self.store._merge_memory_update_with_current(ctx.current_memory, update)
+        merge_applied = bool(merge_details.get("applied", False))
         if merge_details.get("applied"):
             logger.debug(
                 "Memory section merge applied before guard",
@@ -169,6 +182,13 @@ class ConsolidationPipeline:
             )
 
         if update == ctx.current_memory:
+            self.store._append_memory_update_outcome_metric(
+                session_key=ctx.session.key,
+                outcome="no_change",
+                sanitize_changes=sanitize_changes,
+                merge_applied=merge_applied,
+                conflict_count=0,
+            )
             return
         guard_reason = self.store._memory_update_guard_reason(ctx.current_memory, update)
         if guard_reason:
@@ -184,6 +204,14 @@ class ConsolidationPipeline:
                 current_memory_chars=len(ctx.current_memory),
                 returned_memory_chars=len(update),
                 candidate_preview=self.store._truncate_log_sample(update),
+            )
+            self.store._append_memory_update_outcome_metric(
+                session_key=ctx.session.key,
+                outcome="guard_rejected",
+                guard_reason=guard_reason,
+                sanitize_changes=sanitize_changes,
+                merge_applied=merge_applied,
+                conflict_count=0,
             )
             return
 
@@ -202,3 +230,10 @@ class ConsolidationPipeline:
                 new_value=conflict["new_value"],
             )
         self.store.write_long_term(update)
+        self.store._append_memory_update_outcome_metric(
+            session_key=ctx.session.key,
+            outcome=("sanitize_modified" if sanitize_changes > 0 else "written"),
+            sanitize_changes=sanitize_changes,
+            merge_applied=merge_applied,
+            conflict_count=len(conflicts),
+        )

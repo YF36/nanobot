@@ -991,6 +991,14 @@ async def test_consolidate_sanitizes_memory_update_before_write(tmp_path: Path) 
     daily_text = (mm.memory_dir / "2026-02-25.md").read_text(encoding="utf-8")
     assert "## Topics" in daily_text
     assert "Discussed anime topics and preferences" in daily_text
+    outcome_rows = [
+        json.loads(line)
+        for line in (mm.observability_dir / "memory-update-outcome.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(outcome_rows) == 1
+    assert outcome_rows[0]["outcome"] == "no_change"
+    assert outcome_rows[0]["sanitize_changes"] > 0
 
 
 @pytest.mark.asyncio
@@ -1066,6 +1074,56 @@ async def test_consolidate_repairs_heading_drop_with_section_merge(tmp_path: Pat
     assert mm.read_long_term() == current
     guard_metrics_path = mm.observability_dir / "memory-update-guard-metrics.jsonl"
     assert guard_metrics_path.exists() is False
+    outcome_rows = [
+        json.loads(line)
+        for line in (mm.observability_dir / "memory-update-outcome.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(outcome_rows) == 1
+    assert outcome_rows[0]["outcome"] == "no_change"
+    assert outcome_rows[0]["merge_applied"] is True
+
+
+@pytest.mark.asyncio
+async def test_consolidate_records_outcome_guard_rejected(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    current = "# Long-term Memory\n\n## Preferences\n- 中文沟通\n"
+    mm.write_long_term(current)
+
+    session = Session(key="test:outcome_guard")
+    for i in range(60):
+        session.add_message("user", f"msg{i}")
+
+    provider = MagicMock()
+
+    async def _fake_chat(**kwargs):
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="t1",
+                    name="save_memory",
+                    arguments={
+                        "history_entry": "[2026-02-25 10:00] test guard outcome.",
+                        "memory_update": "x" * 130,
+                    },
+                )
+            ],
+        )
+
+    provider.chat = _fake_chat
+    result = await mm.consolidate(session=session, provider=provider, model="test", memory_window=50)
+
+    assert result is True
+    rows = [
+        json.loads(line)
+        for line in (mm.observability_dir / "memory-update-outcome.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(rows) == 1
+    assert rows[0]["session_key"] == "test:outcome_guard"
+    assert rows[0]["outcome"] == "guard_rejected"
+    assert rows[0]["guard_reason"] == "unstructured_candidate"
 
 
 @pytest.mark.asyncio

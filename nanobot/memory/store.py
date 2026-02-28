@@ -175,15 +175,27 @@ class MemoryStore:
         preferred_retry_used: bool
         tool_call_has_daily_sections: bool
 
+    @dataclass
+    class _ConsolidationProgress:
+        session_key: str
+        start_index: int
+        target_last: int
+        archive_all: bool
+        keep_count: int
+        snapshot_len: int
+        processed_count: int
+
     def __init__(self, workspace: Path, *, daily_sections_mode: str = "compatible"):
         self.memory_dir = ensure_dir(workspace / "memory")
         self.observability_dir = ensure_dir(self.memory_dir / "observability")
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "HISTORY.md"
+        self.consolidation_progress_file = self.memory_dir / "consolidation-in-progress.json"
         self.daily_routing_metrics_file = self.observability_dir / "daily-routing-metrics.jsonl"
         self.memory_update_guard_metrics_file = self.observability_dir / "memory-update-guard-metrics.jsonl"
         self.memory_update_sanitize_metrics_file = self.observability_dir / "memory-update-sanitize-metrics.jsonl"
         self.memory_conflict_metrics_file = self.observability_dir / "memory-conflict-metrics.jsonl"
+        self.memory_update_outcome_metrics_file = self.observability_dir / "memory-update-outcome.jsonl"
         mode = (daily_sections_mode or "compatible").strip().lower()
         if mode not in {"compatible", "preferred", "required"}:
             mode = "compatible"
@@ -337,6 +349,129 @@ class MemoryStore:
                 "Failed to append memory_update sanitize metric",
                 file=str(self.memory_update_sanitize_metrics_file),
             )
+
+    def _append_memory_update_outcome_metric(
+        self,
+        *,
+        session_key: str,
+        outcome: str,
+        guard_reason: str | None = None,
+        sanitize_changes: int = 0,
+        merge_applied: bool = False,
+        conflict_count: int = 0,
+    ) -> None:
+        row = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "session_key": session_key,
+            "outcome": outcome,
+            "guard_reason": guard_reason,
+            "sanitize_changes": int(max(0, sanitize_changes)),
+            "merge_applied": bool(merge_applied),
+            "conflict_count": int(max(0, conflict_count)),
+        }
+        try:
+            self._io.append_text(
+                self.memory_update_outcome_metrics_file,
+                json.dumps(row, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+        except Exception:
+            logger.warning(
+                "Failed to append memory_update outcome metric",
+                file=str(self.memory_update_outcome_metrics_file),
+            )
+
+    def _write_consolidation_progress(
+        self,
+        *,
+        progress: _ConsolidationProgress,
+    ) -> None:
+        payload = {
+            "version": 1,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "session_key": progress.session_key,
+            "start_index": int(progress.start_index),
+            "target_last": int(progress.target_last),
+            "archive_all": bool(progress.archive_all),
+            "keep_count": int(progress.keep_count),
+            "snapshot_len": int(progress.snapshot_len),
+            "processed_count": int(progress.processed_count),
+        }
+        self._io.write_text(
+            self.consolidation_progress_file,
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+
+    def _read_consolidation_progress(self) -> _ConsolidationProgress | None:
+        if not self.consolidation_progress_file.exists():
+            return None
+        try:
+            payload = json.loads(self.consolidation_progress_file.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return self._ConsolidationProgress(
+                session_key=str(payload.get("session_key") or ""),
+                start_index=int(payload.get("start_index") or 0),
+                target_last=int(payload.get("target_last") or 0),
+                archive_all=bool(payload.get("archive_all", False)),
+                keep_count=int(payload.get("keep_count") or 0),
+                snapshot_len=int(payload.get("snapshot_len") or 0),
+                processed_count=int(payload.get("processed_count") or 0),
+            )
+        except Exception:
+            return None
+
+    def _clear_consolidation_progress(self) -> None:
+        if self.consolidation_progress_file.exists():
+            self.consolidation_progress_file.unlink()
+
+    def _build_recovery_scope(
+        self,
+        *,
+        session: Session,
+        archive_all: bool,
+    ) -> _ConsolidationScope | None:
+        progress = self._read_consolidation_progress()
+        if progress is None:
+            return None
+        if not progress.session_key or progress.session_key != session.key:
+            return None
+        if archive_all != progress.archive_all:
+            # Caller changed mode; ignore stale progress for safety.
+            return None
+
+        start_index = max(0, progress.start_index + progress.processed_count)
+        target_last = max(0, progress.target_last)
+        snapshot_len = len(session.messages)
+        if snapshot_len <= start_index or target_last <= start_index:
+            self._clear_consolidation_progress()
+            return None
+
+        end_index = min(snapshot_len, target_last)
+        old_messages = session.messages[start_index:end_index]
+        if not old_messages:
+            self._clear_consolidation_progress()
+            return None
+
+        logger.info(
+            "Memory consolidation recovery scope loaded",
+            start_index=start_index,
+            target_last=target_last,
+            recover_count=len(old_messages),
+            archive_all=archive_all,
+        )
+        return self._ConsolidationScope(
+            snapshot_len=snapshot_len,
+            keep_count=max(0, progress.keep_count),
+            old_messages=list(old_messages),
+            start_index=start_index,
+            target_last=target_last,
+            archive_all=archive_all,
+        )
 
     @classmethod
     def _extract_preference_values(cls, text: str) -> dict[str, str]:
@@ -974,13 +1109,27 @@ class MemoryStore:
 
         Returns True on success (including no-op), False on failure.
         """
-        scope = self._build_consolidation_scope(
-            session=session,
-            archive_all=archive_all,
-            memory_window=memory_window,
-        )
+        scope = self._build_recovery_scope(session=session, archive_all=archive_all)
         if scope is None:
+            scope = self._build_consolidation_scope(
+                session=session,
+                archive_all=archive_all,
+                memory_window=memory_window,
+            )
+        if scope is None:
+            self._clear_consolidation_progress()
             return True
+
+        progress = self._ConsolidationProgress(
+            session_key=session.key,
+            start_index=scope.start_index,
+            target_last=scope.target_last,
+            archive_all=scope.archive_all,
+            keep_count=scope.keep_count,
+            snapshot_len=scope.snapshot_len,
+            processed_count=0,
+        )
+        self._write_consolidation_progress(progress=progress)
 
         pending = list(scope.old_messages)
         processed_count = 0
@@ -1008,6 +1157,8 @@ class MemoryStore:
                         return False
 
                     processed_count += chunk_result.processed_count
+                    progress.processed_count = processed_count
+                    self._write_consolidation_progress(progress=progress)
                     pending = pending[chunk_result.processed_count:]
                     if not scope.archive_all:
                         # Process at most one chunk per normal pass to keep latency bounded.
@@ -1023,6 +1174,7 @@ class MemoryStore:
                             processed_messages=processed_count,
                             partial=(session.last_consolidated < scope.target_last),
                         )
+                        self._clear_consolidation_progress()
                         return True
                     break
 
@@ -1041,6 +1193,7 @@ class MemoryStore:
                 processed_messages=processed_count,
                 partial=(not scope.archive_all and session.last_consolidated < scope.target_last),
             )
+            self._clear_consolidation_progress()
             return True
         except Exception:
             logger.exception("Memory consolidation failed")

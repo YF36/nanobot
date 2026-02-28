@@ -220,6 +220,42 @@ class TestSnapshotLen:
         assert "MUST call save_memory" in calls["systems"][1]
 
     @pytest.mark.asyncio
+    async def test_consolidation_recovery_resumes_after_fatal_failure(self, tmp_path: Path) -> None:
+        from nanobot.memory import MemoryStore
+        from nanobot.providers.base import LLMResponse, ToolCallRequest
+
+        mm = MemoryStore(workspace=tmp_path)
+        session = Session(key="test:recovery")
+        for i in range(20):
+            session.add_message("user", f"msg{i}")
+
+        provider = MagicMock()
+
+        async def _fatal_chat(**kwargs):
+            return LLMResponse(content="model replied without tool", tool_calls=[])
+
+        provider.chat = _fatal_chat
+        first = await mm.consolidate(session=session, provider=provider, model="test", memory_window=10)
+        assert first is False
+        assert mm.consolidation_progress_file.exists()
+
+        async def _ok_chat(**kwargs):
+            return LLMResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="t1",
+                    name="save_memory",
+                    arguments={"history_entry": "resume ok", "memory_update": "# Long-term Memory\n"},
+                )],
+            )
+
+        provider.chat = _ok_chat
+        second = await mm.consolidate(session=session, provider=provider, model="test", memory_window=10)
+        assert second is True
+        assert mm.consolidation_progress_file.exists() is False
+        assert session.last_consolidated > 0
+
+    @pytest.mark.asyncio
     async def test_consolidation_trims_memory_context_and_skips_truncated_memory_write(self, tmp_path: Path) -> None:
         """Huge MEMORY.md should be truncated in prompt, but not overwritten with truncated output."""
         from nanobot.memory import MemoryStore
