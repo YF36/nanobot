@@ -173,6 +173,11 @@ class MemoryStore:
         prompt: str
         memory_truncated: bool
 
+    @dataclass
+    class _ConsolidationCallMeta:
+        preferred_retry_used: bool
+        tool_call_has_daily_sections: bool
+
     def __init__(self, workspace: Path, *, daily_sections_mode: str = "compatible"):
         self.memory_dir = ensure_dir(workspace / "memory")
         self.observability_dir = ensure_dir(self.memory_dir / "observability")
@@ -211,6 +216,8 @@ class MemoryStore:
         structured_source: str,
         model_daily_sections_ok: bool,
         model_daily_sections_reason: str,
+        preferred_retry_used: bool = False,
+        tool_call_has_daily_sections: bool = False,
     ) -> None:
         row = {
             "ts": datetime.now().isoformat(timespec="seconds"),
@@ -224,6 +231,8 @@ class MemoryStore:
             "structured_source": structured_source,
             "model_daily_sections_ok": model_daily_sections_ok,
             "model_daily_sections_reason": model_daily_sections_reason,
+            "preferred_retry_used": preferred_retry_used,
+            "tool_call_has_daily_sections": tool_call_has_daily_sections,
         }
         try:
             with open(self.daily_routing_metrics_file, "a", encoding="utf-8") as f:
@@ -1222,8 +1231,11 @@ class MemoryStore:
         provider: LLMProvider,
         model: str,
         prompt: str,
-    ):
+    ) -> tuple[object, _ConsolidationCallMeta]:
         response = None
+        preferred_retry_used = False
+        has_daily_sections = False
+        require_daily_sections = self.daily_sections_mode in {"preferred", "required"}
         for attempt in range(self._CONSOLIDATION_TOOLCALL_RETRIES + 1):
             strict_retry = attempt > 0
             response = await provider.chat(
@@ -1236,17 +1248,42 @@ class MemoryStore:
                 temperature=0.0,
             )
 
-            if response.has_tool_calls:
+            has_daily_sections = self._tool_call_has_daily_sections(response)
+            if response.has_tool_calls and (not require_daily_sections or has_daily_sections):
                 break
             if getattr(response, "finish_reason", "") == "error":
                 break
             if attempt < self._CONSOLIDATION_TOOLCALL_RETRIES:
                 logger.warning(
-                    "Memory consolidation response missing save_memory tool call, retrying",
+                    "Memory consolidation response missing required tool payload, retrying",
                     retry=attempt + 1,
+                    has_tool_calls=bool(response.has_tool_calls),
+                    has_daily_sections=has_daily_sections,
+                    daily_sections_mode=self.daily_sections_mode,
                 )
+                preferred_retry_used = True
 
-        return response
+        return response, self._ConsolidationCallMeta(
+            preferred_retry_used=preferred_retry_used,
+            tool_call_has_daily_sections=has_daily_sections,
+        )
+
+    @staticmethod
+    def _tool_call_has_daily_sections(response) -> bool:
+        if not getattr(response, "has_tool_calls", False):
+            return False
+        tool_calls = getattr(response, "tool_calls", None)
+        if not tool_calls:
+            return False
+        args = tool_calls[0].arguments
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                return False
+        if not isinstance(args, dict):
+            return False
+        return args.get("daily_sections") is not None
 
     @staticmethod
     def _extract_save_memory_args(response) -> dict | None:
@@ -1272,6 +1309,7 @@ class MemoryStore:
         args: dict,
         current_memory: str,
         memory_truncated: bool,
+        call_meta: _ConsolidationCallMeta | None = None,
     ) -> None:
         entry = args.get("history_entry")
         entry_text, entry_reason = self._normalize_history_entry(entry)
@@ -1317,6 +1355,8 @@ class MemoryStore:
                 structured_source=routing_plan.structured_source,
                 model_daily_sections_ok=routing_plan.model_daily_sections_ok,
                 model_daily_sections_reason=routing_plan.model_daily_sections_reason,
+                preferred_retry_used=bool(call_meta and call_meta.preferred_retry_used),
+                tool_call_has_daily_sections=bool(call_meta and call_meta.tool_call_has_daily_sections),
             )
         else:
             logger.warning(
@@ -1422,7 +1462,7 @@ class MemoryStore:
         if prompt_data is None:
             # Nothing useful to summarize; just mark the messages as processed.
             return self._ChunkProcessResult(status="processed", processed_count=len(chunk))
-        response = await self._call_consolidation_llm(
+        response, call_meta = await self._call_consolidation_llm(
             provider=provider,
             model=model,
             prompt=prompt_data.prompt,
@@ -1434,6 +1474,7 @@ class MemoryStore:
             chunk=chunk,
             current_memory=current_memory,
             memory_truncated=prompt_data.memory_truncated,
+            call_meta=call_meta,
         )
 
     def _build_chunk_prompt(
@@ -1466,6 +1507,7 @@ class MemoryStore:
         chunk: list[dict],
         current_memory: str,
         memory_truncated: bool,
+        call_meta: _ConsolidationCallMeta | None = None,
     ) -> _ChunkProcessResult:
         if getattr(response, "finish_reason", "") == "error" and self._is_context_length_error(response.content):
             if len(chunk) <= 1:
@@ -1491,5 +1533,6 @@ class MemoryStore:
             args=args,
             current_memory=current_memory,
             memory_truncated=memory_truncated,
+            call_meta=call_meta,
         )
         return self._ChunkProcessResult(status="processed", processed_count=len(chunk))

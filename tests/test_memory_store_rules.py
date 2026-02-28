@@ -800,6 +800,103 @@ async def test_consolidate_required_mode_skips_unstructured_daily_fallback(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_consolidate_preferred_mode_retries_when_daily_sections_missing(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path, daily_sections_mode="preferred")
+    mm.write_long_term("# Long-term Memory\n")
+
+    session = Session(key="test:daily_sections_preferred_retry")
+    for i in range(60):
+        session.add_message("user", f"msg{i}")
+
+    provider = MagicMock()
+    call_count = {"n": 0}
+
+    async def _fake_chat(**kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCallRequest(
+                        id="t1",
+                        name="save_memory",
+                        arguments={
+                            "history_entry": "[2026-02-25 10:00] Ran exec command to inspect memory files.",
+                            "memory_update": "# Long-term Memory\n",
+                        },
+                    )
+                ],
+            )
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="t2",
+                    name="save_memory",
+                    arguments={
+                        "history_entry": "[2026-02-25 10:00] Ran exec command to inspect memory files.",
+                        "memory_update": "# Long-term Memory\n",
+                        "daily_sections": {"tool_activity": ["Ran exec command to inspect memory files."]},
+                    },
+                )
+            ],
+        )
+
+    provider.chat = _fake_chat
+    result = await mm.consolidate(session=session, provider=provider, model="test", memory_window=50)
+
+    assert result is True
+    assert call_count["n"] == 2
+    metrics_path = mm.observability_dir / "daily-routing-metrics.jsonl"
+    metrics = [json.loads(line) for line in metrics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(metrics) == 1
+    assert metrics[0]["session_key"] == "test:daily_sections_preferred_retry"
+    assert metrics[0]["preferred_retry_used"] is True
+    assert metrics[0]["tool_call_has_daily_sections"] is True
+
+
+@pytest.mark.asyncio
+async def test_consolidate_compatible_mode_does_not_retry_missing_daily_sections(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path, daily_sections_mode="compatible")
+    mm.write_long_term("# Long-term Memory\n")
+
+    session = Session(key="test:daily_sections_compatible_no_retry")
+    for i in range(60):
+        session.add_message("user", f"msg{i}")
+
+    provider = MagicMock()
+    call_count = {"n": 0}
+
+    async def _fake_chat(**kwargs):
+        call_count["n"] += 1
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="t1",
+                    name="save_memory",
+                    arguments={
+                        "history_entry": "[2026-02-25 10:00] Ran exec command to inspect memory files.",
+                        "memory_update": "# Long-term Memory\n",
+                    },
+                )
+            ],
+        )
+
+    provider.chat = _fake_chat
+    result = await mm.consolidate(session=session, provider=provider, model="test", memory_window=50)
+
+    assert result is True
+    assert call_count["n"] == 1
+    metrics_path = mm.observability_dir / "daily-routing-metrics.jsonl"
+    metrics = [json.loads(line) for line in metrics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(metrics) == 1
+    assert metrics[0]["session_key"] == "test:daily_sections_compatible_no_retry"
+    assert metrics[0]["preferred_retry_used"] is False
+    assert metrics[0]["tool_call_has_daily_sections"] is False
+
+
+@pytest.mark.asyncio
 async def test_consolidate_sanitizes_memory_update_before_write(tmp_path: Path) -> None:
     mm = MemoryStore(workspace=tmp_path)
     mm.write_long_term("# Long-term Memory\n\n## Preferences\n- 中文沟通\n")

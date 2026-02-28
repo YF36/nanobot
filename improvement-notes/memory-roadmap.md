@@ -188,6 +188,7 @@ M2-full 状态（截至 2026-02-28）：部分落地（含策略开关）
 
 - 已实施：`agents.defaults.memory_daily_sections_mode` 策略开关（`compatible | preferred | required`）。
 - 当前默认：`compatible`（保持既有行为，兼容旧模型输出）。
+- 已实施：`preferred` 模式在 tool call 缺少 `daily_sections` 时会触发一次强化重试（不改变成功路径，仅提升结构化命中率）。
 - 已实施：`required` 模式下禁用非结构化 fallback（当结构化写入失败时只保留 `HISTORY.md` 写入与指标留痕，不再回写 unstructured daily bullet）。
 - `preferred` 作为灰度模式：目标是在不破坏兼容性的前提下，提升 `daily_sections` 的稳定产出率。
 - 先收集一段时间真实数据，重点观察：
@@ -199,6 +200,7 @@ M2-full 状态（截至 2026-02-28）：部分落地（含策略开关）
 
 - 已实施：daily 路由结果落盘到 `memory/observability/daily-routing-metrics.jsonl`（每次 consolidation 一行 JSON）。
 - 字段覆盖：`structured_daily_ok`、`fallback_used`、`fallback_reason`、`structured_keys`、`structured_bullet_count`、`session_key`、`date`、`ts`。
+- 已增强：routing 指标增加 `preferred_retry_used` 与 `tool_call_has_daily_sections`，用于评估 `preferred` 模式重试收益与模型结构化输出稳定性。
 - 用途：支持对 `structured_daily_ok` 命中率和 `fallback_reason` 分布做离线统计，不改变主流程行为。
 - 已实施：`nanobot memory-audit --metrics-summary` 汇总输出（含总体命中率、fallback reason 分布、按天统计）。
 - 已增强：routing 指标汇总新增 `sessions_with_routing_events`（区分“事件集中在少数会话”与“多会话普遍退化”）。
