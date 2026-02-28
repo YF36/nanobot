@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from nanobot.memory.consolidation import ConsolidationPipeline
 from nanobot.memory.guard_policy import MemoryGuardPolicy
-from nanobot.memory.io import MemoryIO
+from nanobot.memory.io import MemoryIO, parse_markdown_h2_sections, render_markdown_h2_sections
 from nanobot.memory.routing_policy import DailyRoutingPlan, DailyRoutingPolicy
 from nanobot.logging import get_logger
 
@@ -343,19 +343,24 @@ class MemoryStore:
         *,
         session_key: str,
         removed_recent_topic_section_count: int,
+        removed_knowledge_reference_section_count: int = 0,
         removed_transient_status_line_count: int,
         removed_duplicate_bullet_count: int,
         removed_recent_topic_sections: list[str],
+        removed_knowledge_reference_sections: list[str] | None = None,
         removed_transient_status_sections: list[str],
         removed_duplicate_bullet_sections: list[str],
     ) -> None:
+        knowledge_sections = removed_knowledge_reference_sections or []
         row = {
             "ts": datetime.now().isoformat(timespec="seconds"),
             "session_key": session_key,
             "removed_recent_topic_section_count": removed_recent_topic_section_count,
+            "removed_knowledge_reference_section_count": removed_knowledge_reference_section_count,
             "removed_transient_status_line_count": removed_transient_status_line_count,
             "removed_duplicate_bullet_count": removed_duplicate_bullet_count,
             "removed_recent_topic_sections": removed_recent_topic_sections[:3],
+            "removed_knowledge_reference_sections": knowledge_sections[:3],
             "removed_transient_status_sections": removed_transient_status_sections[:3],
             "removed_duplicate_bullet_sections": removed_duplicate_bullet_sections[:3],
         }
@@ -782,24 +787,7 @@ class MemoryStore:
 
     @classmethod
     def _parse_memory_sections(cls, text: str) -> tuple[list[str], list[tuple[str, list[str]]]]:
-        preamble: list[str] = []
-        section_map: dict[str, list[str]] = {}
-        section_order: list[str] = []
-        current_heading: str | None = None
-        for raw_line in text.splitlines():
-            m = cls._H2_HEADING_RE.match(raw_line)
-            if m:
-                current_heading = m.group(1).strip()
-                if current_heading not in section_map:
-                    section_map[current_heading] = []
-                    section_order.append(current_heading)
-                continue
-            if current_heading is None:
-                preamble.append(raw_line)
-            else:
-                section_map[current_heading].append(raw_line)
-        sections = [(heading, section_map[heading]) for heading in section_order]
-        return preamble, sections
+        return parse_markdown_h2_sections(text)
 
     @classmethod
     def _render_memory_sections(
@@ -807,18 +795,7 @@ class MemoryStore:
         preamble: list[str],
         sections: list[tuple[str, list[str]]],
     ) -> str:
-        parts: list[str] = []
-        preamble_text = "\n".join(preamble).strip("\n")
-        if preamble_text:
-            parts.append(preamble_text)
-        for heading, lines in sections:
-            body = "\n".join(lines).strip("\n")
-            if body:
-                parts.append(f"## {heading}\n{body}")
-            else:
-                parts.append(f"## {heading}")
-        rendered = "\n\n".join(parts).rstrip()
-        return rendered + ("\n" if rendered else "")
+        return render_markdown_h2_sections(preamble, sections)
 
     @staticmethod
     def _normalize_bullet_line(line: str) -> str:
@@ -863,6 +840,7 @@ class MemoryStore:
                 "reason": "empty_input",
                 "added_sections": [],
                 "merged_sections": [],
+                "rejected_added_sections": [],
             }
 
         cur_preamble, cur_sections = cls._parse_memory_sections(current_memory)
@@ -873,12 +851,14 @@ class MemoryStore:
                 "reason": "unstructured",
                 "added_sections": [],
                 "merged_sections": [],
+                "rejected_added_sections": [],
             }
 
         merged_map: dict[str, list[str]] = {heading: list(lines) for heading, lines in cur_sections}
         merged_order: list[str] = [heading for heading, _ in cur_sections]
         added_sections: list[str] = []
         merged_sections: list[str] = []
+        rejected_added_sections: list[str] = []
 
         for heading, cand_lines in cand_sections:
             if heading in merged_map:
@@ -887,6 +867,9 @@ class MemoryStore:
                 if merged_map[heading] != before:
                     merged_sections.append(heading)
             else:
+                if MemoryGuardPolicy.is_rejected_section_heading(heading):
+                    rejected_added_sections.append(heading)
+                    continue
                 merged_map[heading] = list(cand_lines)
                 merged_order.append(heading)
                 added_sections.append(heading)
@@ -900,12 +883,14 @@ class MemoryStore:
                 "reason": "render_empty",
                 "added_sections": [],
                 "merged_sections": [],
+                "rejected_added_sections": [],
             }
         return merged_text, {
             "applied": True,
             "reason": "ok",
             "added_sections": added_sections,
             "merged_sections": merged_sections,
+            "rejected_added_sections": rejected_added_sections,
         }
 
     def get_memory_context(self) -> str:
@@ -1008,8 +993,15 @@ class MemoryStore:
         base = (
             "You are a memory consolidation agent. Call the save_memory tool with your consolidation of the conversation. "
             "Treat MEMORY.md as long-term stable facts only (user preferences, durable project context, stable environment constraints). "
+            "Prefer concise stable headings such as User Information/Preferences/Project Context/Important Notes/System Architecture, "
+            "and preserve existing durable headings already present in current memory when they are still valid. "
+            "Do NOT store general knowledge, encyclopedia entries, biographical facts about "
+            "external people/characters/historical figures, or reference information in memory_update. "
+            "The user's RELATIONSHIP to a topic (interest, preference) belongs in Preferences; "
+            "the factual details of that topic belong in history_entry/daily_sections only. "
             "Do NOT copy recent discussion topics, knowledge-answer content, long summaries, tables, or tool outputs into memory_update; "
-            "those belong in history_entry only. Temporary system/API error statuses, one-off incidents, and dated operational notes "
+            "these all belong in history_entry only. "
+            "Temporary system/API error statuses, one-off incidents, and dated operational notes "
             "should usually stay out of memory_update (or be reduced to a durable configuration fact only). "
             "Prefer including daily_sections with concise bullets for Topics/Decisions/Tool Activity/Open Questions "
             "whenever history_entry has meaningful content; only omit a section when there is truly no relevant bullet."

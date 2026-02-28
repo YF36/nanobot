@@ -404,6 +404,24 @@ def test_sanitize_memory_update_deduplicates_bullets_within_same_section() -> No
     assert "Preferences" in details["duplicate_bullet_section_samples"]
 
 
+def test_sanitize_memory_update_removes_knowledge_reference_sections() -> None:
+    current = "# Long-term Memory\n\n## Preferences\n- 中文沟通\n"
+    update = (
+        "# Long-term Memory\n\n"
+        "## External Reference Information\n"
+        "- 某角色设定\n\n"
+        "## Preferences\n"
+        "- 中文沟通\n"
+    )
+
+    sanitized, details = MemoryStore._sanitize_memory_update_detailed(update, current)
+
+    assert "## External Reference Information" not in sanitized
+    assert "## Preferences" in sanitized
+    assert details["removed_knowledge_reference_sections"]
+    assert "External Reference Information" in details["removed_knowledge_reference_sections"][0]
+
+
 def test_memory_update_guard_detects_excessive_shrink() -> None:
     current = (
         "# Long-term Memory\n\n"
@@ -564,6 +582,20 @@ def test_merge_memory_update_with_current_adds_new_section_and_dedupes_bullets()
     assert merged.count("- 中文沟通") == 1
     assert "- 简洁回答" in merged
     assert "- use pytest" in merged
+
+
+def test_merge_memory_update_with_current_rejects_new_knowledge_reference_section() -> None:
+    current = "# Long-term Memory\n\n## Preferences\n- 中文沟通\n"
+    candidate = (
+        "# Long-term Memory\n\n"
+        "## Preferences\n- 中文沟通\n\n"
+        "## Character Profiles\n- 某角色详情\n"
+    )
+
+    merged, details = MemoryStore._merge_memory_update_with_current(current, candidate)
+
+    assert "## Character Profiles" not in merged
+    assert "Character Profiles" in details["rejected_added_sections"]
 
 
 def test_merge_memory_update_with_current_unstructured_candidate_is_passthrough() -> None:

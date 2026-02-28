@@ -504,6 +504,241 @@ R2 进展（2026-02-28）：
 
 R2 状态：已完成（含增强尾项）。
 
+### Phase R2.1：长期记忆内容边界治理（新增阶段）
+
+目标：解决 MEMORY.md 中积累了不属于用户记忆的"百科知识"内容（典型：`## External Reference Information`），从 prompt 引导、sanitize 拦截、section merge 约束三层建立内容边界防线。
+
+#### 问题诊断
+
+**现象**：MEMORY.md 中出现 `## External Reference Information` section，内含 25 条百科式条目（历史人物生卒年、虚构角色设定、漫画家履历等），且持续膨胀。这些内容与 `## Preferences` 中已有的用户兴趣大量重复，但以"通用知识"而非"用户偏好"的形式存在。
+
+**根因链（四层防线均未生效）**：
+
+1. **Consolidation prompt 约束力不足**（`store.py:_consolidation_system_prompt`）
+   - 现有指令："Do NOT copy recent discussion topics, knowledge-answer content..."
+   - 缺陷：只禁止了"copy"行为，没有禁止 LLM **重新组织**知识内容为新 section
+   - 缺陷：没有给出 MEMORY.md 合法 section heading 的**正面边界**，LLM 自行创建了模板中不存在的 heading
+
+2. **Sanitize section reject 规则覆盖不到**（`guard_policy.py:_MEMORY_SECTION_REJECT_PATTERNS`）
+   - 现有规则仅匹配：`今天/近期 讨论/主题`、`today/recent discussion/topics`、日期格式
+   - "External Reference Information" 不包含这些关键词，直接通过
+
+3. **Section merge 只增不减**（`store.py:_merge_memory_update_with_current`）
+   - 一旦 `## External Reference Information` 被写入，后续 merge 行为：
+     - LLM 继续产出该 section → 新条目被 union merge 进去（**单调递增**）
+     - LLM 不再产出该 section → current memory 原样保留（**不会自动清理**）
+   - 导致该 section 从首次创建后只增不减，成为"知识垃圾抽屉"
+
+4. **Guard 缺少内容语义检查**（`guard_policy.py:memory_update_guard_reason`）
+   - 现有 guard 检查：长度 / code fence / shrink ratio / heading retention / URL比例 / date比例 / duplicate比例
+   - 所有检查均为**结构属性**，不涉及**内容分类**（是用户事实 vs 通用知识）
+   - 25 条百科条目结构完全合规（有 heading、有 bullet、长度合理），guard 不会拦截
+
+**内容重复对照**（Preferences vs External Reference）：
+
+| Preferences 已有 | External Reference 重复存储 |
+|---|---|
+| 喜欢井上雄彦《浪客行》水墨画风 | 井上雄彦是日本漫画界顶级大师，《浪客行》以水墨画风和留白艺术著称... |
+| 关注新生代漫画家藤本树... | 藤本树（1992）新生代漫画家，代表作《电锯人》《炎拳》... |
+| 欣赏斋藤隆夫的《骷髅13》 | 斋藤隆夫（1936-2021）写实漫画宗师，代表作《骷髅13》... |
+| 关注海伯利安的易学内容（8 条） | 海伯利安（豆瓣ID）为上海地区的易学研究者...（2 条） |
+| 对美国历史感兴趣（本杰明·哈里森） | 本杰明·哈里森（1833-1901）美国第23任总统... |
+
+本质：用户的**偏好关系**已在 Preferences 中表达，External Reference 存的是**百科条目本身**，不属于用户长期记忆。
+
+**同类问题**：`## System Technical Issues` section 也存在类似情况。虽然 heading 匹配了 `_MEMORY_TRANSIENT_STATUS_SECTION_PATTERNS`，但其中的行（如"steer机制正常工作"、"BRAVE_API_KEY 未配置"）不匹配 transient line patterns（要求含"error/failed/报错"等），因此存活下来。这些要么是运维瞬态（会变），要么是系统固有特性（不需记忆）。
+
+#### 实施方案
+
+**修复 1：扩展 `_MEMORY_SECTION_REJECT_PATTERNS`**（sanitize 层拦截）
+
+在 `guard_policy.py` 中增加针对知识/参考/百科/角色类 section 的拒绝规则：
+
+```python
+_MEMORY_SECTION_REJECT_PATTERNS = (
+    # --- 原有规则 ---
+    re.compile(r"(今天|今日|近期).*(讨论|主题)"),
+    re.compile(r"today.*(discussion|topics?)", re.IGNORECASE),
+    re.compile(r"recent.*(discussion|topics?)", re.IGNORECASE),
+    re.compile(r"\b20\d{2}-\d{2}-\d{2}\b"),
+    # --- 新增：知识/参考/百科类 section 拦截 ---
+    re.compile(
+        r"(external|reference|encyclopedia|knowledge|factual|background)"
+        r".*(info|data|note|base|detail|summar)",
+        re.IGNORECASE,
+    ),
+    re.compile(r"(参考|引用|外部|百科|知识|背景).*(信息|资料|资源|条目|详情)"),
+    re.compile(
+        r"(character|人物|角色|historical|figure)"
+        r".*(profile|bio|简介|介绍|档案|detail)",
+        re.IGNORECASE,
+    ),
+)
+```
+
+效果：任何新 consolidation 产出包含该类 heading 的 section 时，sanitize 阶段整段移除。
+
+**修复 2：强化 Consolidation system prompt 的正面边界**（源头约束）
+
+在 `store.py:_consolidation_system_prompt` 中增加 section heading 的允许范围和明确禁止指令：
+
+```python
+base = (
+    "You are a memory consolidation agent. "
+    "Call the save_memory tool with your consolidation of the conversation. "
+    "Treat MEMORY.md as long-term stable facts only "
+    "(user preferences, durable project context, stable environment constraints). "
+    # --- 新增：正面边界 ---
+    "memory_update MUST only use these section headings: "
+    "User Information, Preferences, Project Context, Important Notes, System Architecture. "
+    "Do NOT create new section headings outside this list. "
+    # --- 新增：明确禁止知识内容 ---
+    "Do NOT store general knowledge, encyclopedia entries, biographical facts about "
+    "external people/characters/historical figures, or reference information in memory_update. "
+    "The user's RELATIONSHIP to a topic (interest, preference) belongs in Preferences; "
+    "the factual details of that topic belong in history_entry/daily_sections only. "
+    # --- 原有 ---
+    "Do NOT copy recent discussion topics, knowledge-answer content, "
+    "long summaries, tables, or tool outputs into memory_update; "
+    "those belong in history_entry only. "
+    "Temporary system/API error statuses, one-off incidents, and dated operational notes "
+    "should usually stay out of memory_update (or be reduced to a durable configuration fact only). "
+    "Prefer including daily_sections with concise bullets for Topics/Decisions/Tool Activity/Open Questions "
+    "whenever history_entry has meaningful content; only omit a section when there is truly no relevant bullet."
+)
+```
+
+效果：从源头引导 LLM 不产出百科内容。即使 LLM 仍然违规，修复 1 的 sanitize 作为第二道防线。
+
+**修复 3：Section Merge 增加新增 section 的 reject 检查**（merge 层拦截）
+
+在 `store.py:_merge_memory_update_with_current` 中，对 candidate 中新出现的 section heading 检查 reject patterns：
+
+```python
+from nanobot.memory.guard_policy import MemoryGuardPolicy
+
+# 在 _merge_memory_update_with_current 方法内
+for heading, cand_lines in cand_sections:
+    if heading in merged_map:
+        # 已有 section → 正常 merge（保守增量）
+        before = list(merged_map[heading])
+        merged_map[heading] = cls._merge_section_lines(before, cand_lines)
+        if merged_map[heading] != before:
+            merged_sections.append(heading)
+    else:
+        # 新 section → 先检查 heading 是否匹配 reject pattern
+        if any(
+            p.search(heading)
+            for p in MemoryGuardPolicy._MEMORY_SECTION_REJECT_PATTERNS
+        ):
+            # 拒绝新增该 section，记录到 merge details
+            rejected_sections.append(heading)
+            continue
+        merged_map[heading] = list(cand_lines)
+        merged_order.append(heading)
+        added_sections.append(heading)
+```
+
+效果：即使 sanitize 未能拦截（例如 heading 措辞变体），merge 层也不会让新的垃圾 section 进入 MEMORY.md。已有的违规 section 需通过修复 4 一次性清理。
+
+**修复 4：扩展 `_MEMORY_TRANSIENT_STATUS_LINE_PATTERNS`**（行级拦截增强）
+
+现有 transient line patterns 对中文场景覆盖不足，补充：
+
+```python
+_MEMORY_TRANSIENT_STATUS_LINE_PATTERNS = (
+    # --- 原有 ---
+    re.compile(r"\b20\d{2}-\d{2}-\d{2}\b"),
+    re.compile(r"\b(today|yesterday|recently|currently|temporary|temporarily)\b", re.IGNORECASE),
+    re.compile(r"\b(error|failed|failure|timeout|timed out|unavailable)\b", re.IGNORECASE),
+    re.compile(r"\b(4\d{2}|5\d{2})\b"),
+    re.compile(r"(报错|错误|失败|超时|不可用|临时)"),
+    # --- 新增：配置/状态/运维类瞬态行 ---
+    re.compile(r"(未配置|未设置|待配置|not configured|not set)", re.IGNORECASE),
+    re.compile(r"(正常工作|运行正常|works? correctly|functioning)", re.IGNORECASE),
+    re.compile(r"(识别效果有限|识别不准|accuracy.*(low|poor|limited))", re.IGNORECASE),
+)
+```
+
+效果：`## System Technical Issues` 中的"BRAVE_API_KEY 未配置"、"steer机制正常工作"、"OCR对中文文本识别效果有限"等行会被移除。section 下若无幸存行则整段移除。
+
+**修复 5：一次性清理现有 MEMORY.md**
+
+上述修复都是面向未来的防线。对当前已存在的 `## External Reference Information` section，需要一次性清理：
+
+- 方案 A（推荐）：在 `memory-audit --apply` 中增加 `--purge-rejected-sections` 选项，利用修复 1 的新 reject patterns 扫描并移除匹配的 section
+- 方案 B：手动编辑 MEMORY.md 删除 `## External Reference Information` 整段（L65-L90），同时审视 `## System Technical Issues` 中的瞬态条目
+
+#### 防线总结
+
+```
+                    用户对话
+                       │
+                       ▼
+              ┌────────────────┐
+  防线 1      │ Consolidation  │  prompt 明确 section heading 允许范围
+  (源头)      │ System Prompt  │  禁止百科/知识/角色类内容
+              └───────┬────────┘
+                      │ memory_update
+                      ▼
+              ┌────────────────┐
+  防线 2      │   Sanitize     │  _MEMORY_SECTION_REJECT_PATTERNS
+  (清洗)      │   (section)    │  整段移除匹配 heading 的 section
+              └───────┬────────┘
+                      │
+                      ▼
+              ┌────────────────┐
+  防线 2.1    │   Sanitize     │  _MEMORY_TRANSIENT_STATUS_LINE_PATTERNS
+  (行级)      │   (line)       │  移除 transient status 行（含新增中文模式）
+              └───────┬────────┘
+                      │
+                      ▼
+              ┌────────────────┐
+  防线 3      │ Section Merge  │  新增 section 的 reject 检查
+  (合并)      │ (heading gate) │  拒绝 reject pattern 匹配的新 heading
+              └───────┬────────┘
+                      │
+                      ▼
+              ┌────────────────┐
+  防线 4      │    Guard       │  结构属性检查（已有，不变）
+  (结构)      │   (existing)   │  长度/shrink/heading retention/...
+              └───────┬────────┘
+                      │
+                      ▼
+                 写入 MEMORY.md
+```
+
+#### 测试计划
+
+- 单元测试：
+  - `_MEMORY_SECTION_REJECT_PATTERNS` 新增 pattern 对以下 heading 的匹配验证：
+    - 应匹配：`External Reference Information`、`Reference Data`、`Knowledge Base`、`Character Profiles`、`参考信息`、`人物简介`、`百科条目`
+    - 不应匹配：`User Information`、`Preferences`、`Project Context`、`Important Notes`
+  - `_MEMORY_TRANSIENT_STATUS_LINE_PATTERNS` 新增 pattern 的匹配验证：
+    - 应匹配：`BRAVE_API_KEY 未配置`、`steer机制正常工作`、`OCR对中文文本识别效果有限`
+    - 不应匹配：`使用飞书进行沟通`、`沟通风格：中文，技术讨论`
+  - `_merge_memory_update_with_current` 对 rejected heading 的拒绝行为
+- Golden case：
+  - 构造包含 `## External Reference Information` 的 candidate update，验证 sanitize 整段移除
+  - 构造 candidate 新增 `## Character Profiles` section 的 merge 场景，验证 merge 层拒绝
+- 回归：
+  - 现有 golden case 不受影响（合法 section heading 行为不变）
+  - `memory-audit` CLI 命令兼容
+
+#### 可观测性
+
+- `memory-update-sanitize-metrics.jsonl` 中新增记录被 reject 的 section heading 和类型（`knowledge_reference` / `character_profile` 等）
+- `memory-update-outcome.jsonl` 中 `sanitize_modified` 的详情增加 `rejected_knowledge_sections` 计数
+- `memory-audit --metrics-summary` 中增加 `rejected knowledge section` 相关汇总
+
+#### DoD
+
+- `## External Reference Information` 等知识类 section 不再出现在 MEMORY.md 中
+- 现有百科内容已清理，不影响已有合法 section 内容
+- 三层防线（prompt / sanitize / merge）独立生效，任一层均可独立阻断
+- 现有 golden case 和回归测试全部通过
+- observability 指标覆盖新增拦截行为
+
 ### Phase R2.5：L1 Insights 中间层（新增阶段）
 
 目标：填补"半持久知识"的存储空白。
@@ -634,6 +869,7 @@ DoD：
 |--------|--------|----------|----------|
 | P0 | Atomic write（写入原子化） | data safety | R0（立即） |
 | P0 | Consolidation 中断恢复 | interruption safety | R2 |
+| P1 | 长期记忆内容边界治理（知识污染防治） | data safety + recall | R2.1 |
 | P1 | Section-level merge（增量更新） | data safety + recall | R1.5 |
 | P1 | Guard/Sanitize outcome 基线指标 | traceability | R2 |
 | P1 | Golden output 自动化回归 | 重构安全网 | R0 |

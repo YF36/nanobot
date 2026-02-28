@@ -7,11 +7,17 @@ from collections import Counter
 
 
 class MemoryGuardPolicy:
-    _MEMORY_SECTION_REJECT_PATTERNS = (
+    _MEMORY_RECENT_TOPIC_SECTION_REJECT_PATTERNS = (
         re.compile(r"(今天|今日|近期).*(讨论|主题)"),
         re.compile(r"today.*(discussion|topics?)", re.IGNORECASE),
         re.compile(r"recent.*(discussion|topics?)", re.IGNORECASE),
         re.compile(r"\b20\d{2}-\d{2}-\d{2}\b"),
+    )
+    _MEMORY_KNOWLEDGE_REFERENCE_SECTION_REJECT_PATTERNS = (
+        re.compile(r"^(external\s+)?(reference|background|factual)\s+(information|data|notes?)$", re.IGNORECASE),
+        re.compile(r"^(knowledge|encyclopedia)\s+(base|entries)$", re.IGNORECASE),
+        re.compile(r"^(character|historical|figure)\s+(profiles?|bios?|details?|summari)", re.IGNORECASE),
+        re.compile(r"^(参考信息|参考资料|知识库|百科条目|人物简介|人物档案|角色设定|角色介绍|外部参考)$"),
     )
     _MEMORY_TRANSIENT_STATUS_SECTION_PATTERNS = (
         re.compile(r"(system|technical).*(issues?|status)", re.IGNORECASE),
@@ -65,10 +71,12 @@ class MemoryGuardPolicy:
             return update, {
                 "removed_sections": [],
                 "removed_recent_topic_sections": [],
+                "removed_knowledge_reference_sections": [],
                 "removed_transient_status_sections": [],
                 "removed_transient_status_line_count": 0,
                 "removed_duplicate_bullet_count": 0,
                 "recent_topic_section_samples": [],
+                "knowledge_reference_section_samples": [],
                 "transient_status_line_samples": [],
                 "duplicate_bullet_section_samples": [],
             }
@@ -77,20 +85,31 @@ class MemoryGuardPolicy:
         kept: list[str] = []
         removed_headings: list[str] = []
         removed_recent_sections: list[str] = []
+        removed_knowledge_sections: list[str] = []
         removed_transient_status_sections: list[str] = []
         removed_transient_status_line_count = 0
         recent_topic_section_samples: list[str] = []
+        knowledge_reference_section_samples: list[str] = []
         transient_status_line_samples: list[str] = []
         i = 0
         while i < len(lines):
             line = lines[i]
             if line.startswith("## "):
                 heading = line[3:].strip()
-                if any(p.search(heading) for p in cls._MEMORY_SECTION_REJECT_PATTERNS):
+                if any(p.search(heading) for p in cls._MEMORY_RECENT_TOPIC_SECTION_REJECT_PATTERNS):
                     removed_headings.append(heading)
                     removed_recent_sections.append(heading)
                     if len(recent_topic_section_samples) < cls._MEMORY_SANITIZE_LOG_SAMPLE_LIMIT:
                         recent_topic_section_samples.append(cls.truncate_log_sample(heading))
+                    i += 1
+                    while i < len(lines) and not lines[i].startswith("## "):
+                        i += 1
+                    continue
+                if any(p.search(heading) for p in cls._MEMORY_KNOWLEDGE_REFERENCE_SECTION_REJECT_PATTERNS):
+                    removed_headings.append(heading)
+                    removed_knowledge_sections.append(heading)
+                    if len(knowledge_reference_section_samples) < cls._MEMORY_SANITIZE_LOG_SAMPLE_LIMIT:
+                        knowledge_reference_section_samples.append(cls.truncate_log_sample(heading))
                     i += 1
                     while i < len(lines) and not lines[i].startswith("## "):
                         i += 1
@@ -135,14 +154,27 @@ class MemoryGuardPolicy:
         details = {
             "removed_sections": removed_headings,
             "removed_recent_topic_sections": removed_recent_sections,
+            "removed_knowledge_reference_sections": removed_knowledge_sections,
             "removed_transient_status_sections": sorted(set(removed_transient_status_sections)),
             "removed_transient_status_line_count": removed_transient_status_line_count,
             "removed_duplicate_bullet_count": removed_duplicate_bullet_count,
             "recent_topic_section_samples": recent_topic_section_samples,
+            "knowledge_reference_section_samples": knowledge_reference_section_samples,
             "transient_status_line_samples": transient_status_line_samples,
             "duplicate_bullet_section_samples": duplicate_bullet_section_samples,
         }
         return sanitized, details
+
+    @classmethod
+    def is_rejected_section_heading(cls, heading: str) -> bool:
+        heading = heading.strip()
+        if not heading:
+            return False
+        if any(p.search(heading) for p in cls._MEMORY_RECENT_TOPIC_SECTION_REJECT_PATTERNS):
+            return True
+        if any(p.search(heading) for p in cls._MEMORY_KNOWLEDGE_REFERENCE_SECTION_REJECT_PATTERNS):
+            return True
+        return False
 
     @classmethod
     def dedupe_markdown_bullets_by_section(cls, lines: list[str]) -> tuple[list[str], int, list[str]]:

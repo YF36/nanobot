@@ -169,3 +169,42 @@ def test_memory_audit_daily_ttl_apply_deletes_expired_archive_files(tmp_path: Pa
     assert result.exit_code == 0
     assert "Applied daily TTL janitor:" in result.output
     assert not (archive_dir / "2020-01-01.md").exists()
+
+
+def test_memory_audit_purge_rejected_sections_apply(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "ws"
+    memory_dir = workspace / "memory"
+    memory_dir.mkdir(parents=True)
+    _write(
+        memory_dir / "MEMORY.md",
+        (
+            "# Long-term Memory\n\n"
+            "## Preferences\n- 中文沟通\n\n"
+            "## External Reference Information\n- 某条目\n"
+        ),
+    )
+    _write(memory_dir / "HISTORY.md", "")
+
+    class _Cfg:
+        workspace_path = workspace
+
+    import nanobot.cli.commands as commands_module
+
+    monkeypatch.setattr(commands_module, "load_config", lambda: _Cfg(), raising=False)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "memory-audit",
+            "--memory-dir",
+            str(memory_dir),
+            "--purge-rejected-sections",
+            "--apply",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Rejected Memory Section Scan" in result.output
+    assert "Removed sections" in result.output
+    text = (memory_dir / "MEMORY.md").read_text(encoding="utf-8")
+    assert "External Reference Information" not in text

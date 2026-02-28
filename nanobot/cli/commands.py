@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import signal
+from datetime import datetime
 from pathlib import Path
 import select
 import sys
@@ -405,6 +406,11 @@ def memory_audit(
         "--apply-abort-on-high-risk",
         help="Abort apply when pre-apply drop preview risk level is high",
     ),
+    purge_rejected_sections: bool = typer.Option(
+        False,
+        "--purge-rejected-sections",
+        help="Preview and optionally purge rejected H2 sections from MEMORY.md (requires --apply to write)",
+    ),
     apply_safe: bool = typer.Option(
         False,
         "--apply-safe",
@@ -466,9 +472,11 @@ def memory_audit(
         summarize_context_trace,
         summarize_memory_conflict_metrics,
         summarize_memory_update_outcomes,
+        summarize_rejected_memory_sections,
         summarize_memory_update_guard_metrics,
         summarize_memory_update_sanitize_metrics,
         summarize_daily_routing_metrics,
+        apply_purge_rejected_memory_sections,
     )
 
     config = load_config()
@@ -550,6 +558,7 @@ def memory_audit(
                     total_rows=sanitize_metrics.total_rows,
                     parse_error_rows=sanitize_metrics.parse_error_rows,
                     total_recent_topic_sections_removed=sanitize_metrics.total_recent_topic_sections_removed,
+                    total_knowledge_reference_sections_removed=0,
                     total_transient_status_lines_removed=0,
                     total_duplicate_bullets_removed=0,
                     dominant_focus=(
@@ -559,6 +568,7 @@ def memory_audit(
                     sessions_with_effective_sanitize_hits=sanitize_metrics.sessions_with_effective_sanitize_hits,
                     by_session=sanitize_metrics.by_session,
                     top_recent_topic_sections=sanitize_metrics.top_recent_topic_sections,
+                    top_knowledge_reference_sections={},
                     top_transient_status_sections={},
                     top_duplicate_bullet_sections={},
                 )
@@ -568,6 +578,7 @@ def memory_audit(
                     total_rows=sanitize_metrics.total_rows,
                     parse_error_rows=sanitize_metrics.parse_error_rows,
                     total_recent_topic_sections_removed=0,
+                    total_knowledge_reference_sections_removed=0,
                     total_transient_status_lines_removed=sanitize_metrics.total_transient_status_lines_removed,
                     total_duplicate_bullets_removed=0,
                     dominant_focus=(
@@ -577,6 +588,7 @@ def memory_audit(
                     sessions_with_effective_sanitize_hits=sanitize_metrics.sessions_with_effective_sanitize_hits,
                     by_session=sanitize_metrics.by_session,
                     top_recent_topic_sections={},
+                    top_knowledge_reference_sections={},
                     top_transient_status_sections=sanitize_metrics.top_transient_status_sections,
                     top_duplicate_bullet_sections={},
                 )
@@ -586,6 +598,7 @@ def memory_audit(
                     total_rows=sanitize_metrics.total_rows,
                     parse_error_rows=sanitize_metrics.parse_error_rows,
                     total_recent_topic_sections_removed=0,
+                    total_knowledge_reference_sections_removed=0,
                     total_transient_status_lines_removed=0,
                     total_duplicate_bullets_removed=sanitize_metrics.total_duplicate_bullets_removed,
                     dominant_focus=(
@@ -595,6 +608,7 @@ def memory_audit(
                     sessions_with_effective_sanitize_hits=sanitize_metrics.sessions_with_effective_sanitize_hits,
                     by_session=sanitize_metrics.by_session,
                     top_recent_topic_sections={},
+                    top_knowledge_reference_sections={},
                     top_transient_status_sections={},
                     top_duplicate_bullet_sections=sanitize_metrics.top_duplicate_bullet_sections,
                 )
@@ -666,6 +680,46 @@ def memory_audit(
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(cleanup_conversion_md, encoding="utf-8")
             console.print(f"[green]✓[/green] Wrote cleanup conversion summary: {out}")
+
+    if purge_rejected_sections:
+        purge_summary = summarize_rejected_memory_sections(target_dir)
+        lines = [
+            "# Rejected Memory Section Scan",
+            "",
+            f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+            f"- MEMORY.md exists: `{purge_summary.memory_file_exists}`",
+            f"- Candidate rejected sections: `{len(purge_summary.candidate_sections)}`",
+            "",
+            "## Candidate Sections",
+        ]
+        if purge_summary.candidate_sections:
+            for heading in purge_summary.candidate_sections:
+                lines.append(f"- {heading}")
+        else:
+            lines.append("- none")
+        if not apply:
+            lines.extend(
+                [
+                    "",
+                    "## Next Step",
+                    "- Run with `--apply --purge-rejected-sections` to remove these sections with automatic backup.",
+                ]
+            )
+            console.print(Markdown("\n".join(lines)))
+        else:
+            purge_result = apply_purge_rejected_memory_sections(target_dir)
+            if purge_result.touched:
+                lines.extend(
+                    [
+                        "",
+                        "## Apply Result",
+                        f"- Removed sections: `{len(purge_result.removed_sections)}`",
+                        f"- Backup dir: `{purge_result.backup_dir}`",
+                    ]
+                )
+            else:
+                lines.extend(["", "## Apply Result", "- No changes applied."])
+            console.print(Markdown("\n".join(lines)))
 
     if archive_dry_run or archive_out:
         dry = summarize_daily_archive_dry_run(target_dir, keep_days=archive_keep_days)

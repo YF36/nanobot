@@ -2,6 +2,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 from nanobot.memory.maintenance import (
+    apply_purge_rejected_memory_sections,
     apply_daily_archive_compact,
     apply_daily_archive,
     apply_conservative_cleanup,
@@ -34,6 +35,7 @@ from nanobot.memory.maintenance import (
     summarize_memory_update_outcomes,
     summarize_memory_update_guard_metrics,
     summarize_memory_update_sanitize_metrics,
+    summarize_rejected_memory_sections,
     summarize_daily_routing_metrics,
 )
 
@@ -134,6 +136,47 @@ def test_apply_conservative_cleanup_trims_and_deduplicates_with_backup(tmp_path:
     assert '"dedupe":2' in stage_metrics_lines[0]
     assert '"priority_counts":{"P1":4}' in stage_metrics_lines[0]
     assert '"conversion_index_rows":4' in stage_metrics_lines[0]
+
+
+def test_summarize_rejected_memory_sections_finds_candidates(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(
+        memory_dir / "MEMORY.md",
+        (
+            "# Long-term Memory\n\n"
+            "## Preferences\n- 中文沟通\n\n"
+            "## External Reference Information\n- 某人物设定\n"
+        ),
+    )
+
+    summary = summarize_rejected_memory_sections(memory_dir)
+
+    assert summary.memory_file_exists is True
+    assert summary.candidate_sections == ["External Reference Information"]
+    assert summary.touched is False
+
+
+def test_apply_purge_rejected_memory_sections_removes_candidates_with_backup(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    _write(
+        memory_dir / "MEMORY.md",
+        (
+            "# Long-term Memory\n\n"
+            "## Preferences\n- 中文沟通\n\n"
+            "## Character Profiles\n- 某角色设定\n"
+        ),
+    )
+
+    result = apply_purge_rejected_memory_sections(memory_dir)
+
+    assert result.touched is True
+    assert result.backup_dir is not None
+    assert (result.backup_dir / "MEMORY.md").exists()
+    after = (memory_dir / "MEMORY.md").read_text(encoding="utf-8")
+    assert "## Character Profiles" not in after
+    assert "## Preferences" in after
 
 
 def test_summarize_daily_routing_metrics_counts_and_reasons(tmp_path: Path) -> None:
@@ -326,7 +369,7 @@ def test_summarize_memory_update_sanitize_metrics_counts(tmp_path: Path) -> None
         "\n".join(
             [
                 '{"session_key":"s1","removed_recent_topic_section_count":2,"removed_transient_status_line_count":1,"removed_duplicate_bullet_count":2,"removed_recent_topic_sections":["今天讨论的主题"],"removed_transient_status_sections":["System Technical Issues"],"removed_duplicate_bullet_sections":["Preferences"]}',
-                '{"session_key":"s1","removed_recent_topic_section_count":1,"removed_transient_status_line_count":0,"removed_duplicate_bullet_count":0,"removed_recent_topic_sections":["今天讨论的主题"]}',
+                '{"session_key":"s1","removed_recent_topic_section_count":1,"removed_knowledge_reference_section_count":1,"removed_transient_status_line_count":0,"removed_duplicate_bullet_count":0,"removed_recent_topic_sections":["今天讨论的主题"],"removed_knowledge_reference_sections":["External Reference Information"]}',
                 '{"session_key":"s2","removed_recent_topic_section_count":0,"removed_transient_status_line_count":3,"removed_duplicate_bullet_count":1,"removed_transient_status_sections":["System Technical Issues"],"removed_duplicate_bullet_sections":["Project Context"]}',
                 "not-json",
             ]
@@ -338,6 +381,7 @@ def test_summarize_memory_update_sanitize_metrics_counts(tmp_path: Path) -> None
     assert summary.total_rows == 4
     assert summary.parse_error_rows == 1
     assert summary.total_recent_topic_sections_removed == 3
+    assert summary.total_knowledge_reference_sections_removed == 1
     assert summary.total_transient_status_lines_removed == 4
     assert summary.total_duplicate_bullets_removed == 3
     assert summary.dominant_focus == "transient_status"
@@ -346,6 +390,7 @@ def test_summarize_memory_update_sanitize_metrics_counts(tmp_path: Path) -> None
     assert summary.by_session["s1"] == 2
     assert summary.by_session["s2"] == 1
     assert summary.top_recent_topic_sections["今天讨论的主题"] == 2
+    assert summary.top_knowledge_reference_sections["External Reference Information"] == 1
     assert summary.top_transient_status_sections["System Technical Issues"] == 2
     assert summary.top_duplicate_bullet_sections["Preferences"] == 1
     text = render_memory_update_sanitize_metrics_markdown(summary)
@@ -353,8 +398,10 @@ def test_summarize_memory_update_sanitize_metrics_counts(tmp_path: Path) -> None
     assert "sessions_with_sanitize_hits: `2`" in text
     assert "sessions_with_effective_sanitize_hits: `2`" in text
     assert "removed_recent_topic_sections(total)" in text
+    assert "removed_knowledge_reference_sections(total)" in text
     assert "removed_duplicate_bullets(total)" in text
     assert "## Suggested Fixes" in text
+    assert "Knowledge-reference sanitize hits are non-zero" in text
     assert "Recent-topic sanitize hits are non-zero" in text
     assert "Duplicate-bullet sanitize hits are non-zero" in text
     assert "## Priority Focus" in text

@@ -123,6 +123,7 @@ class ConsolidationPipeline:
 
         if (
             sanitize_details["removed_sections"]
+            or sanitize_details.get("removed_knowledge_reference_sections")
             or sanitize_details["removed_transient_status_line_count"]
             or sanitize_details["removed_duplicate_bullet_count"]
         ):
@@ -130,10 +131,12 @@ class ConsolidationPipeline:
                 "Memory consolidation sanitized long-term memory update",
                 removed_sections=sanitize_details["removed_sections"],
                 removed_recent_topic_sections=sanitize_details["removed_recent_topic_sections"],
+                removed_knowledge_reference_sections=sanitize_details.get("removed_knowledge_reference_sections", []),
                 removed_transient_status_sections=sanitize_details["removed_transient_status_sections"],
                 removed_transient_status_line_count=sanitize_details["removed_transient_status_line_count"],
                 removed_duplicate_bullet_count=sanitize_details["removed_duplicate_bullet_count"],
                 recent_topic_section_samples=sanitize_details["recent_topic_section_samples"],
+                knowledge_reference_section_samples=sanitize_details.get("knowledge_reference_section_samples", []),
                 transient_status_line_samples=sanitize_details["transient_status_line_samples"],
                 duplicate_bullet_section_samples=sanitize_details["duplicate_bullet_section_samples"],
             )
@@ -142,6 +145,9 @@ class ConsolidationPipeline:
                 removed_recent_topic_section_count=len(
                     list(sanitize_details["removed_recent_topic_sections"])
                 ),
+                removed_knowledge_reference_section_count=len(
+                    list(sanitize_details.get("removed_knowledge_reference_sections", []))
+                ),
                 removed_transient_status_line_count=int(
                     sanitize_details["removed_transient_status_line_count"]
                 ),
@@ -149,6 +155,9 @@ class ConsolidationPipeline:
                     sanitize_details["removed_duplicate_bullet_count"]
                 ),
                 removed_recent_topic_sections=list(sanitize_details["removed_recent_topic_sections"]),
+                removed_knowledge_reference_sections=list(
+                    sanitize_details.get("removed_knowledge_reference_sections", [])
+                ),
                 removed_transient_status_sections=list(
                     sanitize_details["removed_transient_status_sections"]
                 ),
@@ -179,6 +188,7 @@ class ConsolidationPipeline:
                 "Memory section merge applied before guard",
                 merged_sections=merge_details.get("merged_sections", []),
                 added_sections=merge_details.get("added_sections", []),
+                rejected_added_sections=merge_details.get("rejected_added_sections", []),
             )
 
         if update == ctx.current_memory:

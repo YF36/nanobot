@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from nanobot.memory.io import MemoryIO
+from nanobot.memory.guard_policy import MemoryGuardPolicy
+from nanobot.memory.io import MemoryIO, parse_markdown_h2_sections, render_markdown_h2_sections
 
 _IO = MemoryIO()
 
@@ -78,6 +79,16 @@ class CleanupApplyResult:
 
 
 @dataclass
+class PurgeRejectedSectionsResult:
+    memory_dir: Path
+    memory_file_exists: bool
+    candidate_sections: list[str]
+    removed_sections: list[str]
+    touched: bool
+    backup_dir: Path | None
+
+
+@dataclass
 class DailyRoutingMetricsSummary:
     metrics_file_exists: bool
     total_rows: int
@@ -113,6 +124,7 @@ class MemoryUpdateSanitizeMetricsSummary:
     total_rows: int
     parse_error_rows: int
     total_recent_topic_sections_removed: int
+    total_knowledge_reference_sections_removed: int
     total_transient_status_lines_removed: int
     total_duplicate_bullets_removed: int
     dominant_focus: str
@@ -120,6 +132,7 @@ class MemoryUpdateSanitizeMetricsSummary:
     sessions_with_effective_sanitize_hits: int
     by_session: dict[str, int]
     top_recent_topic_sections: dict[str, int]
+    top_knowledge_reference_sections: dict[str, int]
     top_transient_status_sections: dict[str, int]
     top_duplicate_bullet_sections: dict[str, int]
 
@@ -326,6 +339,12 @@ def _backup_file(src: Path, backup_dir: Path) -> None:
     _IO.write_text(backup_dir / src.name, src.read_text(encoding="utf-8"), encoding="utf-8")
 
 
+# _parse_markdown_h2_sections and _render_markdown_h2_sections moved to
+# nanobot.memory.io as public functions.  Local aliases kept for call-site compat.
+_parse_markdown_h2_sections = parse_markdown_h2_sections
+_render_markdown_h2_sections = render_markdown_h2_sections
+
+
 def _append_jsonl(path: Path, payload: dict[str, object]) -> None:
     line = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
     _IO.append_text(path, line, encoding="utf-8")
@@ -403,6 +422,74 @@ def run_memory_audit(memory_dir: Path) -> MemoryAudit:
     )
 
 
+def summarize_rejected_memory_sections(memory_dir: Path) -> PurgeRejectedSectionsResult:
+    memory_file = memory_dir / "MEMORY.md"
+    if not memory_file.exists():
+        return PurgeRejectedSectionsResult(
+            memory_dir=memory_dir,
+            memory_file_exists=False,
+            candidate_sections=[],
+            removed_sections=[],
+            touched=False,
+            backup_dir=None,
+        )
+    text = memory_file.read_text(encoding="utf-8")
+    _, sections = _parse_markdown_h2_sections(text)
+    candidates: list[str] = []
+    for heading, _lines in sections:
+        if MemoryGuardPolicy.is_rejected_section_heading(heading):
+            candidates.append(heading)
+    return PurgeRejectedSectionsResult(
+        memory_dir=memory_dir,
+        memory_file_exists=True,
+        candidate_sections=candidates,
+        removed_sections=[],
+        touched=False,
+        backup_dir=None,
+    )
+
+
+def apply_purge_rejected_memory_sections(memory_dir: Path) -> PurgeRejectedSectionsResult:
+    summary = summarize_rejected_memory_sections(memory_dir)
+    if not summary.memory_file_exists or not summary.candidate_sections:
+        return summary
+
+    memory_file = memory_dir / "MEMORY.md"
+    original = memory_file.read_text(encoding="utf-8")
+    preamble, sections = _parse_markdown_h2_sections(original)
+
+    kept_sections: list[tuple[str, list[str]]] = []
+    removed_sections: list[str] = []
+    for heading, lines in sections:
+        if MemoryGuardPolicy.is_rejected_section_heading(heading):
+            removed_sections.append(heading)
+            continue
+        kept_sections.append((heading, lines))
+
+    new_content = _render_markdown_h2_sections(preamble, kept_sections)
+    if new_content == original:
+        return PurgeRejectedSectionsResult(
+            memory_dir=memory_dir,
+            memory_file_exists=True,
+            candidate_sections=summary.candidate_sections,
+            removed_sections=[],
+            touched=False,
+            backup_dir=None,
+        )
+
+    backup_dir = memory_dir / f"_cleanup_backup_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+    _backup_file(memory_file, backup_dir)
+    _IO.write_text(memory_file, new_content, encoding="utf-8")
+    return PurgeRejectedSectionsResult(
+        memory_dir=memory_dir,
+        memory_file_exists=True,
+        candidate_sections=summary.candidate_sections,
+        removed_sections=removed_sections,
+        touched=True,
+        backup_dir=backup_dir,
+    )
+
+
 def _trim_text(value: str, max_chars: int) -> tuple[str, bool]:
     if len(value) <= max_chars:
         return value, False
@@ -429,7 +516,7 @@ def apply_conservative_cleanup(
             d = _daily_file_date(p)
             if d is not None and d >= cutoff:
                 daily_files.append(p)
-    backup_dir = memory_dir / f"_cleanup_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    backup_dir = memory_dir / f"_cleanup_backup_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
 
     history_trimmed_entries = 0
     history_deduplicated_entries = 0
@@ -1317,6 +1404,7 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
             total_rows=0,
             parse_error_rows=0,
             total_recent_topic_sections_removed=0,
+            total_knowledge_reference_sections_removed=0,
             total_transient_status_lines_removed=0,
             total_duplicate_bullets_removed=0,
             dominant_focus="none",
@@ -1324,6 +1412,7 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
             sessions_with_effective_sanitize_hits=0,
             by_session={},
             top_recent_topic_sections={},
+            top_knowledge_reference_sections={},
             top_transient_status_sections={},
             top_duplicate_bullet_sections={},
         )
@@ -1331,11 +1420,13 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
     total_rows = 0
     parse_error_rows = 0
     recent_topic_removed = 0
+    knowledge_removed = 0
     transient_lines_removed = 0
     duplicate_bullets_removed = 0
     session_counter: Counter[str] = Counter()
     effective_session_counter: Counter[str] = Counter()
     recent_section_counter: Counter[str] = Counter()
+    knowledge_section_counter: Counter[str] = Counter()
     transient_section_counter: Counter[str] = Counter()
     duplicate_section_counter: Counter[str] = Counter()
 
@@ -1354,21 +1445,33 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
             continue
         session_key = str(item.get("session_key") or "unknown")
         rcount = item.get("removed_recent_topic_section_count")
+        kcount = item.get("removed_knowledge_reference_section_count", 0)
         tcount = item.get("removed_transient_status_line_count")
         dcount = item.get("removed_duplicate_bullet_count", 0)
-        if not isinstance(rcount, int) or not isinstance(tcount, int) or not isinstance(dcount, int):
+        if (
+            not isinstance(rcount, int)
+            or not isinstance(kcount, int)
+            or not isinstance(tcount, int)
+            or not isinstance(dcount, int)
+        ):
             parse_error_rows += 1
             continue
         recent_topic_removed += max(0, int(rcount))
+        knowledge_removed += max(0, int(kcount))
         transient_lines_removed += max(0, int(tcount))
         duplicate_bullets_removed += max(0, int(dcount))
         raw_recent_sections = item.get("removed_recent_topic_sections")
+        raw_knowledge_sections = item.get("removed_knowledge_reference_sections")
         raw_transient_sections = item.get("removed_transient_status_sections")
         raw_duplicate_sections = item.get("removed_duplicate_bullet_sections")
         if isinstance(raw_recent_sections, list):
             for sec in raw_recent_sections:
                 if isinstance(sec, str) and sec.strip():
                     recent_section_counter[sec.strip()] += 1
+        if isinstance(raw_knowledge_sections, list):
+            for sec in raw_knowledge_sections:
+                if isinstance(sec, str) and sec.strip():
+                    knowledge_section_counter[sec.strip()] += 1
         if isinstance(raw_transient_sections, list):
             for sec in raw_transient_sections:
                 if isinstance(sec, str) and sec.strip():
@@ -1378,16 +1481,26 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
                 if isinstance(sec, str) and sec.strip():
                     duplicate_section_counter[sec.strip()] += 1
         session_counter[session_key] += 1
-        if (max(0, int(rcount)) + max(0, int(tcount)) + max(0, int(dcount))) > 0:
+        if (max(0, int(rcount)) + max(0, int(kcount)) + max(0, int(tcount)) + max(0, int(dcount))) > 0:
             effective_session_counter[session_key] += 1
 
-    if recent_topic_removed > transient_lines_removed and recent_topic_removed >= duplicate_bullets_removed:
+    if (
+        recent_topic_removed >= knowledge_removed
+        and recent_topic_removed > transient_lines_removed
+        and recent_topic_removed >= duplicate_bullets_removed
+    ):
         dominant_focus = "recent_topic"
+    elif (
+        knowledge_removed > recent_topic_removed
+        and knowledge_removed >= transient_lines_removed
+        and knowledge_removed >= duplicate_bullets_removed
+    ):
+        dominant_focus = "knowledge_reference"
     elif transient_lines_removed > recent_topic_removed and transient_lines_removed >= duplicate_bullets_removed:
         dominant_focus = "transient_status"
     elif duplicate_bullets_removed > 0:
         dominant_focus = "duplicate_bullets"
-    elif recent_topic_removed == 0 and transient_lines_removed == 0 and duplicate_bullets_removed == 0:
+    elif recent_topic_removed == 0 and knowledge_removed == 0 and transient_lines_removed == 0 and duplicate_bullets_removed == 0:
         dominant_focus = "none"
     else:
         dominant_focus = "balanced"
@@ -1397,6 +1510,7 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
         total_rows=total_rows,
         parse_error_rows=parse_error_rows,
         total_recent_topic_sections_removed=recent_topic_removed,
+        total_knowledge_reference_sections_removed=knowledge_removed,
         total_transient_status_lines_removed=transient_lines_removed,
         total_duplicate_bullets_removed=duplicate_bullets_removed,
         dominant_focus=dominant_focus,
@@ -1404,6 +1518,9 @@ def summarize_memory_update_sanitize_metrics(memory_dir: Path) -> MemoryUpdateSa
         sessions_with_effective_sanitize_hits=len(effective_session_counter),
         by_session=dict(sorted(session_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         top_recent_topic_sections=dict(sorted(recent_section_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
+        top_knowledge_reference_sections=dict(
+            sorted(knowledge_section_counter.items(), key=lambda kv: (-kv[1], kv[0]))
+        ),
         top_transient_status_sections=dict(sorted(transient_section_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
         top_duplicate_bullet_sections=dict(sorted(duplicate_section_counter.items(), key=lambda kv: (-kv[1], kv[0]))),
     )
@@ -1429,6 +1546,7 @@ def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitize
             f"- sessions_with_sanitize_hits: `{summary.sessions_with_sanitize_hits}`",
             f"- sessions_with_effective_sanitize_hits: `{summary.sessions_with_effective_sanitize_hits}`",
             f"- removed_recent_topic_sections(total): `{summary.total_recent_topic_sections_removed}`",
+            f"- removed_knowledge_reference_sections(total): `{summary.total_knowledge_reference_sections_removed}`",
             f"- removed_transient_status_lines(total): `{summary.total_transient_status_lines_removed}`",
             f"- removed_duplicate_bullets(total): `{summary.total_duplicate_bullets_removed}`",
             f"- dominant_focus: `{summary.dominant_focus}`",
@@ -1438,6 +1556,10 @@ def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitize
     if summary.total_recent_topic_sections_removed > 0:
         lines.append(
             "- Recent-topic sanitize hits are non-zero: tighten consolidation instruction to keep ephemeral topics in `history_entry`/daily only."
+        )
+    if summary.total_knowledge_reference_sections_removed > 0:
+        lines.append(
+            "- Knowledge-reference sanitize hits are non-zero: keep encyclopedia/reference dumps out of `memory_update`; preserve user-specific durable facts only."
         )
     if summary.total_transient_status_lines_removed > 0:
         lines.append(
@@ -1449,6 +1571,7 @@ def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitize
         )
     if (
         summary.total_recent_topic_sections_removed == 0
+        and summary.total_knowledge_reference_sections_removed == 0
         and summary.total_transient_status_lines_removed == 0
         and summary.total_duplicate_bullets_removed == 0
     ):
@@ -1457,6 +1580,7 @@ def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitize
         lines.extend(["", "## Priority Focus"])
         focus_items = [
             ("recent_topic", summary.total_recent_topic_sections_removed),
+            ("knowledge_reference", summary.total_knowledge_reference_sections_removed),
             ("transient_status", summary.total_transient_status_lines_removed),
             ("duplicate_bullets", summary.total_duplicate_bullets_removed),
         ]
@@ -1466,18 +1590,29 @@ def render_memory_update_sanitize_metrics_markdown(summary: MemoryUpdateSanitize
                 continue
             if key == "recent_topic":
                 lines.append(f"- {key}: `{count}` (prioritize reducing ephemeral topic sections in memory_update)")
+            elif key == "knowledge_reference":
+                lines.append(f"- {key}: `{count}` (prioritize removing encyclopedia/reference sections from memory_update)")
             elif key == "duplicate_bullets":
                 lines.append(f"- {key}: `{count}` (prioritize deduplicating repeated bullets in memory_update)")
             else:
                 lines.append(f"- {key}: `{count}` (prioritize filtering dated status/error lines)")
     lines.extend(["", "## Top Sanitized Sections"])
-    if not summary.top_recent_topic_sections and not summary.top_transient_status_sections:
+    if (
+        not summary.top_recent_topic_sections
+        and not summary.top_knowledge_reference_sections
+        and not summary.top_transient_status_sections
+    ):
         lines.append("- none")
     else:
         if summary.top_recent_topic_sections:
             lines.append(
                 "- recent_topic: "
                 + ", ".join([f"`{k}`:`{v}`" for k, v in list(summary.top_recent_topic_sections.items())[:3]])
+            )
+        if summary.top_knowledge_reference_sections:
+            lines.append(
+                "- knowledge_reference: "
+                + ", ".join([f"`{k}`:`{v}`" for k, v in list(summary.top_knowledge_reference_sections.items())[:3]])
             )
         if summary.top_transient_status_sections:
             lines.append(
