@@ -335,6 +335,11 @@ def memory_audit(
         "--apply-abort-on-high-risk",
         help="Abort apply when pre-apply drop preview risk level is high",
     ),
+    apply_safe: bool = typer.Option(
+        False,
+        "--apply-safe",
+        help="Apply cleanup with safe defaults (enables --apply and staged half-life options)",
+    ),
     apply: bool = typer.Option(False, "--apply", help="Apply conservative cleanup with automatic backup"),
     apply_recent_days: int = typer.Option(
         0,
@@ -388,6 +393,9 @@ def memory_audit(
 
     config = load_config()
     target_dir = Path(memory_dir).expanduser() if memory_dir else (config.workspace_path / "memory")
+    if apply_safe and not apply:
+        console.print("[yellow]`--apply-safe` auto-enables `--apply`.[/yellow]")
+        apply = True
     audit = run_memory_audit(target_dir)
     report = render_audit_markdown(audit)
     console.print(Markdown(report))
@@ -601,6 +609,21 @@ def memory_audit(
             console.print(f"[green]✓[/green] Wrote apply drop preview: {out}")
 
     if apply:
+        if apply_safe:
+            if apply_recent_days <= 0:
+                apply_recent_days = 7
+            if drop_tool_activity_older_than_days <= 0:
+                drop_tool_activity_older_than_days = 30
+            if drop_non_decision_older_than_days <= 0:
+                drop_non_decision_older_than_days = 30
+            apply_abort_on_high_risk = True
+            console.print(
+                "[cyan]Apply safe preset:[/cyan] "
+                f"recent_days={apply_recent_days}, "
+                f"drop_tool_activity_older_than_days={drop_tool_activity_older_than_days}, "
+                f"drop_non_decision_older_than_days={drop_non_decision_older_than_days}, "
+                f"abort_on_high_risk={apply_abort_on_high_risk}"
+            )
         top_n = max(1, int(apply_drop_preview_top))
         auto_preview = summarize_cleanup_drop_preview(
             target_dir,
