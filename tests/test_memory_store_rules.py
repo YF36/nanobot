@@ -99,6 +99,34 @@ def test_synthesize_daily_sections_from_entry_can_split_into_multiple_sections()
     assert "open_questions" in sections
 
 
+def test_resolve_daily_routing_plan_prefers_model_when_valid(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    plan = mm._resolve_daily_routing_plan(
+        entry_text="[2026-02-25 10:00] Discussed plan.",
+        raw_daily_sections={"topics": ["abc"]},
+    )
+    assert plan.structured_source == "model"
+    assert plan.model_daily_sections_ok is True
+    assert plan.model_daily_sections_reason == "ok"
+
+
+def test_resolve_daily_routing_plan_uses_salvage_then_synthesis(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    plan = mm._resolve_daily_routing_plan(
+        entry_text="[2026-02-25 10:00] Ran exec command; follow up tomorrow.",
+        raw_daily_sections={"tool_activity": "bad", "decisions": ["keep"]},
+    )
+    assert plan.structured_source == "salvaged_model_partial"
+    assert plan.model_daily_sections_ok is False
+    assert plan.model_daily_sections_reason == "invalid_type:tool_activity"
+
+    plan2 = mm._resolve_daily_routing_plan(
+        entry_text="[2026-02-25 10:00] Ran exec command; follow up tomorrow.",
+        raw_daily_sections={"tool_activity": "bad"},
+    )
+    assert plan2.structured_source in {"synthesized_after_invalid", "fallback_unstructured"}
+
+
 def test_normalize_daily_sections_detailed_reports_quality_reasons() -> None:
     normalized, reason = MemoryStore._normalize_daily_sections_detailed(None)
     assert normalized is None and reason == "missing"

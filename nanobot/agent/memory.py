@@ -146,6 +146,13 @@ class MemoryStore:
         processed_count: int = 0
         next_chunk: list[dict] | None = None
 
+    @dataclass
+    class _DailyRoutingPlan:
+        sections_payload: object
+        structured_source: str
+        model_daily_sections_ok: bool
+        model_daily_sections_reason: str
+
     def __init__(self, workspace: Path):
         self.memory_dir = ensure_dir(workspace / "memory")
         self.observability_dir = ensure_dir(self.memory_dir / "observability")
@@ -576,6 +583,51 @@ class MemoryStore:
             if used >= cls._SYNTH_DAILY_MAX_BULLETS:
                 break
         return sections or None
+
+    def _resolve_daily_routing_plan(
+        self,
+        *,
+        entry_text: str,
+        raw_daily_sections: object,
+    ) -> _DailyRoutingPlan:
+        """Resolve best payload for structured daily write with stable source semantics."""
+        _, model_daily_sections_reason = self._normalize_daily_sections_detailed(raw_daily_sections)
+        model_daily_sections_ok = model_daily_sections_reason == "ok"
+        if model_daily_sections_ok:
+            return self._DailyRoutingPlan(
+                sections_payload=raw_daily_sections,
+                structured_source="model",
+                model_daily_sections_ok=True,
+                model_daily_sections_reason="ok",
+            )
+
+        salvaged_sections = self._coerce_partial_daily_sections(raw_daily_sections)
+        if salvaged_sections is not None and salvaged_sections != raw_daily_sections:
+            return self._DailyRoutingPlan(
+                sections_payload=salvaged_sections,
+                structured_source="salvaged_model_partial",
+                model_daily_sections_ok=False,
+                model_daily_sections_reason=model_daily_sections_reason,
+            )
+
+        synthesized_sections = self._synthesize_daily_sections_from_entry(entry_text)
+        if synthesized_sections is not None:
+            synthesized_source = (
+                "synthesized_missing" if raw_daily_sections is None else "synthesized_after_invalid"
+            )
+            return self._DailyRoutingPlan(
+                sections_payload=synthesized_sections,
+                structured_source=synthesized_source,
+                model_daily_sections_ok=False,
+                model_daily_sections_reason=model_daily_sections_reason,
+            )
+
+        return self._DailyRoutingPlan(
+            sections_payload=raw_daily_sections,
+            structured_source="fallback_unstructured",
+            model_daily_sections_ok=False,
+            model_daily_sections_reason=model_daily_sections_reason,
+        )
 
     def get_memory_context(self) -> str:
         long_term = self.read_long_term()
@@ -1132,44 +1184,22 @@ class MemoryStore:
             self.append_history(entry_text)
             date_str = self._history_entry_date(entry_text)
             raw_daily_sections = args.get("daily_sections")
-            _, model_daily_sections_reason = self._normalize_daily_sections_detailed(raw_daily_sections)
-            model_daily_sections_ok = model_daily_sections_reason == "ok"
-            structured_source = "model"
-            if raw_daily_sections is None:
-                synthesized_sections = self._synthesize_daily_sections_from_entry(entry_text)
-                if synthesized_sections is not None:
-                    raw_daily_sections = synthesized_sections
-                    structured_source = "synthesized_missing"
+            routing_plan = self._resolve_daily_routing_plan(
+                entry_text=entry_text,
+                raw_daily_sections=raw_daily_sections,
+            )
             _, structured_daily_ok, structured_daily_details = self.append_daily_sections_detailed(
                 date_str,
-                raw_daily_sections,
+                routing_plan.sections_payload,
             )
             if not structured_daily_ok:
-                salvaged_sections = self._coerce_partial_daily_sections(raw_daily_sections)
-                if salvaged_sections is not None and salvaged_sections != raw_daily_sections:
-                    _, structured_daily_ok, structured_daily_details = self.append_daily_sections_detailed(
-                        date_str,
-                        salvaged_sections,
-                    )
-                    if structured_daily_ok:
-                        structured_source = "salvaged_model_partial"
-            if not structured_daily_ok:
-                synthesized_sections = self._synthesize_daily_sections_from_entry(entry_text)
-                if synthesized_sections is not None and synthesized_sections != raw_daily_sections:
-                    _, structured_daily_ok, structured_daily_details = self.append_daily_sections_detailed(
-                        date_str,
-                        synthesized_sections,
-                    )
-                    if structured_daily_ok:
-                        structured_source = "synthesized_after_invalid"
-            if not structured_daily_ok:
-                structured_source = "fallback_unstructured"
+                routing_plan.structured_source = "fallback_unstructured"
                 self.append_daily_history_entry(entry_text)
             logger.debug(
                 "Memory daily routing decision",
                 date=date_str,
                 structured_daily_ok=structured_daily_ok,
-                structured_source=structured_source,
+                structured_source=routing_plan.structured_source,
                 fallback_used=(not structured_daily_ok),
                 fallback_reason=structured_daily_details["reason"],
                 structured_keys=structured_daily_details["keys"],
@@ -1182,9 +1212,9 @@ class MemoryStore:
                 fallback_reason=str(structured_daily_details["reason"]),
                 structured_keys=list(structured_daily_details["keys"]),
                 structured_bullet_count=int(structured_daily_details["bullet_count"]),
-                structured_source=structured_source,
-                model_daily_sections_ok=model_daily_sections_ok,
-                model_daily_sections_reason=model_daily_sections_reason,
+                structured_source=routing_plan.structured_source,
+                model_daily_sections_ok=routing_plan.model_daily_sections_ok,
+                model_daily_sections_reason=routing_plan.model_daily_sections_reason,
             )
         else:
             logger.warning(

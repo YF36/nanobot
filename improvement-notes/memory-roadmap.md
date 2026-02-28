@@ -169,6 +169,7 @@ M2-full 状态（截至 2026-02-26）：部分落地（step2 兼容版）
 - 已增强（step2+）：当 `daily_sections` 存在但无效时，也会尝试基于 `history_entry` 合成结构化 sections 进行补救，降低 fallback 到非结构化路径的概率。
 - 已增强（step2+）：结构化补救支持对 `history_entry` 做轻量分句并按语义映射到多 section（如 decisions/tool_activity/open_questions），不再只生成单条 section bullet。
 - 已增强（step2+）：当模型 `daily_sections` 为“部分有效 + 部分无效”时，优先保留可用 section（best-effort salvage），仅对剩余问题走补救路径。
+- 已增强（P0 收口）：daily routing 决策已抽成统一解析流程（model -> salvage -> synthesize -> fallback），并稳定输出 `structured_source/model_daily_sections_reason` 语义。
 - 已实施（step2+，2026-02-27）：daily 写入去噪增强：
   - fallback（`history_entry`）写入 daily 时仅写正文，不再带时间戳前缀；
   - 同一 daily section 内完全相同 bullet 自动去重（结构化写入与 fallback 均生效）。
