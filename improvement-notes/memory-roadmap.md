@@ -495,10 +495,14 @@ R2 进展（2026-02-28）：
 - 已落地 preference conflict 扩展（最小策略版）：
   - preference key 扩展：`language / communication_style / timezone / output_format / tone`
   - 支持配置 conflict keys（`MemoryStore(..., preference_conflict_keys=...)`）
-  - 支持策略：`keep_new / keep_old / ask_user / merge`（当前 `ask_user` 先按保守拒写处理，并写 outcome/metrics）
+  - 支持策略：`keep_new / keep_old / ask_user / merge`
   - conflict metrics 增加 `resolution` 字段
+- 已落地 `ask_user` 下一轮交互提示注入：
+  - `ask_user` 冲突时写入 `session.metadata.pending_preference_conflict`
+  - 下一轮 `ContextBuilder.build_messages()` 自动注入“Pending Preference Confirmation”系统提示块
+  - 注入后单次消费（从 metadata 移除），避免重复提示
 
-R2 状态：已完成（最小可用版）；`ask_user` 的“下一轮交互提示注入”留待后续增强。
+R2 状态：已完成（含增强尾项）。
 
 ### Phase R2.5：L1 Insights 中间层（新增阶段）
 
