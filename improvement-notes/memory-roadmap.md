@@ -310,6 +310,16 @@ R0 进展（2026-02-28）：
   - `tests/fixtures/memory_golden/guard_heading_retention_low.json`
   - 对应测试：`tests/test_memory_golden.py`（`pytest.mark.golden`）
 
+R0 基线命令集（可重复执行）：
+
+```bash
+uv run pytest -q tests/test_atomic_file_io.py tests/test_memory_golden.py tests/test_memory_store_rules.py tests/test_consolidation_race.py tests/test_memory_maintenance.py tests/test_memory_observe_cli.py
+uv run nanobot memory-observe --tag r0-baseline
+uv run nanobot memory-audit --metrics-summary --guard-metrics-summary --sanitize-metrics-summary --conflict-metrics-summary --context-trace-summary
+```
+
+R0 状态：已完成（数据安全基线 + golden 回归基线）。
+
 ### Phase R1：模块拆分 + Pipeline 抽象（行为不变）
 
 目标：仅重构结构，不变业务行为。引入 Pipeline 编排模式。
