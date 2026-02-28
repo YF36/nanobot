@@ -17,6 +17,7 @@ _IO = MemoryIO()
 _DATE_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.md$")
 _ARCHIVE_DATE_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:\..+)?\.md$")
 _HISTORY_ENTRY_RE = re.compile(r"^\[(20\d{2}-\d{2}-\d{2})(?:\s+\d{2}:\d{2})?\]\s*(.*)$")
+_INSIGHT_BULLET_RE = re.compile(r"^\-\s+\[(20\d{2}-\d{2}-\d{2})\]\s+(.+)$")
 _FALLBACK_REASON_HINTS = {
     "missing": "Model did not provide `daily_sections`; consider prompt nudge to always emit structured arrays.",
     "empty": "Structured payload was empty; ask model to include at least one concise bullet in a relevant section.",
@@ -180,6 +181,21 @@ class DailyTTLApplyResult:
     deleted_file_count: int
     deleted_bullet_count: int
     deleted_files: list[str]
+    metrics_rows: int
+
+
+@dataclass
+class InsightsTTLDryRunSummary:
+    ttl_days: int
+    candidate_line_count: int
+    candidate_lines: list[str]
+
+
+@dataclass
+class InsightsTTLApplyResult:
+    ttl_days: int
+    deleted_line_count: int
+    deleted_lines: list[str]
     metrics_rows: int
 
 
@@ -1893,6 +1909,143 @@ def render_daily_archive_compact_apply_markdown(result: DailyArchiveCompactApply
     else:
         for name in result.compacted_files:
             lines.append(f"- {name}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def summarize_insights_ttl_dry_run(
+    memory_dir: Path,
+    *,
+    ttl_days: int = 60,
+) -> InsightsTTLDryRunSummary:
+    insights_file = memory_dir / "INSIGHTS.md"
+    window_days = max(1, int(ttl_days))
+    cutoff = datetime.now().date() - timedelta(days=window_days - 1)
+    candidates: list[str] = []
+    if insights_file.exists():
+        for raw in insights_file.read_text(encoding="utf-8").splitlines():
+            m = _INSIGHT_BULLET_RE.match(raw.strip())
+            if not m:
+                continue
+            try:
+                d = datetime.strptime(m.group(1), "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if d >= cutoff:
+                continue
+            candidates.append(raw.strip())
+    return InsightsTTLDryRunSummary(
+        ttl_days=window_days,
+        candidate_line_count=len(candidates),
+        candidate_lines=candidates,
+    )
+
+
+def render_insights_ttl_dry_run_markdown(summary: InsightsTTLDryRunSummary) -> str:
+    lines = [
+        "# Insights TTL Dry-Run Summary",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+        f"- TTL window: keep last `{summary.ttl_days}` day(s) in `INSIGHTS.md`",
+        f"- Candidate lines: `{summary.candidate_line_count}`",
+        "",
+        "## Candidate Lines",
+    ]
+    if not summary.candidate_lines:
+        lines.append("- none")
+    else:
+        for line in summary.candidate_lines[:50]:
+            lines.append(f"- `{line}`")
+        if len(summary.candidate_lines) > 50:
+            lines.append(f"- ... and `{len(summary.candidate_lines) - 50}` more")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def apply_insights_ttl_janitor(
+    memory_dir: Path,
+    *,
+    ttl_days: int = 60,
+) -> InsightsTTLApplyResult:
+    dry = summarize_insights_ttl_dry_run(memory_dir, ttl_days=ttl_days)
+    insights_file = memory_dir / "INSIGHTS.md"
+    if not insights_file.exists() or dry.candidate_line_count <= 0:
+        return InsightsTTLApplyResult(
+            ttl_days=dry.ttl_days,
+            deleted_line_count=0,
+            deleted_lines=[],
+            metrics_rows=0,
+        )
+
+    original_lines = insights_file.read_text(encoding="utf-8").splitlines()
+    cutoff = datetime.now().date() - timedelta(days=dry.ttl_days - 1)
+    kept_lines: list[str] = []
+    deleted_lines: list[str] = []
+    for raw in original_lines:
+        m = _INSIGHT_BULLET_RE.match(raw.strip())
+        if not m:
+            kept_lines.append(raw)
+            continue
+        try:
+            d = datetime.strptime(m.group(1), "%Y-%m-%d").date()
+        except ValueError:
+            kept_lines.append(raw)
+            continue
+        if d >= cutoff:
+            kept_lines.append(raw)
+            continue
+        deleted_lines.append(raw.strip())
+
+    if not deleted_lines:
+        return InsightsTTLApplyResult(
+            ttl_days=dry.ttl_days,
+            deleted_line_count=0,
+            deleted_lines=[],
+            metrics_rows=0,
+        )
+
+    backup_dir = memory_dir / f"_cleanup_backup_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+    _backup_file(insights_file, backup_dir)
+    rendered = "\n".join(kept_lines).rstrip() + "\n"
+    _IO.write_text(insights_file, rendered, encoding="utf-8")
+
+    metrics_file = _metrics_file_for_write(memory_dir, "insights-ttl-metrics.jsonl")
+    _append_jsonl(
+        metrics_file,
+        {
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "ttl_days": dry.ttl_days,
+            "deleted_line_count": len(deleted_lines),
+            "action": "delete_lines",
+            "priority": "P2",
+        },
+    )
+    return InsightsTTLApplyResult(
+        ttl_days=dry.ttl_days,
+        deleted_line_count=len(deleted_lines),
+        deleted_lines=deleted_lines,
+        metrics_rows=1,
+    )
+
+
+def render_insights_ttl_apply_markdown(result: InsightsTTLApplyResult) -> str:
+    lines = [
+        "# Insights TTL Apply Result",
+        "",
+        f"- Generated at: {datetime.now().isoformat(timespec='seconds')}",
+        f"- TTL window: keep last `{result.ttl_days}` day(s) in `INSIGHTS.md`",
+        f"- Deleted lines: `{result.deleted_line_count}`",
+        f"- Metrics rows appended: `{result.metrics_rows}`",
+        "",
+        "## Deleted Lines",
+    ]
+    if not result.deleted_lines:
+        lines.append("- none")
+    else:
+        for line in result.deleted_lines[:50]:
+            lines.append(f"- `{line}`")
+        if len(result.deleted_lines) > 50:
+            lines.append(f"- ... and `{len(result.deleted_lines) - 50}` more")
     lines.append("")
     return "\n".join(lines)
 

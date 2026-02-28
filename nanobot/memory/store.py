@@ -53,6 +53,11 @@ _SAVE_MEMORY_TOOL = [
                             "open_questions": {"type": "array", "items": {"type": "string"}},
                         },
                     },
+                    "insights_update": {
+                        "type": "string",
+                        "description": "Optional semi-persistent lessons learned. "
+                        "Use concise bullets, avoid raw logs and dated operational noise.",
+                    },
                 },
                 "required": ["history_entry", "memory_update"],
             },
@@ -125,6 +130,10 @@ class MemoryStore:
     }
     _HISTORY_ENTRY_MAX_CHARS = 600
     _DAILY_BULLET_MAX_CHARS = 240
+    _INSIGHTS_BULLET_MAX_CHARS = 320
+    _INSIGHTS_CONTEXT_MAX_BULLETS = 15
+    _INSIGHTS_CONTEXT_MAX_CHARS = 1200
+    _INSIGHTS_DEFAULT_SECTION = "Lessons Learned"
     _SYNTH_DAILY_MAX_BULLETS = 4
     _SYNTH_DAILY_MIN_BULLET_CHARS = 8
     _SYNTH_DAILY_EXCLUDE_PATTERNS = (
@@ -201,6 +210,7 @@ class MemoryStore:
         self.observability_dir = ensure_dir(self.memory_dir / "observability")
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "HISTORY.md"
+        self.insights_file = self.memory_dir / "INSIGHTS.md"
         self.consolidation_progress_file = self.memory_dir / "consolidation-in-progress.json"
         self.daily_routing_metrics_file = self.observability_dir / "daily-routing-metrics.jsonl"
         self.memory_update_guard_metrics_file = self.observability_dir / "memory-update-guard-metrics.jsonl"
@@ -237,6 +247,93 @@ class MemoryStore:
 
     def append_history(self, entry: str) -> None:
         self._io.append_text(self.history_file, entry.rstrip() + "\n\n", encoding="utf-8")
+
+    def read_insights(self) -> str:
+        if self.insights_file.exists():
+            return self.insights_file.read_text(encoding="utf-8")
+        return ""
+
+    def _ensure_insights_file(self) -> None:
+        if not self.insights_file.exists():
+            self._io.write_text(
+                self.insights_file,
+                "# Insights\n\n## Lessons Learned\n",
+                encoding="utf-8",
+            )
+
+    @classmethod
+    def _normalize_insights_update(cls, update: object) -> list[str]:
+        if update is None:
+            return []
+        if not isinstance(update, str):
+            update = json.dumps(update, ensure_ascii=False)
+        lines: list[str] = []
+        for raw in update.splitlines():
+            text = raw.strip()
+            if not text:
+                continue
+            if text.startswith("#"):
+                continue
+            if text.startswith("- "):
+                text = text[2:].strip()
+            text = re.sub(r"\s+", " ", text).strip()
+            if not text:
+                continue
+            if len(text) > cls._INSIGHTS_BULLET_MAX_CHARS:
+                text = text[: cls._INSIGHTS_BULLET_MAX_CHARS - 3].rstrip() + "..."
+            lines.append(text)
+        if not lines:
+            return []
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for item in lines:
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+        return deduped
+
+    def append_insights_update(self, insights_update: object, *, date_str: str | None = None) -> int:
+        normalized = self._normalize_insights_update(insights_update)
+        if not normalized:
+            return 0
+        self._ensure_insights_file()
+        text = self.read_insights()
+        preamble, sections = parse_markdown_h2_sections(text)
+        section_map: dict[str, list[str]] = {heading: list(lines) for heading, lines in sections}
+        section_order: list[str] = [heading for heading, _ in sections]
+        target = self._INSIGHTS_DEFAULT_SECTION
+        if target not in section_map:
+            section_map[target] = []
+            section_order.append(target)
+        current_lines = section_map[target]
+        existing: set[str] = set()
+        for line in current_lines:
+            stripped = line.strip()
+            if not stripped.startswith("- "):
+                continue
+            payload = re.sub(r"^\[(20\d{2}-\d{2}-\d{2})\]\s*", "", stripped[2:].strip())
+            payload = re.sub(r"\s+", " ", payload).strip().lower()
+            if payload:
+                existing.add(payload)
+        ds = date_str or datetime.now().strftime("%Y-%m-%d")
+        appended = 0
+        for item in normalized:
+            key = item.lower()
+            if key in existing:
+                continue
+            current_lines.append(f"- [{ds}] {item}")
+            existing.add(key)
+            appended += 1
+        if appended <= 0:
+            return 0
+        rendered = render_markdown_h2_sections(
+            preamble if preamble else ["# Insights"],
+            [(heading, section_map[heading]) for heading in section_order],
+        )
+        self._io.write_text(self.insights_file, rendered, encoding="utf-8")
+        return appended
 
     def _append_daily_routing_metric(
         self,
@@ -893,9 +990,82 @@ class MemoryStore:
             "rejected_added_sections": rejected_added_sections,
         }
 
+    _INSIGHTS_DATE_RE = re.compile(r"^\- \[(\d{4}-\d{2}-\d{2})\]")
+
+    def _truncate_insights_for_context(self, text: str) -> str:
+        """Truncate insights to fit within context budget.
+
+        Keeps the most recent bullets (by ``[YYYY-MM-DD]`` date anchor)
+        within :pyattr:`_INSIGHTS_CONTEXT_MAX_BULLETS` and
+        :pyattr:`_INSIGHTS_CONTEXT_MAX_CHARS`.
+        """
+        preamble, sections = parse_markdown_h2_sections(text)
+        if not sections:
+            return text
+
+        bullet_budget = self._INSIGHTS_CONTEXT_MAX_BULLETS
+        char_budget = self._INSIGHTS_CONTEXT_MAX_CHARS
+
+        # Collect dated and undated bullets. Dated bullets are prioritized by recency.
+        dated_bullets: list[tuple[str, str, int, str]] = []  # (date, section, idx, line)
+        undated_bullets: list[tuple[str, str]] = []  # (section, line)
+        for heading, lines in sections:
+            idx = 0
+            for line in lines:
+                stripped = line.strip()
+                if not stripped.startswith("- "):
+                    continue
+                m = self._INSIGHTS_DATE_RE.match(line)
+                if m:
+                    dated_bullets.append((m.group(1), heading, idx, line))
+                    idx += 1
+                else:
+                    undated_bullets.append((heading, line))
+
+        if not dated_bullets and not undated_bullets:
+            return text
+
+        # Sort dated bullets by date descending; ties keep local section order.
+        dated_bullets.sort(key=lambda b: (b[0], -b[2]), reverse=True)
+        all_bullets: list[tuple[str, str]] = [(heading, line) for _, heading, _, line in dated_bullets]
+        all_bullets.extend(undated_bullets)
+
+        # Apply budget.
+        kept: dict[str, list[str]] = {}
+        total_chars = 0
+        total_bullets = 0
+        truncated = False
+        for heading, line in all_bullets:
+            projected = total_chars + len(line) + 1
+            if total_bullets >= bullet_budget or projected > char_budget:
+                truncated = True
+                break
+            kept.setdefault(heading, []).append(line)
+            total_chars = projected
+            total_bullets += 1
+
+        # Re-render sections preserving original section order.
+        out_sections: list[tuple[str, list[str]]] = []
+        for heading, _lines in sections:
+            if heading in kept:
+                out_sections.append((heading, kept[heading]))
+
+        result = render_markdown_h2_sections(preamble, out_sections)
+        if truncated:
+            result = result.rstrip() + "\n\n(... truncated)"
+        return result
+
     def get_memory_context(self) -> str:
         long_term = self.read_long_term()
-        return f"## Long-term Memory\n{long_term}" if long_term else ""
+        parts: list[str] = []
+        if long_term:
+            parts.append(f"## Long-term Memory\n{long_term}")
+        insights = self.read_insights()
+        if insights:
+            insights = self._truncate_insights_for_context(insights)
+            if insights:
+                parts.append(f"## L1 Insights\n{insights}")
+        return "\n\n".join(parts)
 
     def get_recent_daily_context(
         self,
@@ -1001,6 +1171,8 @@ class MemoryStore:
             "the factual details of that topic belong in history_entry/daily_sections only. "
             "Do NOT copy recent discussion topics, knowledge-answer content, long summaries, tables, or tool outputs into memory_update; "
             "these all belong in history_entry only. "
+            "If you identify semi-persistent lessons learned (trade-offs, reusable debugging insights), "
+            "put them into insights_update as concise bullets instead of memory_update. "
             "Temporary system/API error statuses, one-off incidents, and dated operational notes "
             "should usually stay out of memory_update (or be reduced to a durable configuration fact only). "
             "Prefer including daily_sections with concise bullets for Topics/Decisions/Tool Activity/Open Questions "

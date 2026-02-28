@@ -760,6 +760,27 @@ DoD：
 - INSIGHTS.md 可正常读写，TTL 清理可观测
 - consolidation 可选产出 insights_update
 
+R2.5 进展（2026-02-28）：
+
+- 已落地 L1 Insights 存储层：
+  - 新增 `memory/INSIGHTS.md`（onboard 模板自动创建）
+  - `MemoryStore` 新增 `read_insights()` / `append_insights_update()`（去重写入，日期锚点）
+  - system prompt 明确 `insights_update` 用于半持久 lessons learned
+  - `save_memory` tool schema 新增可选字段 `insights_update`
+  - context 注入新增 `## L1 Insights`
+- 已落地 Insights TTL 生命周期：
+  - `memory-audit` 新增
+    - `--insights-ttl-dry-run`
+    - `--insights-ttl-apply`
+    - `--insights-ttl-days`
+    - 输出参数：`--insights-ttl-out` / `--insights-ttl-apply-out`
+  - 新增 observability：`memory/observability/insights-ttl-metrics.jsonl`
+- 回归验证：
+  - 新增/更新测试覆盖 schema、store 写入去重、consolidation 写入、maintenance TTL、CLI apply
+  - 当前结果：`126 passed`
+
+R2.5 状态：已完成（INSIGHTS 中间层 + TTL + consolidation 可选写入）。
+
 ### Phase R3：生命周期闭环
 
 目标：形成可灰度、可回滚的生命周期操作。

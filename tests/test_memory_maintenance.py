@@ -10,6 +10,8 @@ from nanobot.memory.maintenance import (
     render_daily_archive_apply_markdown,
     render_daily_ttl_apply_markdown,
     render_daily_ttl_dry_run_markdown,
+    render_insights_ttl_apply_markdown,
+    render_insights_ttl_dry_run_markdown,
     build_cleanup_plan,
     render_cleanup_conversion_index_markdown,
     render_cleanup_drop_preview_markdown,
@@ -27,6 +29,8 @@ from nanobot.memory.maintenance import (
     summarize_context_trace,
     summarize_daily_archive_dry_run,
     summarize_daily_ttl_dry_run,
+    summarize_insights_ttl_dry_run,
+    apply_insights_ttl_janitor,
     apply_daily_ttl_janitor,
     summarize_cleanup_stage_metrics,
     summarize_cleanup_conversion_index,
@@ -1147,3 +1151,34 @@ def test_daily_ttl_dry_run_and_apply_only_touch_archive(tmp_path: Path) -> None:
     assert '"priority":"P2"' in metrics
     apply_md = render_daily_ttl_apply_markdown(applied)
     assert "Daily TTL Apply Result" in apply_md
+
+
+def test_insights_ttl_dry_run_and_apply(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(parents=True)
+    _write(
+        memory_dir / "INSIGHTS.md",
+        (
+            "# Insights\n\n"
+            "## Lessons Learned\n"
+            "- [2020-01-01] stale insight\n"
+            f"- [{datetime.now().strftime('%Y-%m-%d')}] recent insight\n"
+        ),
+    )
+    dry = summarize_insights_ttl_dry_run(memory_dir, ttl_days=30)
+    assert dry.candidate_line_count == 1
+    assert "stale insight" in dry.candidate_lines[0]
+    dry_md = render_insights_ttl_dry_run_markdown(dry)
+    assert "Insights TTL Dry-Run Summary" in dry_md
+
+    applied = apply_insights_ttl_janitor(memory_dir, ttl_days=30)
+    assert applied.deleted_line_count == 1
+    assert "stale insight" in applied.deleted_lines[0]
+    after = (memory_dir / "INSIGHTS.md").read_text(encoding="utf-8")
+    assert "stale insight" not in after
+    assert "recent insight" in after
+    metrics = _obs_file(memory_dir, "insights-ttl-metrics.jsonl").read_text(encoding="utf-8")
+    assert '"action":"delete_lines"' in metrics
+    assert '"priority":"P2"' in metrics
+    apply_md = render_insights_ttl_apply_markdown(applied)
+    assert "Insights TTL Apply Result" in apply_md

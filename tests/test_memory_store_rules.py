@@ -314,8 +314,28 @@ def test_save_memory_tool_schema_supports_optional_daily_sections() -> None:
 
     props = memory_module._SAVE_MEMORY_TOOL[0]["function"]["parameters"]["properties"]
     assert "daily_sections" in props
+    assert "insights_update" in props
     daily_props = props["daily_sections"]["properties"]
     assert set(daily_props) == {"topics", "decisions", "tool_activity", "open_questions"}
+
+
+def test_append_insights_update_creates_insights_file_and_dedupes(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    appended_1 = mm.append_insights_update(
+        "- Prefer structured daily_sections for stable routing.\n- Prefer structured daily_sections for stable routing.",
+        date_str="2026-02-28",
+    )
+    appended_2 = mm.append_insights_update(
+        "- Prefer structured daily_sections for stable routing.",
+        date_str="2026-02-28",
+    )
+
+    assert appended_1 == 1
+    assert appended_2 == 0
+    text = mm.read_insights()
+    assert "# Insights" in text
+    assert "## Lessons Learned" in text
+    assert text.count("Prefer structured daily_sections for stable routing.") == 1
 
 
 def test_consolidation_system_prompt_discourages_transient_system_status() -> None:
@@ -643,6 +663,41 @@ async def test_consolidate_accepts_json_string_tool_arguments(tmp_path: Path) ->
     assert "Discussed JSON string tool args" in mm.history_file.read_text(encoding="utf-8")
     daily_text = (mm.memory_dir / "2026-02-25.md").read_text(encoding="utf-8")
     assert "JSON args path works" in daily_text
+
+
+@pytest.mark.asyncio
+async def test_consolidate_writes_insights_update_when_present(tmp_path: Path) -> None:
+    mm = MemoryStore(workspace=tmp_path)
+    mm.write_long_term("# Long-term Memory\n")
+
+    session = Session(key="test:insights_update")
+    for i in range(60):
+        session.add_message("user", f"msg{i}")
+
+    provider = MagicMock()
+
+    async def _fake_chat(**kwargs):
+        return LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCallRequest(
+                    id="t1",
+                    name="save_memory",
+                    arguments={
+                        "history_entry": "[2026-02-25 10:00] Discussed memory routing behavior.",
+                        "memory_update": "# Long-term Memory\n",
+                        "insights_update": "- Keep semi-persistent trade-offs in insights layer.",
+                    },
+                )
+            ],
+        )
+
+    provider.chat = _fake_chat
+    result = await mm.consolidate(session=session, provider=provider, model="test", memory_window=50)
+
+    assert result is True
+    insights_text = mm.read_insights()
+    assert "Keep semi-persistent trade-offs in insights layer." in insights_text
 
 
 @pytest.mark.asyncio

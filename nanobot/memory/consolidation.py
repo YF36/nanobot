@@ -49,6 +49,7 @@ class ConsolidationPipeline:
             call_meta=call_meta,
         )
         self._step_history_and_daily(ctx)
+        self._step_insights(ctx)
         self._step_memory_update(ctx)
 
     def _step_history_and_daily(self, ctx: PipelineContext) -> None:
@@ -271,3 +272,16 @@ class ConsolidationPipeline:
             merge_applied=merge_applied,
             conflict_count=len(conflicts),
         )
+
+    def _step_insights(self, ctx: PipelineContext) -> None:
+        insights_update = ctx.args.get("insights_update")
+        if not insights_update:
+            return
+        date_str = self.store._history_entry_date(ctx.entry_text) if ctx.entry_text else None
+        appended = self.store.append_insights_update(insights_update, date_str=date_str)
+        if appended > 0:
+            logger.debug(
+                "Memory consolidation appended insights",
+                appended=appended,
+                session_key=ctx.session.key,
+            )

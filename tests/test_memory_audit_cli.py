@@ -208,3 +208,45 @@ def test_memory_audit_purge_rejected_sections_apply(tmp_path: Path, monkeypatch)
     assert "Removed sections" in result.output
     text = (memory_dir / "MEMORY.md").read_text(encoding="utf-8")
     assert "External Reference Information" not in text
+
+
+def test_memory_audit_insights_ttl_apply_deletes_expired_lines(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "ws"
+    memory_dir = workspace / "memory"
+    memory_dir.mkdir(parents=True)
+    _write(memory_dir / "MEMORY.md", "# Long-term Memory\n")
+    _write(memory_dir / "HISTORY.md", "")
+    _write(
+        memory_dir / "INSIGHTS.md",
+        (
+            "# Insights\n\n"
+            "## Lessons Learned\n"
+            "- [2020-01-01] stale insight\n"
+            f"- [{datetime.now().strftime('%Y-%m-%d')}] recent insight\n"
+        ),
+    )
+
+    class _Cfg:
+        workspace_path = workspace
+
+    import nanobot.cli.commands as commands_module
+
+    monkeypatch.setattr(commands_module, "load_config", lambda: _Cfg(), raising=False)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "memory-audit",
+            "--memory-dir",
+            str(memory_dir),
+            "--insights-ttl-apply",
+            "--insights-ttl-days",
+            "30",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Applied insights TTL janitor:" in result.output
+    text = (memory_dir / "INSIGHTS.md").read_text(encoding="utf-8")
+    assert "stale insight" not in text
+    assert "recent insight" in text
